@@ -1,0 +1,6 @@
+{
+  "name": "Stragy",
+  "description": "Institutional-grade financial research, quantitative strategy development, and backtesting platform tailored for Indian Capital Markets (NSE/BSE).",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
