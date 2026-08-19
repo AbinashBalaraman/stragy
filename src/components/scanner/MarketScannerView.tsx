@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StrategyAST } from '../../shared/strategy/types';
-import { UniverseScanResponse } from '../../server/backtest/scanner';
-import { StockTrendData, MarketMoversData } from '../../server/data/smartApi';
+import { StrategyAST, UniverseScanResponse, StockTrendData, MarketMoversData } from '../../shared/strategy/types';
 import { OptionChainScanner } from './OptionChainScanner';
 import { VolumeProfileScanner } from './VolumeProfileScanner';
 import { GttBracketCalculator } from './GttBracketCalculator';

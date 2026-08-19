@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GttBracketConfig } from '../../server/data/smartApi';
+import { GttBracketConfig } from '../../shared/strategy/types';
 import { NSE_SYMBOLS } from '../../server/data/symbols';
 import { ShieldAlert, Zap, Copy, Check, ArrowRight, RefreshCw, Calculator, Flame } from 'lucide-react';
 

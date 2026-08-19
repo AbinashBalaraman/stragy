@@ -8,7 +8,13 @@ const distHtml = path.join(process.cwd(), 'dist', 'index.html');
 if (!fs.existsSync(distServer) || !fs.existsSync(distHtml)) {
   console.log('⚡ [Stragy] Build artifacts missing in dist/. Running "npm run build" automatically...');
   try {
-    execSync('npm run build', { stdio: 'inherit' });
+    execSync('npm run build', {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=450`.trim()
+      }
+    });
     console.log('✅ [Stragy] Build completed successfully.');
   } catch (err) {
     console.error('❌ [Stragy] Build failed:', err);

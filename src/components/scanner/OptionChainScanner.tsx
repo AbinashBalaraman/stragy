@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { OptionChainData, OptionChainStrike } from '../../server/data/smartApi';
+import { OptionChainData, OptionChainStrike } from '../../shared/strategy/types';
 import { NSE_SYMBOLS } from '../../server/data/symbols';
 import { Layers, ShieldAlert, ArrowRight, Gauge, RefreshCw, BarChart2, Activity } from 'lucide-react';
 

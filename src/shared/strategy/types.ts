@@ -243,3 +243,182 @@ export interface BacktestResponse {
   bars: OHLCVBar[];
   executedAt: string;
 }
+
+export interface StockTrendData {
+  id: number;
+  ticker: string;
+  name: string;
+  sector: string;
+  ltp: number;
+  changePercent: number;
+  high: number;
+  low: number;
+  volume: number;
+  avg20Volume: number;
+  volumeRatio: number;
+  fiftyTwoWeekHigh: number;
+  fiftyTwoWeekLow: number;
+  distFrom52WHigh: number;
+  distFrom52WLow: number;
+  rsi: number;
+  ema20: number;
+  sma50: number;
+  sma200: number;
+  trend: 'STRONG_BULLISH' | 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'OVERSOLD_REVERSAL';
+  trendLabel: string;
+  momentumScore: number;
+  signal: 'BUY_BREAKOUT' | 'PULLBACK_ENTRY' | 'OVERSOLD_RSI' | 'GOLDEN_CROSS' | 'NEUTRAL';
+  signalLabel: string;
+  openInterest: number;
+  oiChangePercent: number;
+  oiInterpretation: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'SHORT_BUILDUP' | 'LONG_UNWINDING';
+  pcrRatio: number;
+  dataSource: 'ANGEL_ONE_SMARTAPI' | 'NSE_LIVE_RATE';
+  exchange?: 'NSE' | 'BSE';
+  indices?: string[];
+  date?: string;
+  formattedDate?: string;
+  timestamp?: number;
+}
+
+export interface MarketMoversData {
+  universe?: string;
+  asOfDate: string;
+  formattedDate: string;
+  isHistorical?: boolean;
+  availableTradingSessions?: { date: string; label: string; isLatest: boolean }[];
+  totalFilteredCount?: number;
+  topGainers: StockTrendData[];
+  topLosers: StockTrendData[];
+  volumeShockers: StockTrendData[];
+  nearFiftyTwoWeekHigh: StockTrendData[];
+  nearFiftyTwoWeekLow: StockTrendData[];
+  derivativesBuildup: {
+    longBuildup: StockTrendData[];
+    shortCovering: StockTrendData[];
+    shortBuildup: StockTrendData[];
+    longUnwinding: StockTrendData[];
+  };
+  marketBreadth: {
+    advances: number;
+    declines: number;
+    unchanged: number;
+    advanceDeclineRatio: number;
+    bullishPercent: number;
+  };
+  sectorHeatmap: {
+    sector: string;
+    avgChangePercent: number;
+    count: number;
+    advances: number;
+    declines: number;
+  }[];
+}
+
+export interface ScanMatchResult {
+  symbolId: number;
+  ticker: string;
+  name: string;
+  sector: string;
+  lastDate: string;
+  lastClose: number;
+  changePercent: number;
+  matchedRules: {
+    rule: string;
+    actualLeft: number;
+    actualRight: number;
+  }[];
+  indicatorValues: Record<string, number>;
+}
+
+export interface UniverseScanResponse {
+  universe: string;
+  scanned: number;
+  matched: number;
+  scannedAt: string;
+  dataSource: string;
+  matches: ScanMatchResult[];
+}
+
+export interface OptionChainStrike {
+  strikePrice: number;
+  ceLtp: number;
+  ceChange: number;
+  ceOi: number;
+  ceOiChange: number;
+  ceVolume: number;
+  ceIv: number;
+  peLtp: number;
+  peChange: number;
+  peOi: number;
+  peOiChange: number;
+  peVolume: number;
+  peIv: number;
+  isAtm?: boolean;
+}
+
+export interface OptionChainData {
+  underlying: string;
+  symbolId: number;
+  spotPrice: number;
+  expiryDate: string;
+  availableExpiries: string[];
+  totalCeOi: number;
+  totalPeOi: number;
+  pcr: number;
+  maxPain: number;
+  strikes: OptionChainStrike[];
+  calculatedAt: string;
+}
+
+export interface VolumeProfileLevel {
+  priceLevel: number;
+  volume: number;
+  buyVolume: number;
+  sellVolume: number;
+  percentageOfMax: number;
+  isPoc: boolean;
+  inValueArea: boolean;
+}
+
+export interface VolumeProfileData {
+  symbolId: number;
+  ticker: string;
+  pocPrice: number;
+  vahPrice: number;
+  valPrice: number;
+  totalVolume: number;
+  levels: VolumeProfileLevel[];
+  calculatedAt: string;
+}
+
+export interface BasisSpreadItem {
+  symbolId: number;
+  ticker: string;
+  name: string;
+  spotPrice: number;
+  futuresPrice: number;
+  basisPoints: number;
+  basisPercent: number;
+  annualizedCostOfCarry: number;
+  arbitrageSignal: 'CASH_AND_CARRY' | 'REVERSE_CASH_AND_CARRY' | 'FAIR_VALUE';
+  expiryDate: string;
+}
+
+export interface GttBracketConfig {
+  symbolId: number;
+  ticker: string;
+  name: string;
+  currentLtp: number;
+  entryType: 'BUY' | 'SELL';
+  entryTriggerPrice: number;
+  targetPrice: number;
+  targetPercent: number;
+  stopLossPrice: number;
+  stopLossPercent: number;
+  riskRewardRatio: number;
+  trailingStopLoss: number;
+  quantity: number;
+  estimatedMargin: number;
+}
+

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { VolumeProfileData } from '../../server/data/smartApi';
+import { VolumeProfileData } from '../../shared/strategy/types';
 import { NSE_SYMBOLS } from '../../server/data/symbols';
 import { Activity, BarChart2, TrendingUp, ShieldAlert, RefreshCw, Compass } from 'lucide-react';
 

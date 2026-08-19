@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BasisSpreadItem } from '../../server/data/smartApi';
+import { BasisSpreadItem } from '../../shared/strategy/types';
 import { RefreshCw, TrendingUpDown, ArrowRight, Activity, Percent, ShieldCheck } from 'lucide-react';
 
 interface BasisSpreadScannerProps {
