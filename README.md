@@ -145,11 +145,11 @@ npm start
 | :--- | :--- | :--- |
 | `PORT` | Optional | Port for the server (defaults to `3000`) |
 | `NODE_ENV` | Optional | Environment mode (`development` / `production`) |
-| `GEMINI_API_KEY` | Optional | API Key for AI Copilot strategy generation |
-| `SMARTAPI_API_KEY` | Optional | Angel One SmartAPI Key |
-| `SMARTAPI_CLIENT_CODE` | Optional | Angel One Client ID |
-| `SMARTAPI_PASSWORD` | Optional | Angel One Pin / Password |
-| `SMARTAPI_TOTP_SECRET` | Optional | TOTP Secret for automated 2FA login |
+| `GEMINI_API_KEY` | Required | API Key for AI Copilot strategy generation |
+| `SMARTAPI_API_KEY` | Required | Angel One SmartAPI Key |
+| `SMARTAPI_CLIENT_CODE` | Required | Angel One Client ID |
+| `SMARTAPI_PASSWORD` | Required | Angel One Pin / Password |
+| `SMARTAPI_TOTP_SECRET` | Required | TOTP Secret for automated 2FA login |
 
 ---
 
