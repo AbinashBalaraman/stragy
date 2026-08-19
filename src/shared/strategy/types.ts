@@ -342,83 +342,116 @@ export interface UniverseScanResponse {
 
 export interface OptionChainStrike {
   strikePrice: number;
-  ceLtp: number;
-  ceChange: number;
-  ceOi: number;
-  ceOiChange: number;
-  ceVolume: number;
-  ceIv: number;
-  peLtp: number;
-  peChange: number;
-  peOi: number;
-  peOiChange: number;
-  peVolume: number;
-  peIv: number;
   isAtm?: boolean;
+  straddlePrice?: number;
+  call: {
+    ltp: number;
+    change: number;
+    iv: number;
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+    oi: number;
+    oiChange: number;
+    volume: number;
+    bid?: number;
+    ask?: number;
+  };
+  put: {
+    ltp: number;
+    change: number;
+    iv: number;
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+    oi: number;
+    oiChange: number;
+    volume: number;
+    bid?: number;
+    ask?: number;
+  };
 }
 
 export interface OptionChainData {
-  underlying: string;
-  symbolId: number;
+  symbol: string;
+  ticker: string;
   spotPrice: number;
-  expiryDate: string;
-  availableExpiries: string[];
-  totalCeOi: number;
-  totalPeOi: number;
+  expiry: string;
+  atmStrike: number;
+  totalCallOI: number;
+  totalPutOI: number;
   pcr: number;
-  maxPain: number;
+  maxPainStrike: number;
+  atmIV: number;
+  ivRank?: number;
   strikes: OptionChainStrike[];
-  calculatedAt: string;
 }
 
 export interface VolumeProfileLevel {
-  priceLevel: number;
-  volume: number;
-  buyVolume: number;
-  sellVolume: number;
-  percentageOfMax: number;
-  isPoc: boolean;
+  price: number;
+  buyVol: number;
+  sellVol: number;
+  totalVol: number;
+  pctOfTotal: number;
+  isPOC: boolean;
   inValueArea: boolean;
 }
 
 export interface VolumeProfileData {
-  symbolId: number;
+  symbol: string;
   ticker: string;
+  spotPrice: number;
   pocPrice: number;
   vahPrice: number;
   valPrice: number;
-  totalVolume: number;
-  levels: VolumeProfileLevel[];
-  calculatedAt: string;
+  vwap: number;
+  stdDev1Upper: number;
+  stdDev1Lower: number;
+  stdDev2Upper: number;
+  stdDev2Lower: number;
+  stdDev3Upper: number;
+  stdDev3Lower: number;
+  totalSessionVolume: number;
+  buyPressurePct: number;
+  marketRegime: string;
+  profileLevels: VolumeProfileLevel[];
 }
 
 export interface BasisSpreadItem {
-  symbolId: number;
   ticker: string;
   name: string;
-  spotPrice: number;
-  futuresPrice: number;
-  basisPoints: number;
-  basisPercent: number;
-  annualizedCostOfCarry: number;
-  arbitrageSignal: 'CASH_AND_CARRY' | 'REVERSE_CASH_AND_CARRY' | 'FAIR_VALUE';
-  expiryDate: string;
+  lotSize: number;
+  cashLtp: number;
+  nearFutLtp: number;
+  nextFutLtp: number;
+  nearBasisInr: number;
+  nearBasisPct: number;
+  calendarSpreadInr: number;
+  calendarSpreadPct: number;
+  annualizedYieldPct: number;
+  state: 'CONTANGO' | 'BACKWARDATION';
+  arbitrageSignal: string;
 }
 
 export interface GttBracketConfig {
-  symbolId: number;
+  symbol: string;
   ticker: string;
-  name: string;
-  currentLtp: number;
-  entryType: 'BUY' | 'SELL';
-  entryTriggerPrice: number;
-  targetPrice: number;
-  targetPercent: number;
+  spotPrice: number;
+  action: 'BUY' | 'SELL';
+  capitalAllocated: number;
+  qty: number;
+  entryPrice: number;
   stopLossPrice: number;
-  stopLossPercent: number;
+  stopLossAmountInr: number;
+  stopLossPct: number;
+  targetPrice: number;
+  targetAmountInr: number;
+  targetPct: number;
+  trailingStopLossStep: number;
+  trailingJumpPct: number;
   riskRewardRatio: number;
-  trailingStopLoss: number;
-  quantity: number;
-  estimatedMargin: number;
+  smartApiPayload: any;
 }
 

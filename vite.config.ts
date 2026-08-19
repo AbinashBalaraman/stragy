@@ -16,7 +16,7 @@ export default defineConfig(() => {
       sourcemap: false,
       chunkSizeWarningLimit: 2000,
       reportCompressedSize: false,
-      minify: 'esbuild',
+      minify: 'esbuild' as const,
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
