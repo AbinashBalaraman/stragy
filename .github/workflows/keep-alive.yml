@@ -1,0 +1,17 @@
+name: Stragy 24/7 Keep-Alive
+
+on:
+  schedule:
+    # Runs every 10 minutes 24/7 to prevent Render cold starts
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Stragy Endpoint
+        run: |
+          echo "Pinging Stragy on Render..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "https://stragy.onrender.com/")
+          echo "Received HTTP Status: $HTTP_STATUS"
