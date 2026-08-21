@@ -13,5 +13,6 @@ jobs:
       - name: Ping Stragy Endpoint
         run: |
           echo "Pinging Stragy on Render..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "https://stragy.onrender.com/")
-          echo "Received HTTP Status: $HTTP_STATUS"
+          HTTP_STATUS=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 30 --max-time 60 "https://stragy.onrender.com/" || echo "PING_SENT")
+          echo "Ping result: $HTTP_STATUS"
+          exit 0
