@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+.tool-registry/
+.verify-cjs/
+.verification-client/
+src/test/.tmp/

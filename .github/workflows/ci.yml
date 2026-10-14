@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'upgrade/**' ]
   pull_request:
     branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   build-and-test:
@@ -17,14 +20,52 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: '.node-version'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck / Lint
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
         run: npm run lint
 
-      - name: Build Application
+      - name: Offline tests and coverage
+        run: npm run test:coverage
+
+      - name: Build application once
         run: npm run build
+
+      - name: Production read-only smoke
+        env:
+          NODE_ENV: production
+          SOURCE_COMMIT: ${{ github.sha }}
+          DATA_MODE: demo
+          AI_PROVIDER: none
+          EXPOSURE_MODE: demo-public
+          STORAGE_MODE: ephemeral
+          HOST: 127.0.0.1
+          PORT: 3903
+          SMOKE_BASE_URL: http://127.0.0.1:3903
+        run: |
+          npm start > production-smoke.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "$SMOKE_BASE_URL/health/ready" >/dev/null; then break; fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then cat production-smoke.log; exit 1; fi
+            sleep 1
+          done
+          npm run test:smoke
+
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: |
+            coverage/coverage-summary.json
+            production-smoke.log
+          if-no-files-found: ignore

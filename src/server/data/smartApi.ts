@@ -4,6 +4,7 @@ import path from 'path';
 import { OHLCVBar } from '../../shared/strategy/types';
 import { getSymbolById, NSE_SYMBOLS } from './symbols';
 import { getAvailableTradingDates } from './realMarketData';
+import { getDataMode,getMarketSeries,validateDate,MarketDataError } from './marketSeries';
 
 // Angel One NSE Symbol to Token Mapping for Nifty 50, Indices & Top Equities
 export const SMARTAPI_TOKEN_MAP: Record<string, { token: string; exchange: string; symbol: string }> = {
@@ -214,7 +215,7 @@ export function isSmartApiConfigured(): boolean {
  * Authenticates with Angel One SmartAPI and obtains a valid JWT token safely
  */
 export async function getSmartApiSession(): Promise<SmartApiSession | null> {
-  if (!isSmartApiConfigured()) {
+  if (getDataMode()==='demo' || !isSmartApiConfigured()) {
     return null;
   }
 
@@ -435,7 +436,8 @@ export interface StockTrendData {
   oiChangePercent: number;
   oiInterpretation: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'SHORT_BUILDUP' | 'LONG_UNWINDING';
   pcrRatio: number;
-  dataSource: 'ANGEL_ONE_SMARTAPI' | 'NSE_LIVE_RATE';
+  dataSource: 'DEMO_MODEL' | 'OHLCV_ANALYSIS';
+  provenance?: {mode:string;source:string;asOf:string;warnings:string[]};
   exchange?: 'NSE' | 'BSE';
   indices?: string[];
   date?: string;
@@ -447,46 +449,8 @@ export interface StockTrendData {
  * Analyzes real market prices and generates quantitative trend models for Market Scanner
  */
 export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: string): StockTrendData {
-  if (!bars || bars.length === 0) {
-    const dStr = targetDate || '2026-08-14';
-    return {
-      id: sym.id,
-      ticker: sym.ticker,
-      name: sym.name,
-      sector: sym.sector,
-      ltp: sym.currentPrice || 100,
-      changePercent: sym.changePercent || 0,
-      high: sym.currentPrice || 100,
-      low: sym.currentPrice || 100,
-      volume: 1000000,
-      avg20Volume: 1000000,
-      volumeRatio: 1.0,
-      fiftyTwoWeekHigh: sym.currentPrice || 100,
-      fiftyTwoWeekLow: sym.currentPrice || 100,
-      distFrom52WHigh: 0,
-      distFrom52WLow: 0,
-      rsi: 50,
-      ema20: sym.currentPrice || 100,
-      sma50: sym.currentPrice || 100,
-      sma200: sym.currentPrice || 100,
-      trend: 'NEUTRAL',
-      trendLabel: 'Consolidating',
-      momentumScore: 50,
-      signal: 'NEUTRAL',
-      signalLabel: 'Consolidation Filter',
-      openInterest: 2800000,
-      oiChangePercent: 0,
-      oiInterpretation: 'LONG_BUILDUP',
-      pcrRatio: 1.0,
-      dataSource: 'NSE_LIVE_RATE',
-      exchange: sym.exchange || 'NSE',
-      indices: sym.indices || [],
-      date: dStr,
-      formattedDate: dStr,
-      timestamp: Date.now()
-    };
-  }
-
+  if(!bars?.length)throw new MarketDataError('OUT_OF_COVERAGE','No trend history');
+  if(targetDate){validateDate(targetDate);if(!bars.some(b=>b.date<=targetDate))throw new MarketDataError('OUT_OF_COVERAGE','No bars at requested cutoff');}
   // Find target bar index if date is requested
   let targetIndex = bars.length - 1;
   if (targetDate) {
@@ -654,11 +618,12 @@ export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: st
     momentumScore,
     signal,
     signalLabel,
-    openInterest: baseOI,
-    oiChangePercent,
-    oiInterpretation,
-    pcrRatio,
-    dataSource: cachedSession ? 'ANGEL_ONE_SMARTAPI' : 'NSE_LIVE_RATE',
+    openInterest: getDataMode()==='demo'?baseOI:null as unknown as number,
+    oiChangePercent:getDataMode()==='demo'?oiChangePercent:null as unknown as number,
+    oiInterpretation:getDataMode()==='demo'?oiInterpretation:null as unknown as StockTrendData['oiInterpretation'],
+    pcrRatio:getDataMode()==='demo'?pcrRatio:null as unknown as number,
+    dataSource: getDataMode()==='demo'?'DEMO_MODEL':'OHLCV_ANALYSIS',
+    provenance:{mode:getDataMode(),source:getDataMode()==='demo'?'DEMO_OI_PCR_MODEL':'OHLCV_ONLY',asOf:barDate,warnings:['OI/PCR are modeled only in demo; unavailable in real','Licensing and fee verification unverified']},
     exchange: sym.exchange || 'NSE',
     indices: sym.indices || [],
     date: barDate,
@@ -719,11 +684,6 @@ export function calculateMarketMovers(trends: StockTrendData[], universe: string
     } else if (universe !== 'ALL') {
       targetPool = targetPool.filter(t => t.indices?.includes(universe));
     }
-  }
-
-  // If filter is too restrictive, fallback safely
-  if (targetPool.length === 0) {
-    targetPool = trends.filter(t => !t.ticker.startsWith('^'));
   }
 
   const latestDate = targetPool[0]?.date || requestedDate || new Date().toISOString().split('T')[0];
@@ -811,116 +771,8 @@ export function calculateMarketMovers(trends: StockTrendData[], universe: string
 /**
  * Returns Angel One SmartAPI Rate Limits, Quota specs, and Architectural capabilities
  */
-export function getSmartApiRateLimitsAndSpecs() {
-  return {
-    rateLimits: [
-      {
-        endpoint: 'Historical Candle API',
-        method: 'POST /rest/secure/angelbroking/historical/v1/getCandleData',
-        rateLimit: '3 requests / second',
-        burstQuota: '5 requests',
-        supportedResolutions: ['ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', 'ONE_DAY'],
-        description: 'Fetches historical OHLCV data for backtesting, regime classification, and indicator computation.'
-      },
-      {
-        endpoint: 'Market Quote & LTP API',
-        method: 'POST /rest/secure/angelbroking/market/v1/quote',
-        rateLimit: '10 requests / second',
-        burstQuota: '50 tokens per request batch',
-        supportedResolutions: ['FULL', 'OHLC', 'LTP'],
-        description: 'Retrieves live bid/ask spreads, open interest, volume, and last traded price for NSE/BSE.'
-      },
-      {
-        endpoint: 'Order Placement & GTT',
-        method: 'POST /rest/secure/angelbroking/order/v1/placeOrder',
-        rateLimit: '10 to 20 requests / second',
-        burstQuota: '20 concurrent orders',
-        supportedResolutions: ['LIMIT', 'MARKET', 'STOPLOSS_LIMIT', 'ROBO/BRACKET'],
-        description: 'Executes automated algorithmic trade entries, bracket stop-losses, and trailing take-profits.'
-      },
-      {
-        endpoint: 'Orderbook & Trade History',
-        method: 'GET /rest/secure/angelbroking/order/v1/getOrderBook',
-        rateLimit: '1 request / second',
-        burstQuota: '1 per client session',
-        supportedResolutions: ['ALL_STATUSES'],
-        description: 'Polls order execution status, partial fills, and slippage telemetry.'
-      },
-      {
-        endpoint: 'WebSocket Real-Time Feed',
-        method: 'WSS /smart-stream',
-        rateLimit: '3 concurrent WebSocket connections',
-        burstQuota: '1,000 tokens per WebSocket session',
-        supportedResolutions: ['LTP', 'QUOTE', 'SNAP_QUOTE_20_DEPTH'],
-        description: 'Binary WebSocket feed streaming live NSE/BSE tick-by-tick prices and 20-level order book depth.'
-      }
-    ],
-    architectureInnovations: [
-      {
-        title: 'Option Greek & Derivatives Chain Modeling',
-        category: 'Derivatives Intelligence',
-        description: 'Compute Black-Scholes Greeks (Delta, Gamma, Theta, Vega), Implied Volatility (IV) skews, and Put-Call Ratios (PCR) for Nifty & Bank Nifty multi-leg strategies using SmartAPI NFO feeds.'
-      },
-      {
-        title: 'Institutional Volume Profile & Microstructure VWAP',
-        category: 'Microstructure Alpha',
-        description: 'Derive Value Area High (VAH), Value Area Low (VAL), Point of Control (POC), and Anchor VWAP from high-frequency tick volume distributions to spot hidden institutional supply/demand zones.'
-      },
-      {
-        title: 'Automated Trailing Stop-Loss & Bracket Execution',
-        category: 'Algorithmic Execution',
-        description: 'Implement automated GTT bracket orders with multi-step dynamic trailing stop-loss (e.g. trail SL by 0.5% for every 1.5% profit expansion) directly via SmartAPI execution endpoints.'
-      },
-      {
-        title: 'Cash vs. Futures Basis & Calendar Spread Scanner',
-        category: 'Arbitrage & Spreads',
-        description: 'Continuously track the basis difference between NSE Cash Equities and near-month NFO Futures to identify calendar spread anomalies and roll-over premiums.'
-      }
-    ]
-  };
-}
-
-/**
- * Returns overall SmartAPI status and telemetry
- */
-export async function getSmartApiStatus() {
-  const configured = isSmartApiConfigured();
-  const creds = getSmartApiCredentials();
-
-  if (!configured) {
-    return {
-      configured: false,
-      connected: false,
-      provider: 'Angel One SmartAPI',
-      streamState: 'SYNCHRONIZED_ACTIVE',
-      exchange: 'NSE/BSE (India)',
-      activeSymbolsTracked: 2497,
-      latencyMs: 12,
-      authStatus: 'ENV_VARIABLES_PENDING',
-      clientCode: creds.clientCode ? creds.clientCode.slice(0, 3) + '***' : 'Not Set',
-      message: 'Set SMARTAPI_API_KEY, SMARTAPI_CLIENT_CODE, SMARTAPI_PASSWORD, SMARTAPI_TOTP_KEY in Secrets for live broker ticks.'
-    };
-  }
-
-  const session = await getSmartApiSession();
-  const connected = !!session;
-
-  return {
-    configured: true,
-    connected,
-    provider: 'Angel One SmartAPI',
-    streamState: connected ? 'LIVE_STREAMING' : 'SYNCHRONIZED_ACTIVE',
-    exchange: 'NSE/BSE (India)',
-    activeSymbolsTracked: 2497,
-    latencyMs: connected ? 14 : 18,
-    authStatus: connected ? 'AUTHENTICATED_ACTIVE' : (lastAuthErrorMessage ? 'FALLBACK_SYNCHRONIZED' : 'INITIALIZING'),
-    clientCode: creds.clientCode ? creds.clientCode.slice(0, 3) + '***' : '',
-    message: connected
-      ? 'Live tick streaming and historical OHLCV active from Angel One SmartAPI.'
-      : (lastAuthErrorMessage ? `Fallback active (${lastAuthErrorMessage})` : 'Live synchronization active.')
-  };
-}
-
+export function getSmartApiRateLimitsAndSpecs(){return{rateLimits:[],architectureInnovations:[],verified:false,capabilities:{streaming:false,orders:false,gttPreview:true,observedDerivatives:false},warnings:['Licensing, fees, entitlements and provider quotas unverified']};}
+export async function getSmartApiStatus(){const configured=isSmartApiConfigured();return{configured,connected:!!cachedSession,provider:'Angel One SmartAPI',streamState:'NOT_IMPLEMENTED',exchange:'NSE/BSE (India)',activeSymbolsTracked:0,latencyMs:null,authStatus:cachedSession?'CACHED_SESSION':'NOT_AUTHENTICATED',clientCode:'Not disclosed',mode:getDataMode(),message:'Status never authenticates. Streaming, licensing, fee schedules and entitlements unverified.'};}
 // ---------------------------------------------------------------------------
 // 1. OPTION CHAIN & DERIVATIVES GREEKS ENGINE (Black-Scholes & SmartAPI NFO)
 // ---------------------------------------------------------------------------
@@ -960,6 +812,7 @@ export interface OptionChainStrike {
 }
 
 export interface OptionChainData {
+  provenance:{mode:'demo';source:string;asOf:string;assumptions:string[]};
   symbol: string;
   ticker: string;
   spotPrice: number;
@@ -975,8 +828,10 @@ export interface OptionChainData {
 }
 
 export function getOptionChainData(symbolId: number | string): OptionChainData {
-  const sym = typeof symbolId === 'number' ? getSymbolById(symbolId) : NSE_SYMBOLS.find(s => s.ticker === symbolId) || NSE_SYMBOLS[0];
-  const spot = sym.currentPrice || 2500;
+  if(getDataMode()!=='demo')throw new MarketDataError('DERIVATIVES_UNAVAILABLE','Observed derivative provider unavailable; demo models disabled');
+  const sym = typeof symbolId === 'number' ? getSymbolById(symbolId) : NSE_SYMBOLS.find(s => s.ticker === symbolId) || (()=>{throw new MarketDataError('UNKNOWN_SYMBOL','Unknown ticker');})();
+  const dataset=getMarketSeries(sym.id);
+  const spot=dataset.bars.at(-1)!.close;
 
   // Strike Step Interval calculation based on price magnitude
   let strikeStep = 50;
@@ -1116,11 +971,11 @@ export function getOptionChainData(symbolId: number | string): OptionChainData {
     }
   }
 
-  return {
+  return {provenance:{mode:'demo',source:'DEMO_MODEL',asOf:'2026-09-30',assumptions:['Latest-only fictional model, not observations','Prices/OI/expiry/buy-sell flow are modeled','No real entitlement verified']},
     symbol: sym.name,
     ticker: sym.ticker,
     spotPrice: spot,
-    expiry: '28-AUG-2026 (Weekly)',
+    expiry: '2026-10-07 (fictional demo expiry)',
     atmStrike,
     totalCallOI,
     totalPutOI,
@@ -1147,6 +1002,7 @@ export interface VolumeProfileLevel {
 }
 
 export interface VolumeProfileData {
+  provenance:{mode:'demo';source:string;asOf:string;assumptions:string[]};
   symbol: string;
   ticker: string;
   spotPrice: number;
@@ -1167,8 +1023,10 @@ export interface VolumeProfileData {
 }
 
 export function getVolumeProfileAndVWAP(symbolId: number | string): VolumeProfileData {
-  const sym = typeof symbolId === 'number' ? getSymbolById(symbolId) : NSE_SYMBOLS.find(s => s.ticker === symbolId) || NSE_SYMBOLS[0];
-  const spot = sym.currentPrice || 2500;
+  if(getDataMode()!=='demo')throw new MarketDataError('DERIVATIVES_UNAVAILABLE','Observed derivative provider unavailable; demo models disabled');
+  const sym = typeof symbolId === 'number' ? getSymbolById(symbolId) : NSE_SYMBOLS.find(s => s.ticker === symbolId) || (()=>{throw new MarketDataError('UNKNOWN_SYMBOL','Unknown ticker');})();
+  const dataset=getMarketSeries(sym.id);
+  const spot=dataset.bars.at(-1)!.close;
 
   // Price Range bucket calculations
   const rangePct = 0.04; // 4% intraday distribution window
@@ -1263,7 +1121,7 @@ export function getVolumeProfileAndVWAP(symbolId: number | string): VolumeProfil
     ? 'Liquidity Sweep / Discount Zone (Below VAL)'
     : 'Rotational Balance (Inside 70% Value Area)';
 
-  return {
+  return {provenance:{mode:'demo',source:'DEMO_MODEL',asOf:'2026-09-30',assumptions:['Latest-only fictional model, not observations','Prices/OI/expiry/buy-sell flow are modeled','No real entitlement verified']},
     symbol: sym.name,
     ticker: sym.ticker,
     spotPrice: spot,
@@ -1289,6 +1147,9 @@ export function getVolumeProfileAndVWAP(symbolId: number | string): VolumeProfil
 // ---------------------------------------------------------------------------
 
 export interface GttBracketConfig {
+  previewOnly:true;
+  inputRevision:string;
+  warnings:string[];
   symbol: string;
   ticker: string;
   spotPrice: number;
@@ -1316,25 +1177,34 @@ export function calculateGttBracketOrder(
   rewardRatio: number = 2.5,
   trailPct: number = 0.5
 ): GttBracketConfig {
-  const sym = typeof symbolId === 'number' ? getSymbolById(symbolId) : NSE_SYMBOLS.find(s => s.ticker === symbolId) || NSE_SYMBOLS[0];
-  const spot = sym.currentPrice || 2500;
-  const mapping = SMARTAPI_TOKEN_MAP[sym.ticker] || { token: '9999', exchange: 'NSE', symbol: `${sym.ticker}-EQ` };
+  if(!['BUY','SELL'].includes(action)||![capitalAllocated,riskPct,rewardRatio,trailPct].every(Number.isFinite)||capitalAllocated<=0||riskPct<=0||riskPct>=100||rewardRatio<=0||trailPct<=0||trailPct>=100)throw new MarketDataError('INVALID_PREVIEW','Invalid GTT preview inputs');
+  const sym = typeof symbolId === 'number' ? getSymbolById(symbolId) : NSE_SYMBOLS.find(s => s.ticker === symbolId) || (()=>{throw new MarketDataError('UNKNOWN_SYMBOL','Unknown ticker');})();
+  const dataset=getMarketSeries(sym.id);
+  const spot=dataset.bars.at(-1)!.close;
+  const mapping = SMARTAPI_TOKEN_MAP[sym.ticker];
+  if(!mapping)throw new MarketDataError('UNKNOWN_MAPPING','GTT instrument mapping unverified');
 
-  const qty = Math.max(1, Math.floor(capitalAllocated / spot));
-  const entryPrice = spot;
+  const qty = Math.floor(capitalAllocated / spot);
+  if(qty<1)throw new MarketDataError('INVALID_PREVIEW','Capital insufficient for one unit');
+  if(getDataMode()!=='demo')throw new MarketDataError('PREVIEW_UNAVAILABLE','Verified instrument tick size unavailable in real mode');
+  const tickSize=0.05; // Explicit demo assumption, not verified exchange metadata.
+  const tick=(value:number)=>Number((Math.round(value/tickSize)*tickSize).toFixed(2));
+  const entryPrice = tick(spot);
 
   const slDist = entryPrice * (riskPct / 100);
   const targetDist = slDist * rewardRatio;
 
   const stopLossPrice = action === 'BUY'
-    ? Number((entryPrice - slDist).toFixed(2))
-    : Number((entryPrice + slDist).toFixed(2));
+    ? tick(entryPrice-slDist)
+    : tick(entryPrice+slDist);
 
   const targetPrice = action === 'BUY'
-    ? Number((entryPrice + targetDist).toFixed(2))
-    : Number((entryPrice - targetDist).toFixed(2));
+    ? tick(entryPrice+targetDist)
+    : tick(entryPrice-targetDist);
 
-  const trailingStep = Number((entryPrice * (trailPct / 100)).toFixed(2));
+  if(stopLossPrice<=0||targetPrice<=0||stopLossPrice===entryPrice||targetPrice===entryPrice)throw new MarketDataError('INVALID_PREVIEW','Stop/target invalid after tick rounding');
+  const trailingStep = tick(entryPrice * (trailPct / 100));
+  if(trailingStep<=0)throw new MarketDataError('INVALID_PREVIEW','Trailing step below tick');
   const maxLossInr = Math.round(slDist * qty);
   const maxGainInr = Math.round(targetDist * qty);
 
@@ -1356,7 +1226,7 @@ export function calculateGttBracketOrder(
     disclosedquantity: '0'
   };
 
-  return {
+  return {previewOnly:true,inputRevision:dataset.provenance.checksum,warnings:['Preview only; never submitted','Demo tick size 0.05 assumed; broker fees and entitlement unverified'],
     symbol: sym.name,
     ticker: sym.ticker,
     spotPrice: spot,
@@ -1382,6 +1252,7 @@ export function calculateGttBracketOrder(
 // ---------------------------------------------------------------------------
 
 export interface BasisSpreadItem {
+  provenance:{mode:'demo';source:string;asOf:string;assumptions:string[]};
   ticker: string;
   name: string;
   lotSize: number;
@@ -1398,14 +1269,15 @@ export interface BasisSpreadItem {
 }
 
 export function getBasisAndCalendarSpreads(): BasisSpreadItem[] {
+  if(getDataMode()!=='demo')throw new MarketDataError('DERIVATIVES_UNAVAILABLE','Observed derivative provider unavailable; demo models disabled');
   const topFno = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK', 'TATAMOTORS', 'SBIN', 'BHARTIARTL', 'LT', 'MARUTI'];
   const rfr = 0.068; // 6.8% annual cost of carry
   const daysToNear = 12;
   const daysToNext = 40;
 
   return topFno.map(ticker => {
-    const sym = NSE_SYMBOLS.find(s => s.ticker === ticker) || NSE_SYMBOLS[0];
-    const cash = sym.currentPrice || 2000;
+    const sym = NSE_SYMBOLS.find(s => s.ticker === ticker) || (()=>{throw new MarketDataError('UNKNOWN_SYMBOL','Unknown ticker');})();
+    const cash=getMarketSeries(sym.id).bars.at(-1)!.close;
 
     // Cost of Carry Fair Value = Cash * (1 + r * (days / 365))
     const nearFairBasis = cash * (rfr * (daysToNear / 365));
@@ -1435,7 +1307,7 @@ export function getBasisAndCalendarSpreads(): BasisSpreadItem[] {
       arbitrageSignal = 'Calendar Spread Roll-Forward (Long Next / Short Near)';
     }
 
-    return {
+    return {provenance:{mode:'demo',source:'DEMO_COST_OF_CARRY',asOf:'2026-09-30',assumptions:['Assumed interest rate and expiry; not synchronized futures observations']},
       ticker: sym.ticker,
       name: sym.name,
       lotSize: sym.lotSize || 100,

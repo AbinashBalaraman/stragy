@@ -1,0 +1,224 @@
+{
+  "runner": "Node assert fallback, not Vitest",
+  "node": "v26.5.0",
+  "passed": 54,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "causal fills and reconciled accounting / Q01 uses next-open entry/exit and reconciles cash",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q02 never fills an entry signaled only on the final bar",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q03 a stop gapped through fills at the opening price, not the stop",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q04 applies adverse ambiguity and resting stops on the entry bar",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q05 trail derived from current high is active only on the next bar",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q06 sizing includes entry fees and can select zero affordable units",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q07 slippage is in fills and is not charged twice",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q08 final liquidation updates the actual final equity point",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q09 drawdown cutoff halts entries and liquidates at next open",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q10 unsupported execution and invalid bars are rejected",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q11 ATR risk consumes the previous completed bar and no magic ID",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / Q12 tiny allocations never force one expensive share",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / open marked positions reconcile when liquidation is disabled",
+      "status": "passed"
+    },
+    {
+      "name": "causal fills and reconciled accounting / sensitivity center is the real base run and seed is reproducible",
+      "status": "passed"
+    },
+    {
+      "name": "equity metrics / M01 uses sample Sharpe and full-sample downside deviation",
+      "status": "passed"
+    },
+    {
+      "name": "equity metrics / M02 elapsed time determines CAGR, not the number of fills",
+      "status": "passed"
+    },
+    {
+      "name": "equity metrics / M03 undefined ratios are null with reasons, never Infinity",
+      "status": "passed"
+    },
+    {
+      "name": "seeded bootstrap / R01 controlled paths preserve the observed two-return horizon",
+      "status": "passed"
+    },
+    {
+      "name": "seeded bootstrap / R02 same seed reproduces all paths and invalid RNG is rejected",
+      "status": "passed"
+    },
+    {
+      "name": "seeded bootstrap / R03 nearest-rank percentiles and xorshift are bounded",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete Reliance Supertrend + EMA + Volume Expansion template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete Supertrend Trend Surfer template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete Classic Golden Cross & Volume template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete RSI Dynamic Mean Reversion template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete Bollinger Band Squeeze Breakout template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete MACD Zero-Line Acceleration template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete ATR Keltner Breakout & Channel Surfer template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S01 validates the complete NR7 Volatility Compression Breakout template",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S02 preserves fractional allocation, AND exits and legacy tolerance",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S03 exact canonical equality remains exact through the UI/engine adapter",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S04 aliases are normalized but conflicting aliases are rejected",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S05 rejects duplicates, dangling references, namespace collisions and extra parameters",
+      "status": "passed"
+    },
+    {
+      "name": "strict strategy contracts / S06 rejects unsupported timeframes, shorting, limits and ambiguous legacy fixed risk",
+      "status": "passed"
+    },
+    {
+      "name": "indicator and rule arithmetic / I01 SMA and seeded EMA have explicit warmup",
+      "status": "passed"
+    },
+    {
+      "name": "indicator and rule arithmetic / I02 volume averaging uses volume, not closing price",
+      "status": "passed"
+    },
+    {
+      "name": "indicator and rule arithmetic / I03 flat RSI is 50, rising RSI is 100; ATR uses prior close gaps",
+      "status": "passed"
+    },
+    {
+      "name": "indicator and rule arithmetic / I04 indicators are prefix-invariant and compound aliases agree",
+      "status": "passed"
+    },
+    {
+      "name": "indicator and rule arithmetic / I05 crossovers require finite previous operands and groups are AND",
+      "status": "passed"
+    },
+    {
+      "name": "bounded jobs / J01 honors idempotency, changed-input conflicts and immutable reads",
+      "status": "passed"
+    },
+    {
+      "name": "bounded jobs / J02 enforces queue capacity and cancels queued work before execution",
+      "status": "passed"
+    },
+    {
+      "name": "bounded jobs / J03 deadline/failure is explicit and shutdown refuses new work",
+      "status": "passed"
+    },
+    {
+      "name": "bounded jobs / J04 executor crashes do not poison subsequent jobs",
+      "status": "passed"
+    },
+    {
+      "name": "immutable atomic storage / D05 saved revision hash includes the assigned identity",
+      "status": "passed"
+    },
+    {
+      "name": "immutable atomic storage / D01 run IDs cannot be rewritten and caller mutations do not leak",
+      "status": "passed"
+    },
+    {
+      "name": "immutable atomic storage / D02 revisions are serialized, conflict-safe and historically readable",
+      "status": "passed"
+    },
+    {
+      "name": "immutable atomic storage / D03 persistence survives reopen with an original backup",
+      "status": "passed"
+    },
+    {
+      "name": "immutable atomic storage / D04 failed disk writes make no in-memory commit and a later retry works",
+      "status": "passed"
+    },
+    {
+      "name": "workspace preservation / W01 loads validated copies without symbol substitution",
+      "status": "passed"
+    },
+    {
+      "name": "workspace preservation / W02 preserves corrupt raw bytes before fallback autosave",
+      "status": "passed"
+    },
+    {
+      "name": "workspace preservation / W03 failed recovery writes never overwrite the original",
+      "status": "passed"
+    },
+    {
+      "name": "workspace preservation / W04 an occupied recovery slot preserves both rejected records",
+      "status": "passed"
+    },
+    {
+      "name": "workspace preservation / W05 handles a denied browser storage getter without crashing startup",
+      "status": "passed"
+    },
+    {
+      "name": "workspace preservation / W06 invalid edits cannot replace a valid saved definition",
+      "status": "passed"
+    },
+    {
+      "name": "workspace preservation / W07 legacy migration backs up original input and keeps its symbol",
+      "status": "passed"
+    }
+  ]
+}

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { VolumeProfileData } from '../../shared/strategy/types';
-import { NSE_SYMBOLS } from '../../server/data/symbols';
-import { Activity, BarChart2, TrendingUp, ShieldAlert, RefreshCw, Compass } from 'lucide-react';
+import React, { useState } from 'react';
+import { useDerivativeRequest } from './useDerivativeRequest';
+import { parseVolumeProfile } from './derivativeContracts';
+import { NSE_SYMBOLS } from '../../shared/data/symbols';
+import { Activity, BarChart2, TrendingUp, RefreshCw, Compass } from 'lucide-react';
 
 interface VolumeProfileScannerProps {
   onSelectStockAndBacktest: (symbolId: number) => void;
@@ -9,32 +10,14 @@ interface VolumeProfileScannerProps {
 
 export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSelectStockAndBacktest }) => {
   const [selectedSymbolId, setSelectedSymbolId] = useState<number>(4); // Default TCS
-  const [data, setData] = useState<VolumeProfileData | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-
-  const fetchProfile = async (id: number) => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`/api/market/volume-profile?symbolId=${id}`);
-      if (res.ok) {
-        const json = await res.json().catch(() => null);
-        if (json && json.success) {
-          setData(json);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load volume profile:', e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchProfile(selectedSymbolId);
-  }, [selectedSymbolId]);
+  const { data, isLoading, error, invalidate, refresh } = useDerivativeRequest(String(selectedSymbolId), '/api/market/volume-profile?symbolId=' + selectedSymbolId, parseVolumeProfile);
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Not observations or a live feed. Uses 20 synthetic price buckets across ±4%, a fictional buy/sell split, VWAP at 99.7% of demo spot and σ at 0.65%; no observed trades or institutional flow.</p>
+      {isLoading && <p role="status">Loading demo/model…</p>}
+      {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+      {data && <p className="text-xs text-neutral-400">{data.provenance.source} · Model as-of {data.provenance.asOf}. {data.provenance.assumptions.join('; ')}</p>}
       {/* Header & Controls */}
       <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -44,32 +27,34 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Institutional Volume Profile & Microstructure VWAP</span>
+                <span>Modeled Volume Profile & VWAP</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono">
-                  SmartAPI High-Resolution Distribution
+                  Fictional demo distribution
                 </span>
               </h3>
               <p className="text-xs text-neutral-400">
-                Point of Control (POC), 70% Value Area (VAH / VAL), Session VWAP with ±1σ, ±2σ, ±3σ Standard Deviation Bands
+                Point of Control (POC), 70% Value Area (VAH / VAL), Modeled VWAP with ±1σ, ±2σ, ±3σ Standard Deviation Bands
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <select
+              aria-label="Model symbol"
               value={selectedSymbolId}
-              onChange={e => setSelectedSymbolId(Number(e.target.value))}
+              onChange={e => { invalidate(); setSelectedSymbolId(Number(e.target.value)); }}
               className="bg-[#141417] border border-[rgba(236,236,237,0.12)] text-white text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-purple-500"
             >
               {NSE_SYMBOLS.map(s => (
                 <option key={s.id} value={s.id}>
-                  {s.ticker} - {s.name.slice(0, 22)} (₹{s.currentPrice})
+                  {s.ticker} - {s.name.slice(0, 22)}
                 </option>
               ))}
             </select>
 
             <button
-              onClick={() => fetchProfile(selectedSymbolId)}
+              onClick={refresh}
+              aria-label="Refresh demo volume profile"
               disabled={isLoading}
               className="p-2 rounded-xl bg-[#1d1d21] hover:bg-[#27272a] border border-[rgba(236,236,237,0.12)] text-neutral-300 hover:text-white transition-all disabled:opacity-50"
             >
@@ -82,7 +67,7 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-2 border-t border-[rgba(236,236,237,0.08)]">
             <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Spot Price (LTP)</span>
+              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Demo Spot Price</span>
               <div className="text-base font-extrabold text-white font-mono mt-0.5">
                 ₹{data.spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
@@ -156,7 +141,7 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
                     {/* Price Tag */}
                     <div className="w-20 text-right shrink-0 flex items-center justify-end gap-1">
                       {lvl.isPOC && <span className="text-[9px] px-1 bg-amber-500 text-[#0c0c0e] rounded font-bold">POC</span>}
-                      {isSpotNearby && <span className="text-[9px] px-1 bg-cyan-500 text-[#0c0c0e] rounded font-bold">LTP</span>}
+                      {isSpotNearby && <span className="text-[9px] px-1 bg-cyan-500 text-[#0c0c0e] rounded font-bold">DEMO</span>}
                       <span>₹{lvl.price.toFixed(1)}</span>
                     </div>
 
@@ -191,7 +176,7 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
                 <Activity className="w-4 h-4 text-cyan-400" />
                 <span>VWAP Standard Deviation Bands</span>
               </h4>
-              <p className="text-[10px] text-neutral-400 mt-0.5">Statistical mean-reversion boundaries</p>
+              <p className="text-[10px] text-neutral-400 mt-0.5">Fictional bands, not observed statistical boundaries</p>
             </div>
 
             <div className="space-y-2 font-mono text-xs">
@@ -201,7 +186,7 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
               </div>
 
               <div className="p-2.5 bg-[#141417] rounded-xl border border-rose-900/20 flex items-center justify-between">
-                <span className="text-rose-300 font-semibold">+2σ Band (Institutional Exhaustion)</span>
+                <span className="text-rose-300 font-semibold">+2σ Band (Modeled Upper Band)</span>
                 <span className="text-white font-extrabold">₹{data.stdDev2Upper}</span>
               </div>
 
@@ -235,7 +220,7 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
             </div>
 
             <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)] text-xs space-y-1.5">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Buyer vs Seller Absorption</span>
+              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Modeled Buy/Sell Split</span>
               <div className="flex items-center justify-between text-xs font-bold">
                 <span className="text-emerald-400">Buyers {data.buyPressurePct}%</span>
                 <span className="text-rose-400">Sellers {(100 - data.buyPressurePct).toFixed(1)}%</span>
