@@ -24,7 +24,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --include=dev
 
       - name: Typecheck
         run: npm run typecheck
@@ -36,6 +36,8 @@ jobs:
         run: npm run test:coverage
 
       - name: Build application once
+        env:
+          NODE_ENV: production
         run: npm run build
 
       - name: Production read-only smoke
@@ -47,6 +49,7 @@ jobs:
           EXPOSURE_MODE: demo-public
           STORAGE_MODE: ephemeral
           HOST: 127.0.0.1
+          PUBLIC_ORIGIN: https://stragy.onrender.com
           PORT: 3903
           SMOKE_BASE_URL: http://127.0.0.1:3903
         run: |

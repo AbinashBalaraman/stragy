@@ -62,7 +62,8 @@ export async function createApp(deps: AppDependencies = {}) {
       const value = match?.[1] ?? '';
       if (!match || !config.API_ACCESS_TOKEN || !tokenMatches(value, config.API_ACCESS_TOKEN)) return next(new ApiFailure(401, 'UNAUTHORIZED', 'A private API access token is required.'));
     }
-    if (req.method !== 'GET' && req.get('origin') && req.get('origin') !== `${req.protocol}://${req.get('host')}`) return next(new ApiFailure(403, 'ORIGIN_REJECTED', 'Cross-origin writes are not allowed.'));
+    const expectedOrigin = config.PUBLIC_ORIGIN ?? `${req.protocol}://${req.get('host')}`;
+    if (req.method !== 'GET' && req.get('origin') && req.get('origin') !== expectedOrigin) return next(new ApiFailure(403, 'ORIGIN_REJECTED', 'Cross-origin writes are not allowed.'));
     const key = req.socket.remoteAddress ?? 'unknown', now = Date.now();
     const c = clients.get(key);
     if (!c || now - c.time >= 60_000) clients.set(key, { time: now, count: 1 });

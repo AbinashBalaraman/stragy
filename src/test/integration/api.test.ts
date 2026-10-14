@@ -183,6 +183,35 @@ describe('bounded offline API contracts', () => {
     expect(accepted.status).toBe(202);
     expect((await poll(app, accepted.body.jobId)).body.status).toBe('succeeded');
   });
+  it('allows HTTPS browser chat and backtests behind Render HTTP without trusting proxy headers', async () => {
+    const publicOrigin = 'https://stragy.onrender.com';
+    const { app, enqueue, repository } = await setup({ NODE_ENV: 'production', EXPOSURE_MODE: 'demo-public', PUBLIC_ORIGIN: publicOrigin });
+    expect(app.get('trust proxy')).toBe(false);
+    const draft = await bounded(request(app).post('/api/v2/ai/proposals')
+      .set('Host', 'internal-proxy.test:10000').set('Origin', publicOrigin)
+      .set('X-Forwarded-Proto', 'http').set('X-Forwarded-Host', 'untrusted.invalid')
+      .send({ prompt: 'set stop loss to 3%', currentStrategy: strategy(), allowLocalFallback: true }));
+    expect(draft.status).toBe(200);
+    expect(draft.body).toMatchObject({ ok: true, proposal: { method: 'local_heuristic', applied: false, executes: false, provider: { aiGenerated: false } } });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(repository.listRuns()).toEqual([]);
+    const accepted = await bounded(request(app).post('/api/v2/backtests')
+      .set('Host', 'internal-proxy.test:10000').set('Origin', publicOrigin).send(body()));
+    expect(accepted.status).toBe(202);
+    expect((await poll(app, accepted.body.jobId)).body.status).toBe('succeeded');
+  });
+  it.each([
+    'https://untrusted.invalid', 'http://stragy.onrender.com',
+    'https://stragy.onrender.com.untrusted.invalid', 'https://stragy.onrender.com:444',
+    'https://stragy.onrender.com/', 'null',
+  ])('keeps foreign or malformed origins rejected behind a proxy: %s', async origin => {
+    const { app, enqueue } = await setup({ NODE_ENV: 'production', EXPOSURE_MODE: 'demo-public', PUBLIC_ORIGIN: 'https://stragy.onrender.com' });
+    errorContract(await bounded(request(app).post('/api/v2/backtests')
+      .set('Host', 'untrusted.invalid').set('Origin', origin)
+      .set('X-Forwarded-Host', 'stragy.onrender.com').set('X-Forwarded-Proto', 'https')
+      .send(body())), 403, 'ORIGIN_REJECTED');
+    expect(enqueue).not.toHaveBeenCalled();
+  });
   it('rejects oversized and malformed JSON without enqueueing or saving', async () => {
     const { app, enqueue, repository } = await setup();
     errorContract(await bounded(request(app).post('/api/v2/backtests').send({ prompt: 'x'.repeat(2048) })), 413, 'BODY_TOO_LARGE');

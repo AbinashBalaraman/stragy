@@ -1,9 +1,17 @@
 import { z } from 'zod';
 
+const PublicOriginSchema = z.string().trim().url().refine(value => {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash;
+  } catch { return false; }
+}, 'Expected an HTTP(S) origin without credentials, a path, query or fragment').transform(value => new URL(value).origin);
+
 const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   HOST: z.string().default('127.0.0.1'),
+  PUBLIC_ORIGIN: PublicOriginSchema.optional(),
   DATA_MODE: z.enum(['demo', 'real']).default('demo'),
   AI_PROVIDER: z.enum(['none', 'gemini', 'openai', 'openrouter', 'deepseek']).default('none'),
   EXPOSURE_MODE: z.enum(['private', 'demo-public']).default('private'),
@@ -17,7 +25,9 @@ const ConfigSchema = z.object({
 });
 export type RuntimeConfig = z.infer<typeof ConfigSchema>;
 export function parseConfig(env: Record<string, string | undefined> = process.env): RuntimeConfig {
-  const parsed = ConfigSchema.safeParse(env);
+  // Render terminates HTTPS before proxying to Express. Use trusted deployment
+  // configuration, never client-controlled forwarded headers, for browser writes.
+  const parsed = ConfigSchema.safeParse({ ...env, PUBLIC_ORIGIN: env.PUBLIC_ORIGIN ?? env.RENDER_EXTERNAL_URL });
   if (!parsed.success) throw new Error('Invalid server configuration: ' + parsed.error.issues.map(i => i.path.join('.')).join(', '));
   const config = parsed.data;
   if (config.EXPOSURE_MODE === 'demo-public' && (config.DATA_MODE !== 'demo' || config.AI_PROVIDER !== 'none')) throw new Error('Public demo mode cannot enable real data or external AI.');
