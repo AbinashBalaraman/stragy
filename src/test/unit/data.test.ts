@@ -1,0 +1,15 @@
+import {describe,it,expect,afterEach,vi} from 'vitest';
+import {loadMarketSeries,getMarketSeries,configureMarketProvider,validateBars,validateDate,generateDemoBars} from '../../server/data/marketSeries';
+import {getSymbolById} from '../../server/data/symbols';
+import {yahooTickerUrl,findNearestTradingDate,getLastMarketOperatedDate} from '../../server/data/realMarketData';
+import {getSmartApiStatus,getOptionChainData,calculateStockTrends,calculateGttBracketOrder} from '../../server/data/smartApi';
+afterEach(()=>{configureMarketProvider();vi.unstubAllEnvs();});
+describe('honest datasets',()=>{
+ it('demo requires explicit selection and retains deterministic immutable provenance',async()=>{vi.stubEnv('DATA_MODE','demo');const a=await loadMarketSeries(1,{asOf:'2025-01-10'});const b=await loadMarketSeries(1,{asOf:'2025-01-10'});expect(a.provenance.checksum).toBe(b.provenance.checksum);expect(a.provenance.source).toBe('DETERMINISTIC_DEMO_V1');expect(a.bars.at(-1)!.date).toBe('2025-01-10');expect(Object.isFrozen(a.bars[0])).toBe(true);});
+ it('real failure never fabricates and unknown IDs never fall back',async()=>{vi.stubEnv('DATA_MODE','real');await expect(loadMarketSeries(1)).rejects.toMatchObject({code:'PROVIDER_UNAVAILABLE'});expect(()=>getSymbolById(-1)).toThrow();expect(()=>getMarketSeries(999999)).toThrow();});
+ it('deduplicates provider work and freezes per-request historical snapshots',async()=>{vi.stubEnv('DATA_MODE','real');const load=vi.fn(async()=>generateDemoBars(1));configureMarketProvider({name:'OFFLINE_FIXTURE',load});const [a,b]=await Promise.all([loadMarketSeries(1,{asOf:'2025-01-10'}),loadMarketSeries(1,{asOf:'2025-01-13'})]);expect(load).toHaveBeenCalledTimes(1);expect(a.bars.at(-1)!.date).toBe('2025-01-10');expect(b.bars.at(-1)!.date).toBe('2025-01-13');expect(a.provenance.checksum).not.toBe(b.provenance.checksum);});
+ it('rejects invalid dates, bars and precoverage requests',async()=>{expect(()=>validateDate('2025-02-30')).toThrow();const bars=generateDemoBars(1);expect(()=>validateBars([{...bars[0],open:NaN}])).toThrow();expect(()=>validateBars([bars[1],bars[0]])).toThrow();await expect(loadMarketSeries(1,{mode:'demo',asOf:'2023-01-01'})).rejects.toMatchObject({code:'OUT_OF_COVERAGE'});expect(()=>findNearestTradingDate('1990-01-01')).toThrow();});
+ it('encodes raw M&M once and blocks suspicious unrelated mappings',()=>{expect(yahooTickerUrl('M&M')).toContain('M%26M.NS');expect(yahooTickerUrl('M&M')).not.toContain('%2526');expect(()=>yahooTickerUrl('ZOMATO')).toThrow();expect(()=>yahooTickerUrl('TATAMOTORS')).toThrow();});
+ it('only treats completed sessions as available',()=>{expect(getLastMarketOperatedDate(new Date('2026-10-13T08:00:00Z')).toISOString().slice(0,10)).toBe('2026-10-12');});
+ it('status is observational and real derivatives unavailable',async()=>{vi.stubEnv('DATA_MODE','real');const status=await getSmartApiStatus();expect(status.latencyMs).toBeNull();expect(status.activeSymbolsTracked).toBe(0);expect(()=>getOptionChainData(1)).toThrow();expect(()=>calculateStockTrends([],getSymbolById(1))).toThrow();expect(()=>calculateGttBracketOrder(1,'BUY',-1)).toThrow();});
+});

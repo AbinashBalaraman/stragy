@@ -254,7 +254,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         type="button"
         onClick={() => setIsOpen(prev => !prev)}
         className="group flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 rounded-xl bg-[#141417] hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] hover:border-[#00ffa3]/50 shadow-sm transition-all text-left focus:outline-none focus:border-[#00ffa3] select-none shrink-0"
-        title="Search & select from 2,000+ stocks & indices (Click to open search)"
+        title="Search demo instruments. Membership and reference prices are illustrative, not live."
       >
         {/* Ticker & Exchange Badge */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -274,7 +274,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           </span>
         </div>
 
-        {/* Live Price & Change Badge */}
+        {/* Illustrative reference price and change */}
         <div className="hidden md:flex items-center gap-1.5 shrink-0">
           <span className="text-xs font-mono font-semibold text-[#ececed]">
             ₹{currentSymbol.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -329,7 +329,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                 setHighlightedIndex(0);
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Search 2,000+ stocks or indices (e.g. NIFTY, RELIANCE, TATA)..."
+              placeholder="Search demo instruments (e.g. RELIANCE, TCS)..."
               className="w-full bg-transparent text-[#ececed] placeholder-neutral-500 text-xs sm:text-sm font-medium focus:outline-none"
             />
             {searchQuery && (
@@ -490,7 +490,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       </p>
                     </div>
 
-                    {/* Right: Live Price & Today's % Change */}
+                    {/* Right: illustrative reference price and change */}
                     <div className="text-right shrink-0 flex items-center gap-2.5">
                       <div>
                         <div className="text-xs sm:text-sm font-bold font-mono text-white">

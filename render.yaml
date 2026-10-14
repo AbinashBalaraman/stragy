@@ -3,10 +3,20 @@ services:
     name: stragy
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
         value: --max-old-space-size=450
+      - key: HOST
+        value: 0.0.0.0
+      - key: EXPOSURE_MODE
+        value: demo-public
+      - key: DATA_MODE
+        value: demo
+      - key: AI_PROVIDER
+        value: none
+      - key: STORAGE_MODE
+        value: ephemeral

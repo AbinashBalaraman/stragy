@@ -1,0 +1,72 @@
+{
+  "runner": "Node API fallback, not Vitest",
+  "node": "v26.5.0",
+  "entry": "G:\\Projects\\Stragy\\stragy-code\\.verify-cjs\\src\\test\\integration\\api.test.js",
+  "expectedTests": 12,
+  "collected": 12,
+  "executed": 12,
+  "passed": 12,
+  "failed": 0,
+  "complete": true,
+  "success": true,
+  "mock": "Unchanged emitted vi.mock async factory; original production loadMarketSeries validation runs before synthetic fixture replacement",
+  "requests": "Real Supertest against real Express; no request/response shims",
+  "limitations": [
+    "Sequential Node assert adapter, not Vitest; no native worker, transform, coverage, or general Vitest compatibility.",
+    "Only this file's APIs are supported; unsupported APIs/assertions throw and fail the report.",
+    "Requires prior TypeScript CommonJS emission and real installed Express/Supertest dependencies.",
+    "Controlled live export proxy initializes the unchanged async fixture factory before tests; early export consumption fails.",
+    "External fetch is blocked; authentication tokens and market bars are synthetic fixtures, not live verification."
+  ],
+  "tests": [
+    {
+      "name": "bounded offline API contracts / reports healthy honest demo capabilities without live execution or verified AI",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / rejects invalid strategy, numeric input and unknown input before enqueue",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / does not fabricate missing runs or jobs",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / enqueues v2 research, polls a valid result and retrieves immutable copies",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / reuses identical idempotent requests but rejects conflicting input",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / rejects cross-origin writes while allowing same-origin writes and reads",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / rejects oversized and malformed JSON without enqueueing or saving",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / requires synthetic Bearer authentication in private production",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / rejects a bare token without the Bearer authorization scheme",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / denies public-demo server saves and leaves storage unchanged",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / returns an explicit local draft without applying, saving or executing it",
+      "status": "passed"
+    },
+    {
+      "name": "bounded offline API contracts / fails closed rather than returning a succeeded job with a missing result",
+      "status": "passed"
+    }
+  ],
+  "harnessErrors": []
+}

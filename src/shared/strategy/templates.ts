@@ -1,4 +1,9 @@
 import { StrategyAST } from './types';
+import { getSymbolByTicker } from '../data/symbols';
+
+const defaultInstrument = getSymbolByTicker('RELIANCE');
+if (!defaultInstrument) throw new Error('Template instrument RELIANCE is unavailable');
+const DEFAULT_SYMBOL_ID = defaultInstrument.id;
 
 export interface StrategyTemplateItem {
   id: string;
@@ -17,12 +22,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Trend Following',
     description: 'Institutional trend-following breakout: Supertrend (10, 3) confirmed with 200 EMA regime filter and 20 Volume SMA expansion.',
     suitability: 'Reliance (RELIANCE.NSE) & high-beta Indian market blue-chips',
-    expectedWinRate: '58% - 68% (High Profit Factor)',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'Reliance Supertrend + EMA + Volume Expansion',
       description: 'Supertrend(10,3) bullish signal above 200 EMA with 20-day volume expansion and dynamic trailing stop.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'st1', type: 'SUPERTREND', params: { period: 10, multiplier: 3 } },
         { id: 'ema200', type: 'EMA', params: { period: 200 } },
@@ -55,12 +60,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Trend Following',
     description: 'Rides sustained momentum on NSE large caps using Supertrend(10, 3) confirmed with 50 EMA trend filter.',
     suitability: 'High-beta trending stocks (Reliance, Tata Motors, Bank Nifty)',
-    expectedWinRate: '48% - 55% (High Profit Factor)',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'Supertrend Trend Surfer',
       description: 'Supertrend(10,3) bullish signal above 50 EMA with ATR trailing stop.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'st1', type: 'SUPERTREND', params: { period: 10, multiplier: 3 } },
         { id: 'ema50', type: 'EMA', params: { period: 50 } },
@@ -92,12 +97,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Trend Following',
     description: 'Canonical institutional regime filter: 50 SMA crosses above 200 SMA with volume expansion.',
     suitability: 'Long-term equity compounding & swing trading',
-    expectedWinRate: '52% - 60%',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'Classic Golden Cross & Volume',
       description: '50 SMA crosses above 200 SMA with trailing protection.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'sma50', type: 'SMA', params: { period: 50 } },
         { id: 'sma200', type: 'SMA', params: { period: 200 } }
@@ -128,12 +133,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Mean Reversion',
     description: 'Catches oversold bounces (RSI < 30) on premier blue-chip constituents when above long-term 100 SMA.',
     suitability: 'Consolidating and range-bound indices (Nifty 50, HDFC Bank, TCS)',
-    expectedWinRate: '65% - 74%',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'RSI Dynamic Mean Reversion',
       description: 'Enters when RSI(14) < 32 in an overarching bull trend, exits when RSI > 68.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'rsi14', type: 'RSI', params: { period: 14 } },
         { id: 'sma100', type: 'SMA', params: { period: 100 } }
@@ -164,12 +169,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Volatility',
     description: 'Detects volatility compression and explosive breakouts with candlestick body confirmation.',
     suitability: 'High volatility breakouts & earning season swings',
-    expectedWinRate: '45% - 53%',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'Bollinger Band Squeeze Breakout',
       description: 'Price crosses above Upper Band with candleBody > 0 expansion.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'bb20', type: 'BBANDS', params: { period: 20, stdDev: 2 } },
         { id: 'ema20', type: 'EMA', params: { period: 20 } }
@@ -200,12 +205,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Momentum',
     description: 'Signals trend acceleration when MACD Line crosses Signal above Zero Line with ATR volatility stop.',
     suitability: 'Mid-cap and sector momentum runners',
-    expectedWinRate: '50% - 58%',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'MACD Zero-Line Acceleration',
       description: 'MACD Line crosses above Signal Line while MACD Histogram is positive.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'macd1', type: 'MACD', params: { fastPeriod: 12, slowPeriod: 26, signalPeriod: 9 } },
         { id: 'ema20', type: 'EMA', params: { period: 20 } }
@@ -236,12 +241,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Breakout',
     description: 'Enters when close breaks above ATR-based volatility envelope with strict trailing stop.',
     suitability: 'High-momentum Indian market breakouts',
-    expectedWinRate: '46% - 54%',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'ATR Volatility Breakout',
       description: 'Close breaks above 20 EMA + 2x ATR(14) volatility expansion.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'ema20', type: 'EMA', params: { period: 20 } },
         { id: 'atr14', type: 'ATR', params: { period: 14 } }
@@ -272,12 +277,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     category: 'Institutional',
     description: 'Toby Crabel Narrow Range 7 (NR7) daily compression proxy using Bollinger squeeze and breakout.',
     suitability: 'NSE Intraday & Next-Day swing volatility expansion',
-    expectedWinRate: '56% - 64%',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'NR7 Volatility Compression Breakout',
       description: 'Narrow range contraction leading into an explosive directional breakout.',
       version: 1,
-      universe: { symbolId: 1, timeframe: '1D' },
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
       indicators: [
         { id: 'bb1', type: 'BBANDS', params: { period: 20, stdDev: 2 } },
         { id: 'ema20', type: 'EMA', params: { period: 20 } },
