@@ -1,4 +1,3 @@
-import { formatCurrency, formatNumber } from '../../client/format';
 import React, { useState } from 'react';
 import {
   ResponsiveContainer,
@@ -90,36 +89,35 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
       </div>
 
       {/* Tab 1: Monte Carlo Simulation */}
-      <p className="text-xs text-neutral-400">IID daily net-equity return resampling, seed {monteCarlo.seed ?? 'N/A'}. Observed horizon only. This is not a forecast and ignores serial dependence. {monteCarlo.reason}</p>
       {activeTab === 'monteCarlo' && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
               <span className="text-neutral-400 block mb-1">P10 Conservative Equity</span>
               <span className="text-rose-400 font-mono font-bold text-sm">
-                {formatCurrency(monteCarlo.p10TerminalEquity)}
+                ₹{monteCarlo.p10TerminalEquity.toLocaleString('en-IN')}
               </span>
             </div>
             <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
               <span className="text-neutral-400 block mb-1">P50 Median Equity</span>
               <span className="text-[#00ffa3] font-mono font-bold text-sm">
-                {formatCurrency(monteCarlo.p50TerminalEquity)}
+                ₹{monteCarlo.p50TerminalEquity.toLocaleString('en-IN')}
               </span>
             </div>
             <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
               <span className="text-neutral-400 block mb-1">P90 Optimistic Equity</span>
               <span className="text-[#00ffa3] font-mono font-bold text-sm">
-                {formatCurrency(monteCarlo.p90TerminalEquity)}
+                ₹{monteCarlo.p90TerminalEquity.toLocaleString('en-IN')}
               </span>
             </div>
             <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
-              <span className="text-neutral-400 block mb-1">Prob of Drawdown ≥ 15%</span>
+              <span className="text-neutral-400 block mb-1">Prob of Drawdown &gt; 15%</span>
               <span
                 className={`font-mono font-bold text-sm ${
-                  (monteCarlo.probDrawdownOver15 ?? 0) > 30 ? 'text-rose-400' : 'text-[#00ffa3]'
+                  monteCarlo.probDrawdownOver15 > 30 ? 'text-rose-400' : 'text-[#00ffa3]'
                 }`}
               >
-                {formatNumber(monteCarlo.probDrawdownOver15, 1, '%')}
+                {monteCarlo.probDrawdownOver15}%
               </span>
             </div>
           </div>
@@ -141,9 +139,9 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                   formatter={(val: any) => [`₹${Number(val).toLocaleString('en-IN')}`]}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                <Line type="monotone" dataKey="p90" stroke="#00ffa3" strokeWidth={1.5} dot={false} name="90th Percentile" />
+                <Line type="monotone" dataKey="p90" stroke="#00ffa3" strokeWidth={1.5} dot={false} name="90th Percentile (Bullish)" />
                 <Line type="monotone" dataKey="p50" stroke="#ececed" strokeWidth={2} dot={false} name="50th Percentile (Median)" />
-                <Line type="monotone" dataKey="p10" stroke="#ff4d4d" strokeWidth={1.5} dot={false} name="10th Percentile, not worst case" />
+                <Line type="monotone" dataKey="p10" stroke="#ff4d4d" strokeWidth={1.5} dot={false} name="10th Percentile (Worst Case)" />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -155,7 +153,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
         <div className="space-y-4">
           <div className="flex items-center justify-between p-3.5 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-300 font-semibold">Overfitting Classification:</span>
+              <span className="text-xs text-neutral-300 font-semibold">Overfitting Risk Diagnosis:</span>
               <span
                 className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${
                   trainTestSplit.overfittingRisk === 'LOW'
@@ -236,7 +234,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
         <div className="space-y-3">
           <div className="flex items-center justify-between text-xs text-neutral-400">
             <span>2D Grid: {sensitivityHeatmap.param1Name} (Rows) vs {sensitivityHeatmap.param2Name} (Columns)</span>
-            <span className="text-[#00ffa3] font-semibold">Metric: Net return (%)</span>
+            <span className="text-[#00ffa3] font-semibold">Metric: Sharpe Ratio</span>
           </div>
 
           <div className="overflow-x-auto">
@@ -260,19 +258,19 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                       {row.map((cell, cIdx) => {
                         const val = cell.metricValue;
                         const bgColor =
-                          (val ?? -Infinity) >= 1.5
+                          val >= 1.5
                             ? 'bg-[#00ffa3]/30 text-[#00ffa3]'
-                            : (val ?? -Infinity) >= 1.0
+                            : val >= 1.0
                             ? 'bg-[#00ffa3]/15 text-[#00ffa3]'
-                            : (val ?? -Infinity) >= 0.5
+                            : val >= 0.5
                             ? 'bg-[#00ffa3]/10 text-neutral-200'
-                            : (val ?? -Infinity) >= 0
+                            : val >= 0
                             ? 'bg-[#1d1d21] text-neutral-300'
                             : 'bg-rose-500/20 text-rose-300';
 
                         return (
                           <td key={cIdx} className={`p-2.5 font-mono font-bold rounded m-0.5 ${bgColor}`}>
-                            {formatNumber(val)}
+                            {val}
                           </td>
                         );
                       })}

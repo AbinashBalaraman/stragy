@@ -1,41 +1,102 @@
-import type { IndianCostBreakdown, CostModelConfig } from '../../shared/strategy/types';
-export interface ExecutedTradeLeg { price: number; quantity: number; side: 'BUY' | 'SELL'; timestamp: number; referencePrice?: number; }
-export interface FeeSchedule {
-  id: string; effectiveFrom: string; effectiveTo?: string; verified: boolean; sources: string[];
-  buyStt: number; sellStt: number; exchangeRate: number; sebiRate: number; buyStamp: number; gstRate: number;
-  brokerageRate?: number; brokerageCap?: number; brokerageFlat?: number; buyBrokerageFlat?: number; sellBrokerageFlat?: number;
+import { IndianCostBreakdown, CostModelConfig } from '../../shared/strategy/types';
+
+export interface ExecutedTradeLeg {
+  price: number;
+  quantity: number;
+  side: 'BUY' | 'SELL';
+  timestamp?: number;
 }
-/** Illustrative inherited rates, NOT a verified current or historical statutory schedule. */
-export function approximateSchedule(config: CostModelConfig): FeeSchedule {
-  return { id: 'legacy-illustrative-unverified-v1-' + config.tradeType, effectiveFrom: '1970-01-01', verified: false, sources: [],
-    buyStt: config.tradeType === 'DELIVERY' ? 0.001 : 0, sellStt: config.tradeType === 'DELIVERY' ? 0.001 : 0.00025,
-    exchangeRate: 0.0000345, sebiRate: 0.000001, buyStamp: config.tradeType === 'DELIVERY' ? 0.00015 : 0.00003,
-    gstRate: 0.18, brokerageFlat: config.brokerageFlat };
-}
-export const emptyCosts = (): IndianCostBreakdown => ({ brokerage: 0, stt: 0, exchangeTxnCharges: 0, sebiCharges: 0, stampDuty: 0, gst: 0, slippage: 0, totalCharges: 0, turnover: 0 });
-export function calculateFillCosts(leg: ExecutedTradeLeg, config: CostModelConfig, schedule = approximateSchedule(config)): IndianCostBreakdown {
-  if (![leg.price, leg.quantity, leg.timestamp].every(Number.isFinite) || leg.price <= 0 || leg.quantity < 0) throw new Error('INVALID_FILL');
-  if (leg.quantity === 0) return emptyCosts();
-  const date = new Date(leg.timestamp).toISOString().slice(0, 10);
-  if (date < schedule.effectiveFrom || (schedule.effectiveTo && date > schedule.effectiveTo)) throw new Error('FEE_SCHEDULE_OUT_OF_RANGE');
-  for (const v of [schedule.buyStt, schedule.sellStt, schedule.exchangeRate, schedule.sebiRate, schedule.buyStamp, schedule.gstRate, schedule.brokerageFlat ?? 0, schedule.brokerageRate ?? 0]) if (!Number.isFinite(v) || v < 0) throw new Error('INVALID_FEE_SCHEDULE');
-  const turnover = leg.price * leg.quantity;
-  const brokerage = Math.min(schedule.brokerageCap ?? Infinity, (leg.side === 'BUY' ? schedule.buyBrokerageFlat ?? schedule.brokerageFlat ?? config.brokerageFlat : schedule.sellBrokerageFlat ?? schedule.brokerageFlat ?? config.brokerageFlat) + turnover * (schedule.brokerageRate ?? 0));
-  const stt = config.applyIndianTaxes ? turnover * (leg.side === 'BUY' ? schedule.buyStt : schedule.sellStt) : 0;
-  const exchangeTxnCharges = config.applyIndianTaxes ? turnover * schedule.exchangeRate : 0;
-  const sebiCharges = config.applyIndianTaxes ? turnover * schedule.sebiRate : 0;
-  const stampDuty = config.applyIndianTaxes && leg.side === 'BUY' ? turnover * schedule.buyStamp : 0;
-  const gst = config.applyIndianTaxes ? (brokerage + exchangeTxnCharges + sebiCharges) * schedule.gstRate : 0;
-  const slippage = leg.referencePrice !== undefined ? Math.abs(leg.price - leg.referencePrice) * leg.quantity : 0;
-  // Slippage is already in fill prices/PnL. It is informational, not another cash debit.
-  return { brokerage, stt, exchangeTxnCharges, sebiCharges, stampDuty, gst, slippage, totalCharges: brokerage + stt + exchangeTxnCharges + sebiCharges + stampDuty + gst, turnover };
-}
-export function aggregateCosts(legs: IndianCostBreakdown[]): IndianCostBreakdown {
-  const result = emptyCosts();
-  for (const leg of legs) for (const key of Object.keys(result) as (keyof IndianCostBreakdown)[]) result[key] += leg[key];
-  return result;
-}
-/** Legacy report adapter. New simulations aggregate their actual executed-fill cost entries. */
-export function calculateIndianCosts(trades: { entryPrice: number; exitPrice: number; quantity: number; entryTimestamp?: number; exitTimestamp?: number }[], config: CostModelConfig): IndianCostBreakdown {
-  return aggregateCosts(trades.flatMap(t => [calculateFillCosts({ price: t.entryPrice, quantity: t.quantity, side: 'BUY', timestamp: t.entryTimestamp ?? 0 }, config), calculateFillCosts({ price: t.exitPrice, quantity: t.quantity, side: 'SELL', timestamp: t.exitTimestamp ?? 0 }, config)]));
+
+/**
+ * Calculates Indian Statutory Taxes and Execution Charges with exact regulatory schedule:
+ * - STT (Securities Transaction Tax):
+ *    - Delivery: 0.1% on Buy AND Sell turnover
+ *    - Intraday: 0.025% on Sell turnover only
+ * - Exchange Transaction Charges: 0.00345% of turnover (NSE equity)
+ * - SEBI Turnover Charges: ₹10 per crore (0.0001% of turnover)
+ * - Stamp Duty: 0.015% on Buy turnover
+ * - GST: 18% on (Brokerage + Exchange Txn Charges + SEBI Charges)
+ * - Brokerage: Flat (e.g. ₹20 per executed order leg) or capped
+ * - Slippage: Basis points on entry and exit
+ */
+export function calculateIndianCosts(
+  trades: Array<{
+    entryPrice: number;
+    exitPrice: number;
+    quantity: number;
+  }>,
+  config: CostModelConfig
+): IndianCostBreakdown {
+  let totalTurnover = 0;
+  let totalBrokerage = 0;
+  let totalStt = 0;
+  let totalExchangeTxn = 0;
+  let totalSebi = 0;
+  let totalStampDuty = 0;
+  let totalGst = 0;
+  let totalSlippage = 0;
+
+  for (const trade of trades) {
+    const buyTurnover = trade.entryPrice * trade.quantity;
+    const sellTurnover = trade.exitPrice * trade.quantity;
+    const tradeTurnover = buyTurnover + sellTurnover;
+    totalTurnover += tradeTurnover;
+
+    // Brokerage (2 legs: entry & exit)
+    const tradeBrokerage = config.brokerageFlat * 2;
+    totalBrokerage += tradeBrokerage;
+
+    // Slippage (both legs)
+    const slippageRate = config.slippageBps / 10000;
+    const tradeSlippage = (buyTurnover + sellTurnover) * slippageRate;
+    totalSlippage += tradeSlippage;
+
+    if (config.applyIndianTaxes) {
+      // STT
+      if (config.tradeType === 'DELIVERY') {
+        // 0.1% on buy & sell
+        totalStt += (buyTurnover + sellTurnover) * 0.001;
+      } else {
+        // 0.025% on sell only
+        totalStt += sellTurnover * 0.00025;
+      }
+
+      // Exchange Transaction Fee (0.00345%)
+      const exchangeFee = tradeTurnover * 0.0000345;
+      totalExchangeTxn += exchangeFee;
+
+      // SEBI Turnover Fee (₹10 / crore = 0.000001)
+      const sebiFee = tradeTurnover * 0.000001;
+      totalSebi += sebiFee;
+
+      // Stamp duty (0.015% on buy turnover)
+      const stampDuty = buyTurnover * 0.00015;
+      totalStampDuty += stampDuty;
+
+      // GST (18% on Brokerage + Exchange + SEBI)
+      const taxableAmount = tradeBrokerage + exchangeFee + sebiFee;
+      totalGst += taxableAmount * 0.18;
+    }
+  }
+
+  const totalCharges =
+    totalBrokerage +
+    totalStt +
+    totalExchangeTxn +
+    totalSebi +
+    totalStampDuty +
+    totalGst +
+    totalSlippage;
+
+  return {
+    brokerage: Number(totalBrokerage.toFixed(2)),
+    stt: Number(totalStt.toFixed(2)),
+    exchangeTxnCharges: Number(totalExchangeTxn.toFixed(2)),
+    sebiCharges: Number(totalSebi.toFixed(2)),
+    stampDuty: Number(totalStampDuty.toFixed(2)),
+    gst: Number(totalGst.toFixed(2)),
+    slippage: Number(totalSlippage.toFixed(2)),
+    totalCharges: Number(totalCharges.toFixed(2)),
+    turnover: Number(totalTurnover.toFixed(2))
+  };
 }

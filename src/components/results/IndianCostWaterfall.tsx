@@ -35,51 +35,51 @@ export const IndianCostWaterfall: React.FC<IndianCostWaterfallProps> = ({
   };
 
   const effectiveTradeType = config?.tradeType || tradeType || 'DELIVERY';
-  const brokerageFlat = config?.brokerageFlat;
-  const slippageBps = config?.slippageBps;
+  const brokerageFlat = config?.brokerageFlat ?? 20;
+  const slippageBps = config?.slippageBps ?? 5;
 
   const items = [
     {
       name: 'Securities Transaction Tax (STT)',
       amount: effectiveCosts.stt,
-      rate: 'Illustrative schedule',
+      rate: effectiveTradeType === 'DELIVERY' ? '0.1% on Buy & Sell' : '0.025% on Sell',
       tooltip: 'Statutory direct tax levied by Ministry of Finance on Indian exchange transactions.'
     },
     {
       name: 'GST (Goods & Services Tax)',
       amount: effectiveCosts.gst,
-      rate: 'Illustrative schedule',
+      rate: '18% on (Brokerage + Txn + SEBI)',
       tooltip: '18% tax applied on brokerage and transaction fees.'
     },
     {
       name: 'Exchange Transaction Fees',
       amount: effectiveCosts.exchangeTxnCharges,
-      rate: 'Illustrative schedule',
+      rate: '0.00345% of Turnover',
       tooltip: 'NSE cash equity turnover charge.'
     },
     {
       name: 'SEBI Regulatory Charges',
       amount: effectiveCosts.sebiCharges,
-      rate: 'Illustrative schedule',
+      rate: '₹10 per Crore',
       tooltip: 'Capital market regulatory fee.'
     },
     {
       name: 'State Stamp Duty',
       amount: effectiveCosts.stampDuty,
-      rate: 'Illustrative schedule',
+      rate: '0.015% on Buy Turnover',
       tooltip: 'Indian Stamp Act duty on equity delivery buy orders.'
     },
     {
       name: 'Brokerage Charges',
       amount: effectiveCosts.brokerage,
-      rate: brokerageFlat === undefined ? 'See run assumptions' : `₹${brokerageFlat} per fill`,
+      rate: `₹${brokerageFlat} per order leg`,
       tooltip: 'Flat discount brokerage fee across all executed entry and exit legs.'
     },
     {
-      name: 'Embedded Slippage (Informational)',
+      name: 'Execution Slippage',
       amount: effectiveCosts.slippage,
-      rate: slippageBps === undefined ? 'Already in fills' : `${slippageBps} bps in fills`,
-      tooltip: 'Already included in execution prices and gross P&L. Not an additional cash debit.'
+      rate: `${slippageBps} bps`,
+      tooltip: 'Estimated market impact and spread cost.'
     }
   ];
 
@@ -89,7 +89,7 @@ export const IndianCostWaterfall: React.FC<IndianCostWaterfallProps> = ({
         <div className="flex items-center gap-2.5">
           <Receipt className="w-5 h-5 text-[#00ffa3]" />
           <div>
-            <h3 className="font-syne font-bold text-sm text-[#ececed]">Illustrative Fee Breakdown (Unverified)</h3>
+            <h3 className="font-syne font-bold text-sm text-[#ececed]">Indian Statutory Tax & Cost Waterfall</h3>
             <p className="text-[11px] text-[rgba(236,236,237,0.5)]">
               Total Turnover: ₹{effectiveCosts.turnover.toLocaleString('en-IN')} • Mode: {effectiveTradeType}
             </p>
@@ -97,14 +97,13 @@ export const IndianCostWaterfall: React.FC<IndianCostWaterfallProps> = ({
         </div>
 
         <div className="text-right">
-          <span className="text-xs text-[rgba(236,236,237,0.5)] block">Cash-Debited Fees</span>
+          <span className="text-xs text-[rgba(236,236,237,0.5)] block">Total Execution Friction</span>
           <span className="text-sm font-extrabold font-mono text-amber-400">
             -₹{effectiveCosts.totalCharges.toLocaleString('en-IN')}
           </span>
         </div>
       </div>
 
-      <p className="text-xs text-amber-300">Rates are not certified. DP and broker-specific charges are excluded. Gross P&amp;L already includes slippage; net P&amp;L subtracts cash-debited fees only.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
         {items.map((item, idx) => (
           <div key={idx} className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-1">

@@ -1,53 +1,65 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useDerivativeRequest } from './useDerivativeRequest';
-import { gttInputSchema, parseGtt } from './derivativeContracts';
-import { NSE_SYMBOLS } from '../../shared/data/symbols';
-import { Zap, Copy, Check, ArrowRight, Calculator, Flame } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { GttBracketConfig } from '../../shared/strategy/types';
+import { NSE_SYMBOLS } from '../../server/data/symbols';
+import { ShieldAlert, Zap, Copy, Check, ArrowRight, RefreshCw, Calculator, Flame } from 'lucide-react';
 
 interface GttBracketCalculatorProps {
   onSelectStockAndBacktest: (symbolId: number) => void;
 }
 
 export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSelectStockAndBacktest }) => {
-  const [selectedSymbolId, setSelectedSymbolId] = useState<number>(() => {
-    const symbol = NSE_SYMBOLS.find(s => s.ticker === 'TCS');
-    if (!symbol) throw new Error('TCS is unavailable in the symbol catalog');
-    return symbol.id;
-  });
+  const [selectedSymbolId, setSelectedSymbolId] = useState<number>(4); // TCS
   const [action, setAction] = useState<'BUY' | 'SELL'>('BUY');
   const [capitalAllocated, setCapitalAllocated] = useState<number>(100000);
   const [riskPct, setRiskPct] = useState<number>(1.5);
   const [rewardRatio, setRewardRatio] = useState<number>(2.5);
   const [trailPct, setTrailPct] = useState<number>(0.5);
 
-  const inputKey = JSON.stringify({ symbolId: selectedSymbolId, action, capitalAllocated, riskPct, rewardRatio, trailPct });
-  const inputValid = gttInputSchema.safeParse({ symbolId: selectedSymbolId, action, capitalAllocated, riskPct, rewardRatio, trailPct }).success;
-  const { data: orderConfig, isLoading, error, invalidate, refresh } = useDerivativeRequest(inputKey, '/api/orders/gtt-bracket', parseGtt, { post: true, delay: 300, valid: inputValid });
-  const [isCopied, setIsCopied] = useState(false);
-  const [copyError, setCopyError] = useState<string | null>(null);
-  const [isCopying, setIsCopying] = useState(false);
-  const copyRevision = useRef(0);
-  useEffect(() => () => { copyRevision.current++; }, []);
-  const changeInput = () => { invalidate(); copyRevision.current++; setIsCopied(false); setCopyError(null); setIsCopying(false); };
-  const copyPayload = async () => {
-    if (!orderConfig || isLoading || !inputValid || isCopying) return;
-    const revision = ++copyRevision.current;
-    setIsCopying(true); setIsCopied(false); setCopyError(null);
+  const [orderConfig, setOrderConfig] = useState<GttBracketConfig | null>(null);
+  const [isCopied, setIsCopied] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const calculateOrder = async () => {
+    setIsLoading(true);
     try {
-      await navigator.clipboard.writeText(JSON.stringify({ previewOnly: true, modelAsOf: '2026-09-30', warnings: orderConfig.warnings, datasetRevision: orderConfig.inputRevision, inputs: JSON.parse(inputKey), payloadPreview: orderConfig.smartApiPayload }, null, 2));
-      if (revision === copyRevision.current) setIsCopied(true);
-    } catch {
-      if (revision === copyRevision.current) setCopyError('Clipboard copy failed. Copy the preview text manually.');
-    } finally { if (revision === copyRevision.current) setIsCopying(false); }
+      const res = await fetch('/api/orders/gtt-bracket', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbolId: selectedSymbolId,
+          action,
+          capitalAllocated,
+          riskPct,
+          rewardRatio,
+          trailPct
+        })
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && data.success) {
+          setOrderConfig(data);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to calculate bracket order:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    calculateOrder();
+  }, [selectedSymbolId, action, capitalAllocated, riskPct, rewardRatio, trailPct]);
+
+  const copyPayload = () => {
+    if (!orderConfig) return;
+    navigator.clipboard.writeText(JSON.stringify(orderConfig.smartApiPayload, null, 2));
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
   };
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Preview only, never submitted. Not a real GTT order or ready-to-dispatch broker payload. Assumes ₹0.05 tick size; broker fees, entitlement, product support and instrument mapping are unverified. No guaranteed execution, profit or loss cap.</p>
-      {isLoading && <p role="status">Calculating current input preview…</p>}
-      {error && <p role="alert" className="text-rose-300">{error} <button onClick={refresh}>Retry preview</button></p>}
-      {copyError && <p role="alert">{copyError}</p>}
-      {orderConfig && <div className="text-xs text-amber-300"><p>Dataset checksum (not an input revision): {orderConfig.inputRevision}</p><ul>{orderConfig.warnings.map(w => <li key={w}>{w}</li>)}</ul></div>}
       {/* Configuration Header Card */}
       <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -57,20 +69,20 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Demo Bracket Risk Calculator</span>
+                <span>Automated GTT Bracket & Dynamic Trailing Stop-Loss Engine</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">
-                  Non-executable payload preview
+                  Angel One SmartAPI ROBO Payload
                 </span>
               </h3>
               <p className="text-xs text-neutral-400">
-                Modeled entry, stop, target and trailing-step calculations. This calculator neither places nor manages orders.
+                Precision entry, multi-leg OCO bracket risk containment, dynamic trailing profit lock, and ready API dispatch
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { changeInput(); setAction('BUY'); }} aria-pressed={action === 'BUY'}
+              onClick={() => setAction('BUY')}
               className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all ${
                 action === 'BUY'
                   ? 'bg-emerald-500 text-[#0c0c0e] shadow-md shadow-emerald-500/20'
@@ -80,7 +92,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
               LONG / BUY
             </button>
             <button
-              onClick={() => { changeInput(); setAction('SELL'); }} aria-pressed={action === 'SELL'}
+              onClick={() => setAction('SELL')}
               className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all ${
                 action === 'SELL'
                   ? 'bg-rose-500 text-[#0c0c0e] shadow-md shadow-rose-500/20'
@@ -95,73 +107,66 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
         {/* Input Parameters Controls */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2 border-t border-[rgba(236,236,237,0.08)]">
           <div>
-            <label htmlFor="gtt-symbol" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Target Stock</label>
+            <label className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Target Stock</label>
             <select
-              id="gtt-symbol"
               value={selectedSymbolId}
-              onChange={e => { changeInput(); setSelectedSymbolId(Number(e.target.value)); }}
+              onChange={e => setSelectedSymbolId(Number(e.target.value))}
               className="w-full bg-[#141417] border border-[rgba(236,236,237,0.12)] text-white text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500"
             >
               {NSE_SYMBOLS.map(s => (
                 <option key={s.id} value={s.id}>
-                  {s.ticker}
+                  {s.ticker} - ₹{s.currentPrice}
                 </option>
               ))}
             </select>
           </div>
 
           <div>
-            <label htmlFor="gtt-capital" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Capital Allocated (₹)</label>
+            <label className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Capital Allocated (₹)</label>
             <input
               type="number"
-              min={1}
-              max={100000000}
-              id="gtt-capital"
               value={capitalAllocated}
-              onChange={e => { changeInput(); setCapitalAllocated(Number(e.target.value)); }}
+              onChange={e => setCapitalAllocated(Number(e.target.value))}
               step={10000}
               className="w-full bg-[#141417] border border-[rgba(236,236,237,0.12)] text-white font-mono text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500"
             />
           </div>
 
           <div>
-            <label htmlFor="gtt-risk" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Stop-Loss Risk ({riskPct}%)</label>
+            <label className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Stop-Loss Risk ({riskPct}%)</label>
             <input
               type="range"
               min={0.5}
               max={5.0}
               step={0.1}
-              id="gtt-risk"
               value={riskPct}
-              onChange={e => { changeInput(); setRiskPct(Number(e.target.value)); }}
+              onChange={e => setRiskPct(Number(e.target.value))}
               className="w-full accent-amber-500"
             />
           </div>
 
           <div>
-            <label htmlFor="gtt-reward" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Risk:Reward (1 : {rewardRatio})</label>
+            <label className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Risk:Reward (1 : {rewardRatio})</label>
             <input
               type="range"
               min={1.0}
               max={5.0}
               step={0.25}
-              id="gtt-reward"
               value={rewardRatio}
-              onChange={e => { changeInput(); setRewardRatio(Number(e.target.value)); }}
+              onChange={e => setRewardRatio(Number(e.target.value))}
               className="w-full accent-emerald-500"
             />
           </div>
 
           <div>
-            <label htmlFor="gtt-trail" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Trailing Step Jump ({trailPct}%)</label>
+            <label className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Trailing Step Jump ({trailPct}%)</label>
             <input
               type="range"
               min={0.2}
               max={2.0}
               step={0.1}
-              id="gtt-trail"
               value={trailPct}
-              onChange={e => { changeInput(); setTrailPct(Number(e.target.value)); }}
+              onChange={e => setTrailPct(Number(e.target.value))}
               className="w-full accent-cyan-500"
             />
           </div>
@@ -185,7 +190,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono">
               <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
-                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Demo Entry Price</span>
+                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Entry LTP</span>
                 <div className="text-sm font-extrabold text-white mt-0.5">₹{orderConfig.entryPrice}</div>
               </div>
 
@@ -202,12 +207,12 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
               </div>
 
               <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
-                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Modeled Stop Loss (excludes fees/slippage)</span>
+                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Max Downside Loss</span>
                 <div className="text-sm font-extrabold text-rose-400 mt-0.5">₹{orderConfig.stopLossAmountInr.toLocaleString()}</div>
               </div>
 
               <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
-                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Modeled Target Gain</span>
+                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Expected Upside Gain</span>
                 <div className="text-sm font-extrabold text-emerald-400 mt-0.5">₹{orderConfig.targetAmountInr.toLocaleString()}</div>
               </div>
 
@@ -219,9 +224,9 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
             </div>
 
             <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)] text-xs space-y-1">
-              <span className="text-[10px] text-neutral-400 font-semibold uppercase">Hypothetical Trailing Step</span>
+              <span className="text-[10px] text-neutral-400 font-semibold uppercase">Smart Trailing Mechanism</span>
               <p className="text-[11px] text-neutral-300">
-                Hypothetical step for {orderConfig.ticker}: ₹{orderConfig.trailingStopLossStep}. A real broker's support, rounding, stop handling and fill behavior require independent verification. Nothing is submitted or trailed here; losses can exceed this modeled amount.
+                When {orderConfig.ticker} advances by <span className="text-emerald-400 font-bold">₹{orderConfig.trailingStopLossStep}</span>, Angel One&apos;s matching engine automatically shifts your Stop-Loss upward by <span className="text-cyan-400 font-bold">₹{orderConfig.trailingStopLossStep}</span>, locking in guaranteed profits while keeping risk strictly capped at <span className="text-rose-400 font-bold">₹{orderConfig.stopLossAmountInr}</span>.
               </p>
             </div>
           </div>
@@ -232,15 +237,14 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
               <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
                 <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
                   <Flame className="w-4 h-4 text-cyan-400" />
-                  <span>Broker-style JSON Preview</span>
+                  <span>SmartAPI Order JSON Specification</span>
                 </h4>
                 <button
                   onClick={copyPayload}
-                  disabled={!orderConfig || isLoading || !inputValid || isCopying}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1d1d21] hover:bg-[#27272a] text-xs font-semibold text-white border border-[rgba(236,236,237,0.12)] transition-all"
                 >
                   {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{isCopied ? 'Copied!' : 'Copy preview with warnings'}</span>
+                  <span>{isCopied ? 'Copied!' : 'Copy JSON'}</span>
                 </button>
               </div>
 

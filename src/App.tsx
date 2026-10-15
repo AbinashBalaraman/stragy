@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StrategyAST, SymbolMeta, BacktestResponse } from './shared/strategy/types';
 import { STRATEGY_TEMPLATES } from './shared/strategy/templates';
-import { loadWorkspaceState, saveWorkspaceWithLock, snapshotStrategy, RequestOwner, WORKSPACE_KEY, type WorkspaceRevision } from './client/workspace';
-import { scannerBacktestOptions } from './components/scanner/scannerRequestContext';
-import { requestBacktest } from './client/api';
-import type { RunRequestOptions } from './client/api';
+import { repairStrategyAST } from './shared/strategy/schema';
+import { NSE_SYMBOLS } from './server/data/symbols';
+import { runBacktest } from './server/backtest/engine';
 import { Navbar } from './components/layout/Navbar';
 import { AiCopilotDock } from './components/chat/AiCopilotDock';
 import { StrategyBuilder } from './components/strategy/StrategyBuilder';
@@ -15,78 +14,235 @@ import { Bot, Sparkles, Layers, Radio, BookOpen, X } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'builder' | 'results' | 'scanner' | 'library'>('builder');
-  const [symbols, setSymbols] = useState<SymbolMeta[]>([]);
-  const [initialWorkspace] = useState(() => loadWorkspaceState(() => localStorage, STRATEGY_TEMPLATES[0].strategy, { deferLegacyCommit: true }));
-  const [strategy, setStrategy] = useState<StrategyAST>(initialWorkspace.strategy);
-  const savedRevision = useRef<WorkspaceRevision>(initialWorkspace.revision);
-  const saveQueue = useRef<Promise<void>>(Promise.resolve());
-  const saveGeneration = useRef(0);
-  const currentSymbolId = strategy.universe.symbolId;
-  const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(null);
-  const [runDraftSignature, setRunDraftSignature] = useState<string | null>(null);
-  const [previousStrategy, setPreviousStrategy] = useState<StrategyAST | null>(null);
-  const [comparisonResults, setComparisonResults] = useState<BacktestResponse[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [runError, setRunError] = useState('');
-  const [saveStatus, setSaveStatus] = useState('Saving');
-  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
-  const owner = useRef(new RequestOwner());
-  const controller = useRef<AbortController | null>(null);
-  const toggleCopilot = () => setIsCopilotOpen(value => !value);
-  useEffect(() => {
-    const generation = ++saveGeneration.current;
-    let mounted = true;
-    setSaveStatus('Saving locally');
-    saveQueue.current = saveQueue.current.catch(() => {}).then(async () => {
-      if (generation !== saveGeneration.current) return;
-      const saved = await saveWorkspaceWithLock(localStorage, strategy, savedRevision.current);
-      savedRevision.current = saved.revision;
-      if (mounted && generation === saveGeneration.current) setSaveStatus(saved.recoveryRetained ? 'Saved locally; rejected workspace retained in a recovery backup' : 'Saved locally');
-    }).catch(error => {
-      if (mounted && generation === saveGeneration.current) setSaveStatus('Not saved: ' + (error as Error).message);
-    });
-    return () => { mounted = false; };
-  }, [strategy]);
-  useEffect(() => {
-    const changed = (event: StorageEvent) => {
-      if (event.key === WORKSPACE_KEY && event.newValue !== savedRevision.current) setSaveStatus('Not saved: another tab changed this workspace. Your draft is retained; export it before replacing or reloading.');
-    };
-    window.addEventListener('storage', changed);
-    return () => window.removeEventListener('storage', changed);
-  }, []);
-  useEffect(() => {
-    const abort = new AbortController();
-    fetch('/api/symbols', {signal:abort.signal}).then(r => {if (!r.ok) throw new Error('Symbol service unavailable'); return r.json();})
-      .then(d => {if (!Array.isArray(d.symbols)) throw new Error('Invalid symbols response'); setSymbols(d.symbols);})
-      .catch(e => {if (!abort.signal.aborted) setRunError(e.message);});
-    return () => {abort.abort(); controller.current?.abort(); owner.current.invalidate();};
-  }, []);
-  const invalidateRun = () => {owner.current.invalidate(); controller.current?.abort(); setIsLoading(false);};
-  const changeStrategy = (next: StrategyAST) => { invalidateRun(); setPreviousStrategy(strategy); setStrategy(next); };
-  const undoDraftChange = () => { if (previousStrategy) { invalidateRun(); setStrategy(previousStrategy); setPreviousStrategy(null); } }; 
-  const handleSymbolChange = (symbolId: number) => changeStrategy(snapshotStrategy(strategy, symbolId));
-  const runSnapshot = async (input: StrategyAST, switchToResults = true, options: RunRequestOptions = {}) => {
-    const inputSignature = JSON.stringify(input);
-    let snapshot: StrategyAST;
-    try { snapshot = snapshotStrategy(input); } catch (error) { setRunError((error as Error).message); throw error; }
-    controller.current?.abort(); controller.current = new AbortController();
-    const id = owner.current.begin(); setIsLoading(true); setRunError('');
+  const [symbols, setSymbols] = useState<SymbolMeta[]>(NSE_SYMBOLS);
+  const [currentSymbolId, setCurrentSymbolId] = useState<number>(() => {
     try {
-      const result = await requestBacktest(snapshot, controller.current.signal, options);
-      if (!owner.current.owns(id)) return;
-      setBacktestResult(result); setRunDraftSignature(inputSignature); if (switchToResults) setActiveTab('results');
-    } catch (error) { if (owner.current.owns(id)) {setRunError((error as Error).message); throw error;} }
-    finally {if (owner.current.owns(id)) setIsLoading(false);}
-  };
-  const handleRunBacktest = async () => {try { await runSnapshot(strategy); } catch { /* Visible error is owned above tabs. */ }};
-  const handleLoadStrategy = (input: StrategyAST) => { try {changeStrategy(snapshotStrategy(input)); setActiveTab('builder'); return true;} catch(e) {setRunError((e as Error).message); return false;} };
-  const exportDraft = () => {
-    const blob = new Blob([JSON.stringify(strategy, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob), link = document.createElement('a');
-    link.href = url; link.download = 'stragy-draft.json'; link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+      const savedSym = localStorage.getItem('stragy_active_symbol_id');
+      if (savedSym) {
+        const num = parseInt(savedSym, 10);
+        if (!isNaN(num) && num > 0) return num;
+      }
+    } catch {}
+    return 1;
+  });
+  const [strategy, setStrategy] = useState<StrategyAST>(() => {
+    try {
+      const savedStrat = localStorage.getItem('stragy_active_strategy');
+      if (savedStrat) {
+        const parsed = JSON.parse(savedStrat);
+        if (parsed && typeof parsed === 'object') {
+          return repairStrategyAST(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn('Could not restore strategy from localStorage:', e);
+    }
+    return repairStrategyAST(STRATEGY_TEMPLATES[0].strategy);
+  });
+  const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(() => {
+    try {
+      return runBacktest(strategy || STRATEGY_TEMPLATES[0].strategy);
+    } catch {
+      return null;
+    }
+  });
+  const [comparisonResults, setComparisonResults] = useState<BacktestResponse[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isCopilotOpen, setIsCopilotOpen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('stragy_copilot_open');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return true;
+  });
+  const [isCopilotOpenMobile, setIsCopilotOpenMobile] = useState<boolean>(false);
+
+  const toggleCopilot = () => {
+    setIsCopilotOpen(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('stragy_copilot_open', String(next));
+      } catch {}
+      return next;
+    });
   };
 
+  // Fetch symbols on boot with auto-retry and static fallback
+  useEffect(() => {
+    let isMounted = true;
+    const fetchSymbolsWithRetry = async (retries = 3, delay = 1000) => {
+      try {
+        const res = await fetch('/api/symbols');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (isMounted && data.symbols && data.symbols.length > 0) {
+          setSymbols(data.symbols);
+        }
+      } catch (err) {
+        if (retries > 0 && isMounted) {
+          setTimeout(() => fetchSymbolsWithRetry(retries - 1, delay * 1.5), delay);
+        } else if (isMounted) {
+          // Fall back gracefully to bundled NSE symbols
+          setSymbols(NSE_SYMBOLS);
+        }
+      }
+    };
+
+    fetchSymbolsWithRetry();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Sync universe symbolId when currentSymbolId changes
+  const handleSymbolChange = (symbolId: number) => {
+    setCurrentSymbolId(symbolId);
+    try {
+      localStorage.setItem('stragy_active_symbol_id', symbolId.toString());
+    } catch {}
+    setStrategy(prev => ({
+      ...prev,
+      universe: {
+        ...prev.universe,
+        symbolId
+      }
+    }));
+  };
+
+  // Run backtest simulation with server API + instant local engine fallback
+  const handleRunBacktest = useCallback(async (switchToResults: boolean = true) => {
+    setIsLoading(true);
+    const activeStrategy = {
+      ...strategy,
+      universe: {
+        ...strategy.universe,
+        symbolId: currentSymbolId
+      }
+    };
+
+    try {
+      const res = await fetch('/api/backtests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy: activeStrategy })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.result) {
+          setBacktestResult(data.result);
+          if (switchToResults) {
+            setActiveTab('results');
+          }
+          setIsLoading(false);
+          return;
+        }
+      }
+      throw new Error('Server backtest response was not successful');
+    } catch {
+      // Isomorphic local engine fallback ensures zero downtime
+      try {
+        const localResult = runBacktest(activeStrategy);
+        setBacktestResult(localResult);
+        if (switchToResults) {
+          setActiveTab('results');
+        }
+      } catch (localErr) {
+        console.warn('Local backtest fallback warning:', localErr);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [strategy, currentSymbolId]);
+
+  // Automatically execute initial simulation on boot in the background without stealing active tab
+  const hasRunInitialBacktest = useRef(false);
+  useEffect(() => {
+    if (!hasRunInitialBacktest.current) {
+      hasRunInitialBacktest.current = true;
+      handleRunBacktest(false);
+    }
+  }, [handleRunBacktest]);
+
+  // Handle template or AI variation selection
+  const handleLoadStrategy = (newStrat: StrategyAST) => {
+    const repaired = repairStrategyAST({
+      ...newStrat,
+      universe: {
+        ...newStrat.universe,
+        symbolId: currentSymbolId
+      }
+    });
+    setStrategy(repaired);
+    setActiveTab('builder');
+    setIsCopilotOpenMobile(false);
+  };
+
+  // Handle instant strategy loading, automatic backtest execution, and multi-variation comparison
+  const handleLoadAndRunBacktest = async (newStrat: StrategyAST, allVariations?: StrategyAST[]) => {
+    const repaired = repairStrategyAST({
+      ...newStrat,
+      universe: {
+        ...newStrat.universe,
+        symbolId: currentSymbolId
+      }
+    });
+    setStrategy(repaired);
+    setIsLoading(true);
+
+    try {
+      // 1. Run main/winning backtest
+      let primaryResult: BacktestResponse | null = null;
+      try {
+        const res = await fetch('/api/backtests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy: repaired })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.result) {
+            primaryResult = data.result;
+          }
+        }
+      } catch {}
+
+      if (!primaryResult) {
+        primaryResult = runBacktest(repaired);
+      }
+
+      setBacktestResult(primaryResult);
+
+      // 2. If multiple variations are provided, simulate all of them in parallel to populate comparison matrix
+      if (allVariations && allVariations.length > 0) {
+        const batchResults: BacktestResponse[] = [primaryResult];
+        for (const v of allVariations) {
+          if (v.id === repaired.id) continue;
+          try {
+            const repairedVar = repairStrategyAST({
+              ...v,
+              universe: {
+                ...v.universe,
+                symbolId: currentSymbolId
+              }
+            });
+            const varResult = runBacktest(repairedVar);
+            batchResults.push(varResult);
+          } catch (varErr) {
+            console.warn('Variation backtest error:', varErr);
+          }
+        }
+        setComparisonResults(batchResults);
+      }
+
+      setActiveTab('results');
+    } catch (err) {
+      console.warn('Backtest execution error:', err);
+    } finally {
+      setIsLoading(false);
+      setIsCopilotOpenMobile(false);
+    }
+  };
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#0c0c0e] text-[#ececed] flex flex-col font-sans selection:bg-[#00ffa3] selection:text-[#0c0c0e]">
@@ -104,22 +260,56 @@ export default function App() {
         onToggleCopilot={toggleCopilot}
       />
 
-      <p className="px-4 pt-2 text-xs text-amber-200">Research only. Default bars and reference prices are generated or illustrative demo data, not live market observations. No broker orders.</p>
-      <div role="status" aria-live="polite" className="px-4 py-2 text-xs">{saveStatus}{backtestResult && (runDraftSignature === null ? ' · Retained run selected; builder draft unchanged' : JSON.stringify(strategy) !== runDraftSignature ? ' · Draft changed since this run' : '')}{previousStrategy && <button type="button" onClick={undoDraftChange} className="ml-3 underline">Undo last draft change</button>}{saveStatus.startsWith('Not saved:') && <button type="button" onClick={exportDraft} className="ml-3 underline">Export unsaved draft</button>}</div>
-      {runError && <div role="alert" className="px-4 py-2 text-red-400">{runError}</div>}
       {/* Main Workspace Layout */}
       <div className="flex-1 flex w-full max-w-full overflow-hidden bg-[#0c0c0e]">
         {/* Left AI Copilot Chatbot Section (Docked on left screen) */}
         {isCopilotOpen && (
-          <aside className="fixed inset-0 lg:relative lg:inset-auto w-full lg:w-80 xl:w-[380px] shrink-0 border-r border-[rgba(236,236,237,0.08)] bg-[#0c0c0e] h-[calc(100vh-4rem)] overflow-hidden flex flex-col z-30">
+          <aside className="w-80 md:w-84 xl:w-[380px] shrink-0 border-r border-[rgba(236,236,237,0.08)] bg-[#0c0c0e] h-[calc(100vh-4rem)] overflow-hidden flex flex-col z-30">
             <AiCopilotDock
               strategy={strategy}
               onApplyVariation={handleLoadStrategy}
+              onApplyAndRunBacktest={handleLoadAndRunBacktest}
+              onApplyStrategyEdit={async (instruction: string) => {
+                // Apply edit via Copilot
+              }}
               onRunBacktest={handleRunBacktest}
               onRunScanner={() => setActiveTab('scanner')}
-              onClose={() => setIsCopilotOpen(false)}
             />
           </aside>
+        )}
+
+        {/* Mobile AI Copilot Drawer Overlay */}
+        {isCopilotOpenMobile && (
+          <div className="fixed inset-0 z-50 lg:hidden flex">
+            <div
+              className="fixed inset-0 bg-[#0c0c0e]/80 backdrop-blur-md"
+              onClick={() => setIsCopilotOpenMobile(false)}
+            />
+            <div className="relative w-4/5 max-w-sm h-full bg-[#0c0c0e] border-r border-[rgba(236,236,237,0.08)] shadow-2xl z-50 flex flex-col">
+              <div className="flex items-center justify-between p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#0c0c0e]">
+                <span className="font-bold text-xs text-[#ececed]">AI Strategy Copilot</span>
+                <button
+                  onClick={() => setIsCopilotOpenMobile(false)}
+                  className="p-1 rounded-lg text-neutral-400 hover:text-[#ececed]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden bg-[#0c0c0e]">
+                <AiCopilotDock
+                  strategy={strategy}
+                  onApplyVariation={handleLoadStrategy}
+                  onApplyAndRunBacktest={handleLoadAndRunBacktest}
+                  onApplyStrategyEdit={async () => {}}
+                  onRunBacktest={handleRunBacktest}
+                  onRunScanner={() => {
+                    setActiveTab('scanner');
+                    setIsCopilotOpenMobile(false);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Center/Right Dynamic Canvas */}
@@ -127,7 +317,7 @@ export default function App() {
           {activeTab === 'builder' && (
             <StrategyBuilder
               strategy={strategy}
-              onChange={changeStrategy}
+              onChange={setStrategy}
               onRunBacktest={handleRunBacktest}
               isLoading={isLoading}
             />
@@ -141,7 +331,8 @@ export default function App() {
               onApplyStrategy={handleLoadStrategy}
               onUpdateComparisonList={setComparisonResults}
               onSelectActiveResult={res => {
-                invalidateRun(); setBacktestResult(res); setRunDraftSignature(null);
+                setBacktestResult(res);
+                setStrategy(res.strategy);
               }}
               isLoading={isLoading}
             />
@@ -150,19 +341,20 @@ export default function App() {
           {activeTab === 'scanner' && (
             <MarketScannerView
               strategy={strategy}
-              onSelectStockAndBacktest={(symId, asOf) => {
-                const next = snapshotStrategy(strategy, symId); changeStrategy(next); void runSnapshot(next, true, scannerBacktestOptions(asOf)).catch(() => {});
+              onSelectStockAndBacktest={symId => {
+                handleSymbolChange(symId);
+                handleRunBacktest();
               }}
             />
           )}
 
           {activeTab === 'library' && (
-            <StrategyLibraryView onLoadStrategy={handleLoadStrategy} currentStrategy={strategy} />
+            <StrategyLibraryView onLoadStrategy={handleLoadStrategy} />
           )}
 
           {/* Floating Mobile Copilot Trigger */}
           <button
-            onClick={toggleCopilot}
+            onClick={() => setIsCopilotOpenMobile(true)}
             className="lg:hidden fixed bottom-20 sm:bottom-6 right-4 sm:right-6 p-3 sm:p-3.5 rounded-full bg-[#00ffa3] text-[#0c0c0e] font-bold shadow-2xl shadow-[#00ffa3]/30 flex items-center justify-center z-40 active:scale-95 transition-all hover:bg-[#00ffa3]/90"
             title="Open AI Strategy Copilot"
           >

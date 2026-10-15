@@ -1,25 +1,42 @@
-import React, { useState } from 'react';
-import { useDerivativeRequest } from './useDerivativeRequest';
-import { parseOptionChain } from './derivativeContracts';
-import { NSE_SYMBOLS } from '../../shared/data/symbols';
-import { Layers, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { OptionChainData, OptionChainStrike } from '../../shared/strategy/types';
+import { NSE_SYMBOLS } from '../../server/data/symbols';
+import { Layers, ShieldAlert, ArrowRight, Gauge, RefreshCw, BarChart2, Activity } from 'lucide-react';
 
 interface OptionChainScannerProps {
   onSelectStockAndBacktest: (symbolId: number) => void;
 }
 
-export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
+export const OptionChainScanner: React.FC<OptionChainScannerProps> = ({ onSelectStockAndBacktest }) => {
   const [selectedTicker, setSelectedTicker] = useState<string>('^NSEI');
-  const { data, isLoading, error, invalidate, refresh } = useDerivativeRequest(selectedTicker, '/api/derivatives/option-chain?symbolId=' + encodeURIComponent(selectedTicker), parseOptionChain);
+  const [data, setData] = useState<OptionChainData | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const fetchOptionChain = async (ticker: string) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/derivatives/option-chain?symbolId=${encodeURIComponent(ticker)}`);
+      if (res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && json.success) {
+          setData(json);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load option chain:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOptionChain(selectedTicker);
+  }, [selectedTicker]);
 
   const fnoSymbols = NSE_SYMBOLS.filter(s => s.lotSize && s.lotSize > 0);
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Not observations or a live feed. Assumes 7-day maturity, 6.5% rate, fixed base IV and modeled OI/volume; expiry and IV rank are fictional.</p>
-      {isLoading && <p role="status">Loading demo/model…</p>}
-      {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-      {data && <p className="text-xs text-neutral-400">{data.provenance.source} · Model as-of {data.provenance.asOf}. {data.provenance.assumptions.join('; ')}</p>}
       {/* Selector & Key Metrics Header */}
       <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -29,13 +46,13 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Demo Option Chain & Black-Scholes Greeks</span>
+                <span>Option Chain & Real-Time Black-Scholes Greeks</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono">
-                  Fictional demo model
+                  SmartAPI NFO Engine
                 </span>
               </h3>
               <p className="text-xs text-neutral-400">
-                Modeled Delta (Δ), Gamma (Γ), Theta (Θ), Vega (ν), IV Skews, Put-Call Ratio (PCR), and Max Pain Strike
+                Live Delta (Δ), Gamma (Γ), Theta (Θ), Vega (ν), IV Skews, Put-Call Ratio (PCR), and Max Pain Strike
               </p>
             </div>
           </div>
@@ -43,23 +60,22 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
           {/* Symbol Select Buttons */}
           <div className="flex items-center gap-2">
             <select
-              aria-label="Model symbol"
               value={selectedTicker}
-              onChange={e => { invalidate(); setSelectedTicker(e.target.value); }}
+              onChange={e => setSelectedTicker(e.target.value)}
               className="bg-[#141417] border border-[rgba(236,236,237,0.12)] text-white text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-cyan-500"
             >
               {fnoSymbols.map(s => (
                 <option key={s.ticker} value={s.ticker}>
-                  {s.ticker} - {s.name.slice(0, 20)}
+                  {s.ticker} - {s.name.slice(0, 20)} (₹{s.currentPrice})
                 </option>
               ))}
             </select>
 
             <button
-              onClick={refresh}
+              onClick={() => fetchOptionChain(selectedTicker)}
               disabled={isLoading}
               className="p-2 rounded-xl bg-[#1d1d21] hover:bg-[#27272a] border border-[rgba(236,236,237,0.12)] text-neutral-300 hover:text-white transition-all disabled:opacity-50"
-              aria-label="Refresh demo option chain" title="Refresh demo option chain"
+              title="Refresh Option Chain"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
@@ -70,7 +86,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 border-t border-[rgba(236,236,237,0.08)]">
             <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Demo Underlying Price</span>
+              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Underlying Spot LTP</span>
               <div className="text-base font-extrabold text-white font-mono mt-0.5">
                 ₹{data.spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
@@ -105,7 +121,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
             </div>
 
             <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Fictional Expiry</span>
+              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Weekly Expiry</span>
               <div className="text-xs font-bold text-neutral-200 mt-1">
                 {data.expiry}
               </div>

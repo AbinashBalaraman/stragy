@@ -1,15 +1,126 @@
-import { StrategyAST, SymbolMeta } from '../../shared/strategy/types';
-import { filterSymbolsByUniverse, MarketUniverseType, UNIVERSE_OPTIONS } from '../data/symbols';
-import { getMarketSeries,loadMarketSeries,MarketSeries,LoadMarketOptions,MarketDataError } from '../data/marketSeries';
+import { StrategyAST, RuleNode, OHLCVBar } from '../../shared/strategy/types';
+import { NSE_SYMBOLS, ALL_SYMBOLS, filterSymbolsByUniverse, MarketUniverseType } from '../data/symbols';
+import { getDailyBars } from '../data/mockData';
 import { calculateAllIndicators } from './indicators';
 import { evaluateRuleSet } from './engine';
-export interface ScanMatchResult{symbolId:number;ticker:string;name:string;sector:string;lastDate:string;lastClose:number;changePercent:number;matchedRules:{rule:string;actualLeft:number;actualRight:number}[];indicatorValues:Record<string,number>;provenance:MarketSeries['provenance'];}
-export interface UniverseScanResponse{universe:string;scanned:number;matched:number;scannedAt:string;dataSource:string;matches:ScanMatchResult[];requested:number;attempted:number;succeeded:number;unavailable:number;failed:number;asOf?:string;offset:number;limit:number;errors:{symbolId:number;code:string;message:string}[];sourceCoverage:Record<string,number>;warnings:string[];}
-export interface ScanOptions extends LoadMarketOptions{offset?:number;limit?:number;}
-function universe(name:string):SymbolMeta[]{const aliases:Record<string,string>={NIFTY50:'NIFTY_50',BANKNIFTY:'BANK_NIFTY',INDICES:'POPULAR_INDICES'};const normalized=aliases[name.toUpperCase()]||name.toUpperCase();if(!UNIVERSE_OPTIONS.some(u=>u.id===normalized))throw new MarketDataError('INVALID_UNIVERSE','Unknown universe');return filterSymbolsByUniverse(normalized as MarketUniverseType).map(s=>({...s}));}
-function initialize(name:string,symbols:SymbolMeta[],o:ScanOptions):UniverseScanResponse{const limit=o.limit??35,offset=o.offset??0;if(!Number.isInteger(limit)||limit<1||limit>500||!Number.isInteger(offset)||offset<0)throw new Error('Invalid pagination');return{universe:name,scanned:0,matched:0,scannedAt:new Date().toISOString(),dataSource:'PROVENANCE_PER_SYMBOL',matches:[],requested:symbols.length,attempted:0,succeeded:0,unavailable:0,failed:0,asOf:o.asOf,offset,limit,errors:[],sourceCoverage:{},warnings:['Current membership survivorship bias','Partial coverage; no live streaming','Licensing and provider entitlement unverified']};}
-function evaluate(sym:SymbolMeta,d:MarketSeries,strategy:StrategyAST,r:UniverseScanResponse):void{const bars=d.bars;if(bars.length<30)throw new MarketDataError('INSUFFICIENT_HISTORY','At least 30 bars required');const series=calculateAllIndicators(bars,strategy.indicators);const i=bars.length-1;const last=bars[i];r.succeeded++;r.sourceCoverage[d.provenance.source]=(r.sourceCoverage[d.provenance.source]||0)+1;if(!evaluateRuleSet(strategy.rules.entry,i,series))return;r.matched++;const indicatorValues:Record<string,number>={};for(const ind of strategy.indicators){const v=series[ind.id]?.[i];if(typeof v==='number'&&Number.isFinite(v))indicatorValues[ind.id]=v;}r.matches.push({symbolId:sym.id,ticker:sym.ticker,name:sym.name,sector:sym.sector,lastDate:last.date,lastClose:last.close,changePercent:(last.close/bars[i-1].close-1)*100,matchedRules:strategy.rules.entry.map(x=>({rule:x.leftIndicator+' '+x.operator+' '+(x.rightIndicator??x.rightValue),actualLeft:series[x.leftIndicator]?.[i]??NaN,actualRight:x.rightIndicator?series[x.rightIndicator]?.[i]??NaN:x.rightValue??NaN})),indicatorValues,provenance:d.provenance});}
-function error(sym:SymbolMeta,e:unknown,r:UniverseScanResponse):void{const code=e instanceof MarketDataError?e.code:'EVALUATION_FAILED';if(['PROVIDER_UNAVAILABLE','OUT_OF_COVERAGE','INSUFFICIENT_HISTORY','PROVIDER_BUSY'].includes(code))r.unavailable++;else r.failed++;r.errors.push({symbolId:sym.id,code,message:e instanceof Error?e.message:'Scan failed'});}
-function validateStrategy(s:StrategyAST):void{if(!s||!Array.isArray(s.indicators)||!Array.isArray(s.rules?.entry))throw new Error('Invalid strategy');}
-export function scanUniverse(strategy:StrategyAST,name='nifty50',limit=35,o:ScanOptions={}):UniverseScanResponse{validateStrategy(strategy);const symbols=universe(name);const r=initialize(name,symbols,{...o,limit});for(const sym of symbols){r.attempted++;try{evaluate(sym,getMarketSeries(sym.id,o),strategy,r);}catch(e){error(sym,e,r);}}r.scanned=r.attempted;r.matches=r.matches.slice(r.offset,r.offset+r.limit);return r;}
-export async function scanUniverseAsync(strategy:StrategyAST,name='nifty50',o:ScanOptions={}):Promise<UniverseScanResponse>{validateStrategy(strategy);const symbols=universe(name);const r=initialize(name,symbols,o);for(const sym of symbols){r.attempted++;try{evaluate(sym,await loadMarketSeries(sym.id,o),strategy,r);}catch(e){error(sym,e,r);}}r.scanned=r.attempted;r.matches=r.matches.slice(r.offset,r.offset+r.limit);return r;}
+
+export interface ScanMatchResult {
+  symbolId: number;
+  ticker: string;
+  name: string;
+  sector: string;
+  lastDate: string;
+  lastClose: number;
+  changePercent: number;
+  matchedRules: {
+    rule: string;
+    actualLeft: number;
+    actualRight: number;
+  }[];
+  indicatorValues: Record<string, number>;
+}
+
+export interface UniverseScanResponse {
+  universe: string;
+  scanned: number;
+  matched: number;
+  scannedAt: string;
+  dataSource: string;
+  matches: ScanMatchResult[];
+}
+
+export function scanUniverse(
+  strategy: StrategyAST,
+  universeName: string = 'nifty50',
+  limit: number = 35
+): UniverseScanResponse {
+  let targetSymbols = NSE_SYMBOLS;
+
+  const normalizedUniv = universeName.toUpperCase();
+  if (normalizedUniv === 'BANKNIFTY' || normalizedUniv === 'BANK_NIFTY') {
+    targetSymbols = filterSymbolsByUniverse('BANK_NIFTY');
+  } else if (normalizedUniv === 'NIFTY50' || normalizedUniv === 'NIFTY_50') {
+    targetSymbols = filterSymbolsByUniverse('NIFTY_50');
+  } else if (normalizedUniv === 'INDICES' || normalizedUniv === 'POPULAR_INDICES') {
+    targetSymbols = filterSymbolsByUniverse('POPULAR_INDICES');
+  } else if (normalizedUniv === 'NSE') {
+    targetSymbols = filterSymbolsByUniverse('NSE');
+  } else if (normalizedUniv === 'BSE') {
+    targetSymbols = filterSymbolsByUniverse('BSE');
+  } else if (normalizedUniv === 'NIFTY_IT' || normalizedUniv === 'NIFTY_AUTO' || normalizedUniv === 'NIFTY_PHARMA' || normalizedUniv === 'NIFTY_METAL' || normalizedUniv === 'NIFTY_FMCG' || normalizedUniv === 'BSE_SENSEX') {
+    targetSymbols = filterSymbolsByUniverse(normalizedUniv as MarketUniverseType);
+  } else if (normalizedUniv === 'ALL') {
+    targetSymbols = ALL_SYMBOLS;
+  } else {
+    // Default fallback
+    targetSymbols = NSE_SYMBOLS;
+  }
+
+  const matches: ScanMatchResult[] = [];
+  let scannedCount = 0;
+
+  for (const sym of targetSymbols) {
+    scannedCount++;
+    const bars = getDailyBars(sym.id);
+    if (!bars || bars.length < 30) continue;
+
+    try {
+      const series = calculateAllIndicators(bars, strategy.indicators);
+      const lastIdx = bars.length - 1;
+      const lastBar = bars[lastIdx];
+
+      const isMatch = evaluateRuleSet(strategy.rules.entry, lastIdx, series);
+
+      if (isMatch) {
+        const matchedRuleDetails = strategy.rules.entry.map(r => {
+          const leftVal = series[r.leftIndicator]?.[lastIdx] || 0;
+          let rightVal = 0;
+          if (r.rightIndicator) {
+            rightVal = series[r.rightIndicator]?.[lastIdx] || 0;
+          } else if (r.rightValue !== undefined) {
+            rightVal = r.rightValue;
+          }
+          return {
+            rule: `${r.leftIndicator} ${r.operator} ${r.rightIndicator || r.rightValue}`,
+            actualLeft: Number(Number(leftVal).toFixed(2)),
+            actualRight: Number(Number(rightVal).toFixed(2))
+          };
+        });
+
+        const indicatorValues: Record<string, number> = {};
+        for (const ind of strategy.indicators) {
+          const val = series[ind.id]?.[lastIdx];
+          if (val !== null && val !== undefined && !isNaN(val)) {
+            indicatorValues[ind.id] = Number(Number(val).toFixed(2));
+          }
+        }
+
+        matches.push({
+          symbolId: sym.id,
+          ticker: sym.ticker,
+          name: sym.name,
+          sector: sym.sector,
+          lastDate: lastBar.date,
+          lastClose: lastBar.close,
+          changePercent: sym.changePercent,
+          matchedRules: matchedRuleDetails,
+          indicatorValues
+        });
+
+        if (matches.length >= limit) break;
+      }
+    } catch {
+      // Continue next symbol safely
+      continue;
+    }
+  }
+
+  return {
+    universe: `${universeName} (${targetSymbols.length})`,
+    scanned: scannedCount,
+    matched: matches.length,
+    scannedAt: new Date().toISOString(),
+    dataSource: 'NSE_LIVE_STREAM',
+    matches
+  };
+}

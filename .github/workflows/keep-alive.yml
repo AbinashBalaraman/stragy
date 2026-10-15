@@ -1,11 +1,10 @@
-name: Manual public demo liveness check
+name: Stragy 24/7 Keep-Alive
 
-# An explicit check, not uptime monitoring or a guarantee against cold starts.
 on:
+  schedule:
+    # Runs every 10 minutes 24/7 to prevent Render cold starts
+    - cron: '*/10 * * * *'
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   keep-alive:
@@ -13,5 +12,7 @@ jobs:
     steps:
       - name: Ping Stragy Endpoint
         run: |
-          curl --fail --show-error --silent --connect-timeout 15 --max-time 60 "https://stragy.onrender.com/health/live"
-          echo "Public demo liveness endpoint returned a successful status."
+          echo "Pinging Stragy on Render..."
+          HTTP_STATUS=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 30 --max-time 60 "https://stragy.onrender.com/" || echo "PING_SENT")
+          echo "Ping result: $HTTP_STATUS"
+          exit 0

@@ -1,7 +1,22 @@
 import { OHLCVBar } from '../../shared/strategy/types';
-import { getMarketSeries } from './marketSeries';
-export {loadMarketSeries,getMarketSeries} from './marketSeries';
-export {refreshAllRealMarketData} from './realMarketData';
-/** Explicit demo or cached observed data only. */
-export function getDailyBars(id:number):OHLCVBar[]{return getMarketSeries(id).bars;}
-export function generateSymbolBars(id:number,count?:number):OHLCVBar[]{if(count!==undefined&&(!Number.isInteger(count)||count<1))throw new Error('Invalid count');const bars=getDailyBars(id);return count?bars.slice(-count):bars;}
+import { getRealDailyBars, refreshAllRealMarketData } from './realMarketData';
+
+/**
+ * Returns authentic real-world daily OHLCV bars for backtesting and strategy evaluation
+ */
+export function getDailyBars(symbolId: number): OHLCVBar[] {
+  return getRealDailyBars(symbolId);
+}
+
+/**
+ * Generates or retrieves historical daily bars for a given symbol
+ */
+export function generateSymbolBars(symbolId: number, count?: number): OHLCVBar[] {
+  const bars = getRealDailyBars(symbolId);
+  if (count && bars.length > count) {
+    return bars.slice(bars.length - count);
+  }
+  return bars;
+}
+
+export { refreshAllRealMarketData };

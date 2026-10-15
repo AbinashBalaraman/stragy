@@ -1,9 +1,30 @@
-import { existsSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import {fileURLToPath} from 'node:url';
-const entry=fileURLToPath(new URL('./dist/server/server.cjs',import.meta.url));
-if(!existsSync(entry)||!existsSync(new URL('./dist/client/index.html',import.meta.url))||!existsSync(new URL('./dist/server/worker.cjs',import.meta.url))){console.error('Build artifacts missing. Run npm run build before startup.');process.exit(1);}
-const child=spawn(process.execPath,[entry],{stdio:'inherit',env:{...process.env,NODE_ENV:process.env.NODE_ENV||'production'}});
-for(const sig of ['SIGTERM','SIGINT'])process.on(sig,()=>child.kill(sig));
-child.on('error',()=>process.exit(1));
-child.on('exit',(code,signal)=>process.exit(code??(signal?1:0)));
+import fs from 'fs';
+import { execSync, spawn } from 'child_process';
+import path from 'path';
+
+const distServer = path.join(process.cwd(), 'dist', 'server.cjs');
+const distHtml = path.join(process.cwd(), 'dist', 'index.html');
+
+if (!fs.existsSync(distServer) || !fs.existsSync(distHtml)) {
+  console.log('⚡ [Stragy] Build artifacts missing in dist/. Running "npm run build" automatically...');
+  try {
+    execSync('npm run build', {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=450`.trim()
+      }
+    });
+    console.log('✅ [Stragy] Build completed successfully.');
+  } catch (err) {
+    console.error('❌ [Stragy] Build failed:', err);
+    process.exit(1);
+  }
+}
+
+console.log('🚀 [Stragy] Launching production server on port ' + (process.env.PORT || 3000) + '...');
+const child = spawn('node', [distServer], { stdio: 'inherit' });
+
+child.on('exit', (code) => {
+  process.exit(code || 0);
+});

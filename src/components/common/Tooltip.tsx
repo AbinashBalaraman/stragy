@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useState } from 'react';
 import { Info } from 'lucide-react';
 
 interface FinanceTooltipProps {
@@ -9,10 +9,9 @@ interface FinanceTooltipProps {
 
 export const FinanceTooltip: React.FC<FinanceTooltipProps> = ({ content, term, children }) => {
   const [visible, setVisible] = useState(false);
-  const tooltipId = useId();
 
   return (
-    <div className="relative inline-flex items-center group focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400" role="button" tabIndex={0} aria-label={term ? `Explain ${term}` : 'Explain financial term'} aria-describedby={visible ? tooltipId : undefined} onMouseEnter={() => setVisible(true)} onMouseLeave={() => setVisible(false)} onFocus={() => setVisible(true)} onBlur={() => setVisible(false)} onClick={() => setVisible(true)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setVisible(false); } else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setVisible(true); } }}> 
+    <div className="relative inline-flex items-center group">
       {children || (
         <span className="inline-flex items-center gap-1 cursor-help text-xs text-neutral-400 hover:text-cyan-400 transition-colors">
           {term && <span className="underline decoration-dotted decoration-neutral-600 underline-offset-2">{term}</span>}
@@ -20,7 +19,7 @@ export const FinanceTooltip: React.FC<FinanceTooltipProps> = ({ content, term, c
         </span>
       )}
       {visible && (
-        <div id={tooltipId} role="tooltip" className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-2.5 bg-[#161619] border border-[rgba(236,236,237,0.12)]/80 rounded-lg shadow-xl text-xs text-neutral-200 z-50 pointer-events-none backdrop-blur-md">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-2.5 bg-[#161619] border border-[rgba(236,236,237,0.12)]/80 rounded-lg shadow-xl text-xs text-neutral-200 z-50 pointer-events-none backdrop-blur-md">
           {content}
           <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#1d1d21]" />
         </div>

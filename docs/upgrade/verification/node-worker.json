@@ -1,6 +1,0 @@
-{
-  "runner": "Real Node worker, TypeScript emission; not production bundle",
-  "passed": 1,
-  "failed": 0,
-  "finalEquity": 10100
-}

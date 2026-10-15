@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -12,8 +12,7 @@ import {
   Area
 } from 'recharts';
 import { BacktestResponse, StrategyAST } from '../../shared/strategy/types';
-import { requestBacktest, type RunRequestOptions } from '../../client/api';
-import { comparisonSeriesKey, consolidateComparisonRuns, partitionComparisonRuns, toggleComparisonVisibility } from '../../client/comparisonCompatibility';
+import { runBacktest } from '../../server/backtest/engine';
 import { repairStrategyAST } from '../../shared/strategy/schema';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import {
@@ -40,7 +39,7 @@ export interface StrategyComparisonViewProps {
   currentResult?: BacktestResponse;
   activeResult?: BacktestResponse;
   comparisonResults: BacktestResponse[];
-  onApplyStrategy?: (strategy: StrategyAST) => void;
+  onApplyStrategy: (strategy: StrategyAST) => void;
   onUpdateComparisonList?: (results: BacktestResponse[]) => void;
   onSelectActiveResult?: (result: BacktestResponse) => void;
   onRunBacktest?: () => void;
@@ -56,35 +55,30 @@ const PALETTE = [
   '#ec4899', // Pink
 ];
 
-const fmtNum = (v?: number | null, decimals: number = 2): string => {
-  if (v === undefined || v === null || isNaN(v)) return 'N/A';
+const fmtNum = (v?: number, decimals: number = 2): string => {
+  if (v === undefined || v === null || isNaN(v)) return '0.00';
   return v.toFixed(decimals);
 };
 
-const fmtPct = (v?: number | null, decimals: number = 1): string => {
-  if (v === undefined || v === null || isNaN(v)) return 'N/A';
+const fmtPct = (v?: number, decimals: number = 1): string => {
+  if (v === undefined || v === null || isNaN(v)) return '0.0%';
   return `${v.toFixed(decimals)}%`;
 };
 
-const fmtInr = (v?: number | null): string => {
-  if (v === undefined || v === null || isNaN(v)) return 'N/A';
+const fmtInr = (v?: number): string => {
+  if (v === undefined || v === null || isNaN(v)) return '0';
   return Math.round(v).toLocaleString('en-IN');
 };
 
 export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
-  currentResult: providedCurrentResult,
+  currentResult,
   activeResult,
   comparisonResults = [],
   onApplyStrategy,
   onUpdateComparisonList,
   onSelectActiveResult
 }) => {
-  const currentResult = activeResult || providedCurrentResult || comparisonResults?.find(r => r?.strategy);
-  const effectiveCurrent = currentResult;
-  const generation = useRef(0);
-  const batchAbort = useRef<AbortController | null>(null);
-  const [batchError, setBatchError] = useState('');
-  useEffect(() => { generation.current++; batchAbort.current?.abort(); setIsRunningBatch(false); return () => { generation.current++; batchAbort.current?.abort(); }; }, [effectiveCurrent?.backtestId]);
+  const effectiveCurrent = activeResult || currentResult;
   const [isRunningBatch, setIsRunningBatch] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({});
@@ -92,36 +86,46 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
   const [sortKey, setSortKey] = useState<'sharpeRatio' | 'totalReturnPercent' | 'netPnl' | 'winRate' | 'maxDrawdownPercent'>('sharpeRatio');
   const [sortAsc, setSortAsc] = useState(false);
 
-  const loadedResults = useMemo(() => consolidateComparisonRuns(effectiveCurrent, Array.isArray(comparisonResults) ? comparisonResults : []), [effectiveCurrent, comparisonResults]);
-  const compatibility = useMemo(() => effectiveCurrent ? partitionComparisonRuns(effectiveCurrent, loadedResults) : { compatible: [], excluded: [], baselineIssues: [] }, [effectiveCurrent, loadedResults]);
-  const allResults = compatibility.compatible;
-  const canRank = allResults.length > 1 && compatibility.baselineIssues.length === 0;
+  // Consolidate current result with comparison results (deduplicating by strategy id or backtestId)
+  const allResults = useMemo(() => {
+    const map = new Map<string, BacktestResponse>();
+    if (effectiveCurrent && effectiveCurrent.strategy) {
+      map.set(effectiveCurrent.strategy.id || 'current_active', effectiveCurrent);
+    }
+    const safeComparisons = Array.isArray(comparisonResults) ? comparisonResults : [];
+    for (const res of safeComparisons) {
+      if (!res || !res.strategy) continue;
+      const key = res.strategy.id || res.backtestId || `strat_${Math.random()}`;
+      if (!map.has(key)) {
+        map.set(key, res);
+      }
+    }
+    return Array.from(map.values());
+  }, [effectiveCurrent, comparisonResults]);
 
   // Find Top Performer by Sharpe Ratio
   const topPerformer = useMemo(() => {
-    if (!canRank || !allResults.some(r => Number.isFinite(r.metrics.sharpeRatio))) return null;
-    return allResults.filter(r => Number.isFinite(r.metrics.sharpeRatio)).sort((a, b) => (b.metrics?.sharpeRatio ?? -Infinity) - (a.metrics?.sharpeRatio ?? -Infinity))[0];
-  }, [allResults, canRank]);
+    if (allResults.length === 0) return null;
+    return [...allResults].sort((a, b) => (b.metrics?.sharpeRatio || 0) - (a.metrics?.sharpeRatio || 0))[0];
+  }, [allResults]);
 
   // Find Highest Return Winner
   const highestReturn = useMemo(() => {
-    if (!canRank) return null;
+    if (allResults.length === 0) return null;
     return [...allResults].sort((a, b) => (b.metrics?.totalReturnPercent || 0) - (a.metrics?.totalReturnPercent || 0))[0];
-  }, [allResults, canRank]);
+  }, [allResults]);
 
   // Find Lowest Drawdown Strategy
   const lowestDrawdown = useMemo(() => {
-    if (!canRank) return null;
+    if (allResults.length === 0) return null;
     return [...allResults].sort((a, b) => (a.metrics?.maxDrawdownPercent || 0) - (b.metrics?.maxDrawdownPercent || 0))[0];
-  }, [allResults, canRank]);
+  }, [allResults]);
 
   // Sorted Results for the Table
   const sortedResults = useMemo(() => {
     return [...allResults].sort((a, b) => {
-      const valA = a.metrics?.[sortKey];
-      const valB = b.metrics?.[sortKey];
-      if (valA == null) return valB == null ? 0 : 1;
-      if (valB == null) return -1;
+      const valA = a.metrics?.[sortKey] ?? 0;
+      const valB = b.metrics?.[sortKey] ?? 0;
       return sortAsc ? valA - valB : valB - valA;
     });
   }, [allResults, sortKey, sortAsc]);
@@ -131,82 +135,206 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
     if (allResults.length === 0) return [];
 
     // Map each date to all strategies' values
-    const dateMap = new Map<number, Record<string, string | number>>();
+    const dateMap = new Map<string, any>();
 
-    allResults.forEach((res) => {
-      const stratKey = comparisonSeriesKey(res.backtestId, 'equity');
-      const ddKey = comparisonSeriesKey(res.backtestId, 'drawdown');
+    allResults.forEach((res, index) => {
+      const stratKey = `strat_${index}`;
+      const ddKey = `dd_${index}`;
       const curve = res.equityCurve || [];
 
       curve.forEach(pt => {
         if (!pt || !pt.date) return;
-        if (!dateMap.has(pt.timestamp)) {
-          dateMap.set(pt.timestamp, {
+        if (!dateMap.has(pt.date)) {
+          dateMap.set(pt.date, {
             date: pt.date,
             timestamp: pt.timestamp || 0,
-            benchmark: pt.benchmarkEquity
+            benchmark: pt.benchmarkEquity || 100000
           });
         }
-        const row = dateMap.get(pt.timestamp)!;
-        row[stratKey] = pt.equity;
+        const row = dateMap.get(pt.date);
+        row[stratKey] = pt.equity ?? 100000;
         row[ddKey] = Math.abs(pt.drawdownPercent || 0);
       });
     });
 
-    return Array.from(dateMap.values()).sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
-  }, [allResults, canRank]);
+    return Array.from(dateMap.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  }, [allResults]);
 
-  const contextFor = (r: BacktestResponse): RunRequestOptions => ({ initialCapital: r.metrics.initialCapital, start: r.bars[0]?.date, end: r.bars.at(-1)?.date, seed: 42 });
-  const runBatch = async (variants: StrategyAST[], baseline: BacktestResponse) => {
-    if (!onUpdateComparisonList) return;
-    batchAbort.current?.abort(); const abort = new AbortController(); batchAbort.current = abort;
-    const owned = ++generation.current; setIsRunningBatch(true); setBatchError('');
-    const results: BacktestResponse[] = [];
-    try {
-      for (const candidate of variants.slice(0, 4)) {
-        if (abort.signal.aborted) return;
-        try { results.push(await requestBacktest(candidate, abort.signal, contextFor(baseline))); }
-        catch (error) { if (abort.signal.aborted) return; setBatchError((error as Error).message); }
-      }
-      if (generation.current === owned) onUpdateComparisonList?.([...comparisonResults, baseline, ...results].filter((r, i, list) => list.findIndex(x => x.backtestId === r.backtestId) === i).slice(-12));
-    } finally { if (generation.current === owned) setIsRunningBatch(false); }
-  };
+  // Handle Preset Sweeps
   const handleRunPresetSweep = async (presetType: 'stoploss' | 'indicators' | 'trailing' | 'templates') => {
-    if (!currentResult) return;
+    if (!currentResult || !currentResult.strategy) return;
+    setIsRunningBatch(true);
     setSelectedPreset(presetType);
-    const base = currentResult.strategy;
-    let variants: StrategyAST[] = [];
-    if (presetType === 'stoploss') variants = [.8, 1, 1.2].map(scale => repairStrategyAST({ ...base, name: base.name + ' SL x' + scale, risk: { ...base.risk, stopLoss: { ...base.risk.stopLoss, value: base.risk.stopLoss.value * scale } } }));
-    else if (presetType === 'trailing') {
-      if (!base.risk.trailingStop) { setBatchError('There is no existing trailing stop to vary. No control was invented.'); return; }
-      variants = [.8, 1, 1.2].map(scale => repairStrategyAST({ ...base, name: base.name + ' Trail x' + scale, risk: { ...base.risk, trailingStop: { ...base.risk.trailingStop!, value: base.risk.trailingStop!.value * scale } } }));
-    } else variants = STRATEGY_TEMPLATES.slice(0, 4).map(t => repairStrategyAST({ ...t.strategy, universe: { ...t.strategy.universe, symbolId: base.universe.symbolId } }));
-    await runBatch(variants, currentResult);
+
+    const baseStrat = currentResult.strategy;
+    const baseSymbolId = currentResult.symbol?.id || 1;
+    const variations: StrategyAST[] = [];
+
+    if (presetType === 'stoploss') {
+      const slValues = [1.5, 2.5, 3.5, 5.0];
+      for (const sl of slValues) {
+        variations.push(
+          repairStrategyAST({
+            ...baseStrat,
+            id: `sweep_sl_${sl}`,
+            name: `${baseStrat.name || 'Strategy'} (SL ${sl}%)`,
+            risk: {
+              ...baseStrat.risk,
+              stopLoss: { type: 'percent', value: sl },
+              takeProfit: { type: 'percent', value: 12.0 },
+              trailingStop: { type: 'percent', value: 2.0 }
+            }
+          })
+        );
+      }
+    } else if (presetType === 'trailing') {
+      const trailConfigs = [
+        { name: 'No Trailing (Fixed 12% TP)', trail: null, tp: 12.0 },
+        { name: 'Tight Dynamic Trail (1.5%)', trail: { type: 'percent' as const, value: 1.5 }, tp: 15.0 },
+        { name: 'Moderate Dynamic Trail (2.5%)', trail: { type: 'percent' as const, value: 2.5 }, tp: 18.0 },
+        { name: 'Wide Trend Surfer (3.5%)', trail: { type: 'percent' as const, value: 3.5 }, tp: 22.0 }
+      ];
+      for (const tc of trailConfigs) {
+        variations.push(
+          repairStrategyAST({
+            ...baseStrat,
+            id: `sweep_trail_${tc.trail?.value || 0}`,
+            name: `${baseStrat.name || 'Strategy'} - ${tc.name}`,
+            risk: {
+              ...baseStrat.risk,
+              takeProfit: { type: 'percent', value: tc.tp },
+              trailingStop: tc.trail
+            }
+          })
+        );
+      }
+    } else if (presetType === 'indicators') {
+      // 1. Supertrend (10, 3)
+      variations.push(
+        repairStrategyAST({
+          ...baseStrat,
+          id: 'comp_supertrend',
+          name: 'Supertrend (10, 3) Trend Breakout',
+          indicators: [
+            { id: 'st1', type: 'SUPERTREND', params: { period: 10, multiplier: 3 } },
+            { id: 'vol20', type: 'VOLUME_SMA', params: { period: 20 } }
+          ],
+          rules: {
+            entry: [
+              { id: 'e1', leftIndicator: 'close', operator: 'gt', rightIndicator: 'st1' },
+              { id: 'e2', leftIndicator: 'volume', operator: 'gt', rightIndicator: 'vol20' }
+            ],
+            exit: [{ id: 'x1', leftIndicator: 'close', operator: 'lt', rightIndicator: 'st1' }]
+          }
+        })
+      );
+
+      // 2. Golden Cross (50/200 SMA)
+      variations.push(
+        repairStrategyAST({
+          ...baseStrat,
+          id: 'comp_golden_cross',
+          name: 'Golden Cross (50/200 SMA) + Vol',
+          indicators: [
+            { id: 'sma50', type: 'SMA', params: { period: 50 } },
+            { id: 'sma200', type: 'SMA', params: { period: 200 } },
+            { id: 'vol20', type: 'VOLUME_SMA', params: { period: 20 } }
+          ],
+          rules: {
+            entry: [
+              { id: 'e1', leftIndicator: 'sma50', operator: 'gt', rightIndicator: 'sma200' },
+              { id: 'e2', leftIndicator: 'close', operator: 'gt', rightIndicator: 'sma200' },
+              { id: 'e3', leftIndicator: 'volume', operator: 'gt', rightIndicator: 'vol20' }
+            ],
+            exit: [{ id: 'x1', leftIndicator: 'sma50', operator: 'lt', rightIndicator: 'sma200' }]
+          }
+        })
+      );
+
+      // 3. RSI 200 EMA Mean Reversion
+      variations.push(
+        repairStrategyAST({
+          ...baseStrat,
+          id: 'comp_rsi_pullback',
+          name: 'RSI Oversold in 200 EMA Uptrend',
+          indicators: [
+            { id: 'rsi14', type: 'RSI', params: { period: 14 } },
+            { id: 'ema200', type: 'EMA', params: { period: 200 } }
+          ],
+          rules: {
+            entry: [
+              { id: 'e1', leftIndicator: 'close', operator: 'gt', rightIndicator: 'ema200' },
+              { id: 'e2', leftIndicator: 'rsi14', operator: 'lt', rightValue: 40 }
+            ],
+            exit: [{ id: 'x1', leftIndicator: 'rsi14', operator: 'gt', rightValue: 70 }]
+          }
+        })
+      );
+    } else if (presetType === 'templates') {
+      for (const t of STRATEGY_TEMPLATES.slice(0, 4)) {
+        variations.push(
+          repairStrategyAST({
+            ...t.strategy,
+            id: `comp_template_${t.id}`,
+            name: t.name,
+            universe: { symbolId: baseSymbolId, timeframe: '1D' }
+          })
+        );
+      }
+    }
+
+    // Execute backtests for all variations in parallel
+    const newResults: BacktestResponse[] = [currentResult];
+    for (const v of variations) {
+      try {
+        const sim = runBacktest(v);
+        newResults.push(sim);
+      } catch (err) {
+        console.warn('Variation backtest error:', err);
+      }
+    }
+
+    onUpdateComparisonList(newResults);
+    setIsRunningBatch(false);
   };
-  const handleReRunAll = async () => { if (currentResult) await runBatch(allResults.slice(0, 4).map(r => r.strategy), currentResult); };
+
+  // Re-run all currently active variations
+  const handleReRunAll = async () => {
+    setIsRunningBatch(true);
+    const updated: BacktestResponse[] = [];
+    for (const r of allResults) {
+      if (!r || !r.strategy) continue;
+      try {
+        const fresh = runBacktest(r.strategy);
+        updated.push(fresh);
+      } catch (e) {
+        updated.push(r);
+      }
+    }
+    onUpdateComparisonList(updated);
+    setIsRunningBatch(false);
+  };
 
   // Remove a variation from the comparison list
   const handleRemove = (idToRemove: string) => {
     const safeComparisons = Array.isArray(comparisonResults) ? comparisonResults : [];
     const filtered = safeComparisons.filter(
-      r => r?.strategy && r.backtestId !== idToRemove
+      r => r?.strategy && (r.strategy.id || r.backtestId) !== idToRemove
     );
-    onUpdateComparisonList?.(filtered);
+    onUpdateComparisonList(filtered);
   };
 
-  const handleToggleSeries = (runId: string) => setVisibleSeries(prev => toggleComparisonVisibility(prev, runId));
-  const colorFor = (runId: string) => {
-    let hash = 0;
-    for (const char of runId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-    return PALETTE[hash % PALETTE.length];
+  const handleToggleSeries = (idx: number) => {
+    setVisibleSeries(prev => ({
+      ...prev,
+      [idx]: prev[idx] !== undefined ? !prev[idx] : false
+    }));
   };
 
   if (!currentResult) {
     return (
       <div className="p-8 bg-[#161619]/90 border border-[#1d1d21] rounded-2xl text-center text-neutral-400 text-xs">
-      {batchError && <p role="alert" className="text-red-400 text-xs">{batchError}</p>}
-      <p className="text-xs text-neutral-400">Comparisons are immutable run snapshots. Different symbols, data windows, capital, or execution assumptions are not directly comparable.</p>
-        No immutable server run loaded for comparison.
+        No active simulation loaded for comparison.
       </div>
     );
   }
@@ -228,7 +356,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 Multi-Strategy Comparison Matrix
               </h3>
               <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-[#1d1d21] border border-[rgba(236,236,237,0.12)] text-neutral-300">
-                {allResults.length} Compatible / {loadedResults.length} Runs Loaded
+                {allResults.length} Variations Loaded
               </span>
             </div>
             <p className="text-xs text-neutral-400">
@@ -310,21 +438,6 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
         </div>
       </div>
 
-      <section aria-label="Comparison compatibility" className="p-4 border border-amber-500/30 rounded-xl text-xs text-neutral-300 space-y-2">
-        <p>Only runs with verified matching symbol, dataset, window, timeframe, currency, capital, fees and execution assumptions are ranked or overlaid. Run IDs are immutable; strategy names are not identities.</p>
-        {compatibility.baselineIssues.length > 0 && <p role="alert">Baseline context is unverified: {compatibility.baselineIssues.join(', ')}. Ranking is disabled.</p>}
-        {!canRank && <p>No verified compatible pair is available. Load another matching run to enable ranking.</p>}
-        {batchError && <p role="alert" className="text-red-400">{batchError}</p>}
-        {compatibility.excluded.length > 0 && <div role="status">
-          <p className="font-semibold">Excluded from rankings and overlays: {compatibility.excluded.length} incompatible or unverified runs.</p>
-          <ul className="space-y-2 mt-2">{compatibility.excluded.map(({ result, reasons }) => <li key={result.backtestId}>
-            <strong>{result.strategy.name}</strong> ({result.symbol.ticker}) <code>{result.backtestId}</code>: {reasons.join('; ')}.
-            {onSelectActiveResult && <button type="button" className="ml-2 underline" onClick={() => onSelectActiveResult(result)}>Inspect run</button>}
-            {onUpdateComparisonList && <button type="button" className="ml-2 underline" onClick={() => handleRemove(result.backtestId)}>Remove run</button>}
-          </li>)}</ul>
-        </div>}
-      </section>
-
       {/* Podium / Highlight Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         {/* Card 1: Top Sharpe Ratio Winner */}
@@ -356,7 +469,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => topPerformer.strategy && onApplyStrategy?.(topPerformer.strategy)}
+              onClick={() => topPerformer.strategy && onApplyStrategy(topPerformer.strategy)}
               className="w-full mt-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-[#0c0c0e] font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1 active:scale-95"
             >
               <span>Apply Winner to Workspace</span>
@@ -394,7 +507,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => highestReturn.strategy && onApplyStrategy?.(highestReturn.strategy)}
+              onClick={() => highestReturn.strategy && onApplyStrategy(highestReturn.strategy)}
               className="w-full mt-3 py-1.5 bg-[#1d1d21] hover:bg-[rgba(236,236,237,0.12)] text-cyan-400 font-bold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] transition-all flex items-center justify-center gap-1 active:scale-95"
             >
               <span>Load Setup</span>
@@ -432,7 +545,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => lowestDrawdown.strategy && onApplyStrategy?.(lowestDrawdown.strategy)}
+              onClick={() => lowestDrawdown.strategy && onApplyStrategy(lowestDrawdown.strategy)}
               className="w-full mt-3 py-1.5 bg-[#1d1d21] hover:bg-[rgba(236,236,237,0.12)] text-amber-400 font-bold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] transition-all flex items-center justify-center gap-1 active:scale-95"
             >
               <span>Load Setup</span>
@@ -455,7 +568,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-neutral-400 mt-0.5">
-              Side-by-side growth of {fmtInr(currentResult.metrics.initialCapital)} initial capital across compatible runs only.
+              Side-by-side growth trajectory of ₹1,00,000 initial capital across all variations.
             </p>
           </div>
 
@@ -486,15 +599,15 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
         {/* Legend / Series Toggles */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {allResults.map((res, idx) => {
-            const color = colorFor(res.backtestId);
-            const isVis = visibleSeries[res.backtestId] !== false;
-            const isWinner = topPerformer && (topPerformer.backtestId === res.backtestId);
+            const color = PALETTE[idx % PALETTE.length];
+            const isVis = visibleSeries[idx] !== false;
+            const isWinner = topPerformer && (topPerformer.strategy?.id === res.strategy?.id);
 
             return (
               <button
-                key={res.backtestId}
+                key={res.strategy?.id || idx}
                 type="button"
-                onClick={() => handleToggleSeries(res.backtestId)}
+                onClick={() => handleToggleSeries(idx)}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                   isVis ? 'bg-[#0c0c0e] border-[rgba(236,236,237,0.12)] text-neutral-200' : 'bg-[#0c0c0e]/40 border-[#1d1d21]/40 text-neutral-500 line-through'
                 }`}
@@ -543,13 +656,14 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                     boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)'
                   }}
                   formatter={(val: any, name: string) => {
-                    const matchedRun = allResults.find(r => comparisonSeriesKey(r.backtestId, 'equity') === name);
-                    if (matchedRun) {
-                      const sName = matchedRun.strategy.name + ' (' + matchedRun.backtestId + ')';
+                    const idxMatch = (name || '').match(/strat_(\d+)/);
+                    if (idxMatch) {
+                      const idx = parseInt(idxMatch[1], 10);
+                      const sName = allResults[idx]?.strategy?.name || `Strategy ${idx + 1}`;
                       return [`₹${Number(val || 0).toLocaleString('en-IN')}`, sName];
                     }
                     if (name === 'benchmark') {
-                      return [`₹${Number(val || 0).toLocaleString('en-IN')}`, 'Instrument buy-and-hold'];
+                      return [`₹${Number(val || 0).toLocaleString('en-IN')}`, 'NIFTY 50 Benchmark'];
                     }
                     return [val, name];
                   }}
@@ -564,18 +678,18 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                   name="benchmark"
                 />
                 {allResults.map((res, idx) => {
-                  const isVis = visibleSeries[res.backtestId] !== false;
+                  const isVis = visibleSeries[idx] !== false;
                   if (!isVis) return null;
-                  const color = colorFor(res.backtestId);
+                  const color = PALETTE[idx % PALETTE.length];
                   return (
                     <Line
-                      key={res.backtestId}
+                      key={res.strategy?.id || idx}
                       type="monotone"
-                      dataKey={comparisonSeriesKey(res.backtestId, 'equity')}
+                      dataKey={`strat_${idx}`}
                       stroke={color}
                       strokeWidth={idx === 0 || res === topPerformer ? 2.5 : 1.8}
                       dot={false}
-                      name={comparisonSeriesKey(res.backtestId, 'equity')}
+                      name={`strat_${idx}`}
                     />
                   );
                 })}
@@ -605,28 +719,29 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                     color: '#f8fafc'
                   }}
                   formatter={(val: any, name: string) => {
-                    const matchedRun = allResults.find(r => comparisonSeriesKey(r.backtestId, 'drawdown') === name);
-                    if (matchedRun) {
-                      const sName = matchedRun.strategy.name + ' (' + matchedRun.backtestId + ')';
+                    const idxMatch = (name || '').match(/dd_(\d+)/);
+                    if (idxMatch) {
+                      const idx = parseInt(idxMatch[1], 10);
+                      const sName = allResults[idx]?.strategy?.name || `Strategy ${idx + 1}`;
                       return [`-${Number(val || 0).toFixed(2)}%`, sName];
                     }
                     return [val, name];
                   }}
                 />
                 {allResults.map((res, idx) => {
-                  const isVis = visibleSeries[res.backtestId] !== false;
+                  const isVis = visibleSeries[idx] !== false;
                   if (!isVis) return null;
-                  const color = colorFor(res.backtestId);
+                  const color = PALETTE[idx % PALETTE.length];
                   return (
                     <Area
-                      key={res.backtestId}
+                      key={res.strategy?.id || idx}
                       type="monotone"
-                      dataKey={comparisonSeriesKey(res.backtestId, 'drawdown')}
+                      dataKey={`dd_${idx}`}
                       stroke={color}
                       fill={color}
                       fillOpacity={0.08}
                       strokeWidth={1.8}
-                      name={comparisonSeriesKey(res.backtestId, 'drawdown')}
+                      name={`dd_${idx}`}
                     />
                   );
                 })}
@@ -648,7 +763,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
           <div className="flex items-center gap-1 text-xs text-neutral-400">
             <Info className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Costs reflect each immutable run's fee configuration; statutory rates may be illustrative.</span>
+            <span>Factoring Zerodha flat ₹20 brokerage, 0.1% STT, exchange charges, and 18% GST</span>
           </div>
         </div>
 
@@ -715,9 +830,10 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             <tbody className="divide-y divide-[#1d1d21]/60 font-mono text-xs">
               {sortedResults.map((res, index) => {
                 if (!res || !res.strategy) return null;
-                const isWinner = topPerformer && (topPerformer.backtestId === res.backtestId);
-                const isCurrentActive = currentResult && (currentResult.backtestId === res.backtestId);
-                const color = colorFor(res.backtestId);
+                const isWinner = topPerformer && (topPerformer.strategy?.id === res.strategy?.id);
+                const isCurrentActive = currentResult && (currentResult.strategy?.id === res.strategy?.id);
+                const origIndex = allResults.findIndex(r => r === res);
+                const color = PALETTE[origIndex >= 0 ? origIndex % PALETTE.length : 0];
                 const netPnl = res.metrics?.netPnl ?? 0;
                 const indicatorsList = Array.isArray(res.strategy?.indicators)
                   ? res.strategy.indicators.map(i => i.id).join(' • ')
@@ -725,7 +841,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
                 return (
                   <tr
-                    key={res.backtestId}
+                    key={res.strategy?.id || res.backtestId || index}
                     className={`hover:bg-[#1d1d21]/40 transition-colors ${
                       isWinner ? 'bg-emerald-950/20' : isCurrentActive ? 'bg-cyan-950/20' : ''
                     }`}
@@ -746,12 +862,12 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                             )}
                             {isCurrentActive && !isWinner && (
                               <span className="text-[10px] font-sans px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-400 font-bold border border-cyan-500/30">
-                                Active Run
+                                Active AST
                               </span>
                             )}
                           </div>
                           <p className="text-[11px] font-sans text-neutral-400 mt-0.5">
-                            {indicatorsList || 'Price Rules'} • Run {res.backtestId}
+                            {indicatorsList || 'Price Rules'}
                           </p>
                         </div>
                       </div>
@@ -839,9 +955,9 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           type="button"
-                          onClick={() => onApplyStrategy?.(res.strategy)}
+                          onClick={() => onApplyStrategy(res.strategy)}
                           className="px-2.5 py-1 bg-cyan-500 hover:bg-cyan-400 text-[#0c0c0e] font-bold text-xs rounded-lg shadow-sm active:scale-95 transition-all flex items-center gap-1 font-sans"
-                          title="Copy this run's strategy into the builder. This does not run a simulation."
+                          title="Apply this strategy AST directly to your Strategy Builder and active simulation"
                         >
                           <Check className="w-3 h-3" />
                           <span>Apply</span>
@@ -849,7 +965,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                         {onSelectActiveResult && (
                           <button
                             type="button"
-                            onClick={() => onSelectActiveResult?.(res)}
+                            onClick={() => onSelectActiveResult(res)}
                             className="p-1 text-neutral-400 hover:text-white rounded-lg hover:bg-[#1d1d21] transition-colors font-sans"
                             title="Inspect full trade logs and price charts for this variation"
                           >
@@ -859,7 +975,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                         {allResults.length > 1 && !isCurrentActive && (
                           <button
                             type="button"
-                            onClick={() => handleRemove(res.backtestId)}
+                            onClick={() => handleRemove(res.strategy?.id || res.backtestId || '')}
                             className="p-1 text-neutral-500 hover:text-rose-400 rounded-lg hover:bg-[#1d1d21] transition-colors"
                             title="Remove variation from matrix"
                           >

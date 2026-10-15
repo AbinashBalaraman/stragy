@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { InstrumentMetadataSchema } from '../contracts/strategy-v2';
 
 export type Timeframe = '1m' | '5m' | '15m' | '1H' | '1D' | '1W';
 
@@ -7,7 +6,7 @@ export type IndicatorType = 'SMA' | 'EMA' | 'RSI' | 'BBANDS' | 'MACD' | 'SUPERTR
 
 export type PriceField = 'open' | 'high' | 'low' | 'close' | 'volume' | 'candleBody' | 'upperWick' | 'lowerWick';
 
-export type RuleOperator = 'gt' | 'lt' | 'gte' | 'lte' | 'eq' | 'approxEq' | 'crossesAbove' | 'crossesBelow';
+export type RuleOperator = 'gt' | 'lt' | 'gte' | 'lte' | 'eq' | 'crossesAbove' | 'crossesBelow';
 
 export interface IndicatorConfig {
   id: string;
@@ -18,9 +17,6 @@ export interface IndicatorConfig {
 export interface RuleNode {
   id?: string;
   leftIndicator: string; // indicator ID or PriceField
-  leftValue?: number;
-  absoluteTolerance?: number;
-  equality?: 'exact';
   operator: RuleOperator;
   rightIndicator?: string;
   rightValue?: number;
@@ -30,7 +26,6 @@ export interface RiskControls {
   stopLoss: {
     type: 'percent' | 'points' | 'atr';
     value: number;
-    atrPeriod?: number;
   };
   takeProfit: {
     type: 'percent' | 'points' | 'rr';
@@ -39,7 +34,6 @@ export interface RiskControls {
   trailingStop: {
     type: 'percent' | 'points' | 'atr';
     value: number;
-    atrPeriod?: number;
     activation?: number;
   } | null;
   positionSizing: {
@@ -55,8 +49,6 @@ export interface ExecutionConfig {
   allowLong: boolean;
   allowShort: boolean;
   orderType: 'MARKET' | 'LIMIT';
-  liquidateAtEnd?: boolean;
-  executionPolicy?: 'next_open_long_cash_v1';
   intradaySquareOffTime?: string; // '15:15'
 }
 
@@ -69,9 +61,6 @@ export interface CostModelConfig {
 
 export interface StrategyUniverse {
   symbolId: number;
-  instrumentId?: string;
-  /** Descriptive, unverified instrument metadata. quantityStep constrains research sizing. */
-  metadata?: z.infer<typeof InstrumentMetadataSchema>;
   ticker?: string;
   timeframe: Timeframe;
 }
@@ -127,7 +116,6 @@ export interface TradeRecord {
   pnl: number;
   pnlPercent: number;
   holdingDays: number;
-  holdingBars?: number;
   exitReason: 'STOP_LOSS' | 'TAKE_PROFIT' | 'TRAILING_STOP' | 'RULE_EXIT' | 'MAX_DRAWDOWN' | 'END_OF_DATA';
   costs: number;
   netPnl: number;
@@ -155,10 +143,6 @@ export interface IndianCostBreakdown {
 }
 
 export interface MonteCarloResult {
-  status?: 'available' | 'unavailable';
-  reason?: string;
-  seed?: number;
-  method?: string;
   simulationsCount: number;
   percentileCurves: {
     p10: number[];
@@ -168,51 +152,44 @@ export interface MonteCarloResult {
     p90: number[];
   };
   dates: string[];
-  medianMaxDrawdown: number | null;
-  probDrawdownOver15: number | null;
-  probDrawdownOver25: number | null;
-  p10TerminalEquity: number | null;
-  p50TerminalEquity: number | null;
-  p90TerminalEquity: number | null;
+  medianMaxDrawdown: number;
+  probDrawdownOver15: number;
+  probDrawdownOver25: number;
+  p10TerminalEquity: number;
+  p50TerminalEquity: number;
+  p90TerminalEquity: number;
 }
 
 export interface TrainTestSplitResult {
-  status?: 'available' | 'unavailable';
-  reason?: string;
-  method?: string;
   trainMetrics: {
-    cagr: number | null;
-    sharpe: number | null;
+    cagr: number;
+    sharpe: number;
     maxDrawdown: number;
-    winRate: number | null;
-    profitFactor: number | null;
+    winRate: number;
+    profitFactor: number;
     tradesCount: number;
   };
   testMetrics: {
-    cagr: number | null;
-    sharpe: number | null;
+    cagr: number;
+    sharpe: number;
     maxDrawdown: number;
-    winRate: number | null;
-    profitFactor: number | null;
+    winRate: number;
+    profitFactor: number;
     tradesCount: number;
   };
-  cagrDecayRatio: number | null; // testCAGR / trainCAGR
-  sharpeDecayRatio: number | null;
-  overfittingRisk: 'LOW' | 'MODERATE' | 'HIGH' | 'UNAVAILABLE';
+  cagrDecayRatio: number; // testCAGR / trainCAGR
+  sharpeDecayRatio: number;
+  overfittingRisk: 'LOW' | 'MODERATE' | 'HIGH';
   splitDate: string;
 }
 
 export interface SensitivityHeatmapCell {
-  reason?: string;
   param1Value: number;
   param2Value: number;
-  metricValue: number | null; // Sharpe or Net PnL %
+  metricValue: number; // Sharpe or Net PnL %
 }
 
 export interface SensitivityHeatmapResult {
-  status?: 'available' | 'unavailable';
-  reason?: string;
-  metric?: string;
   param1Name: string;
   param1Values: number[];
   param2Name: string;
@@ -227,41 +204,33 @@ export interface RobustnessSuite {
 }
 
 export interface BacktestMetrics {
-  unavailableReasons?: Record<string, string>;
   initialCapital: number;
   finalEquity: number;
   netPnl: number;
   totalReturnPercent: number;
-  cagr: number | null;
-  sharpeRatio: number | null;
-  sortinoRatio: number | null;
-  calmarRatio: number | null;
+  cagr: number;
+  sharpeRatio: number;
+  sortinoRatio: number;
+  calmarRatio: number;
   maxDrawdownPercent: number;
   maxDrawdownAmount: number;
-  winRate: number | null;
-  profitFactor: number | null;
+  winRate: number;
+  profitFactor: number;
   totalTrades: number;
   winningTrades: number;
   losingTrades: number;
   averageTradePnl: number;
   averageWin: number;
   averageLoss: number;
-  winLossRatio: number | null;
+  winLossRatio: number;
   maxConsecutiveLosses: number;
   avgHoldingBars: number;
   benchmarkReturnPercent: number;
-  alpha: number | null;
-  beta: number | null;
+  alpha: number;
+  beta: number;
 }
 
 export interface BacktestResponse {
-  engineVersion?: string;
-  executionPolicy?: string;
-  warnings?: string[];
-  provenance?: unknown;
-  manifest?: unknown;
-  ledger?: { timestamp: number; side: string; quantity: number; price: number; fees: number; cash: number }[];
-  reconciliation?: { expectedEquity: number; actualEquity: number; difference: number };
   backtestId: string;
   strategy: StrategyAST;
   symbol: SymbolMeta;
@@ -304,7 +273,7 @@ export interface StockTrendData {
   oiChangePercent: number;
   oiInterpretation: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'SHORT_BUILDUP' | 'LONG_UNWINDING';
   pcrRatio: number;
-  dataSource: 'DEMO_MODEL' | 'OHLCV_ANALYSIS';
+  dataSource: 'ANGEL_ONE_SMARTAPI' | 'NSE_LIVE_RATE';
   exchange?: 'NSE' | 'BSE';
   indices?: string[];
   date?: string;
