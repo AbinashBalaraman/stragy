@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatNumber } from '../../client/format';
 import {
   TrendingUp,
   ShieldAlert,
@@ -23,24 +24,24 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics }) => {
     {
       label: 'Net Strategy PnL',
       value: `₹${metrics.netPnl.toLocaleString('en-IN')}`,
-      sub: `${metrics.totalReturnPercent >= 0 ? '+' : ''}${metrics.totalReturnPercent}% Total Return`,
+      sub: formatNumber(metrics.totalReturnPercent, 2, '% Total Return'),
       isPositive: isProfitable,
       icon: DollarSign,
-      tooltip: 'Net profit after all Indian taxes (STT, GST, Exchange, SEBI, Stamp Duty) and slippage.'
+      tooltip: 'Net profit after executed-fill cash fees and modeled slippage. Rates may be illustrative; see the run assumptions.'
     },
     {
       label: 'CAGR (Annualized)',
-      value: `${metrics.cagr}%`,
-      sub: `vs Benchmark: ${metrics.benchmarkReturnPercent}%`,
-      isPositive: metrics.cagr > 0,
+      value: formatNumber(metrics.cagr, 2, '%'),
+      sub: `Instrument buy-hold: ${formatNumber(metrics.benchmarkReturnPercent, 2, '%')}`,
+      isPositive: (metrics.cagr ?? -Infinity) > 0,
       icon: TrendingUp,
       tooltip: 'Compound Annual Growth Rate of the strategy over the test period.'
     },
     {
       label: 'Sharpe Ratio',
-      value: `${metrics.sharpeRatio}`,
-      sub: metrics.sharpeRatio >= 1.5 ? 'Institutional Grade' : metrics.sharpeRatio >= 1.0 ? 'Good' : 'Sub-optimal',
-      isPositive: metrics.sharpeRatio >= 1.0,
+      value: formatNumber(metrics.sharpeRatio),
+      sub: (metrics.sharpeRatio ?? -Infinity) >= 1.5 ? 'Historical sample' : (metrics.sharpeRatio ?? -Infinity) >= 1.0 ? 'Historical sample' : 'Historical sample',
+      isPositive: (metrics.sharpeRatio ?? -Infinity) >= 1.0,
       icon: Activity,
       tooltip: 'Risk-adjusted return ratio measuring excess return per unit of total risk.'
     },
@@ -54,33 +55,33 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics }) => {
     },
     {
       label: 'Win Rate',
-      value: `${metrics.winRate}%`,
+      value: formatNumber(metrics.winRate, 1, '%'),
       sub: `${metrics.winningTrades} Wins / ${metrics.losingTrades} Losses (${metrics.totalTrades} Trades)`,
-      isPositive: metrics.winRate >= 50,
+      isPositive: (metrics.winRate ?? -Infinity) >= 50,
       icon: Award,
       tooltip: 'Percentage of executed trades that closed with a positive net PnL.'
     },
     {
       label: 'Profit Factor',
-      value: `${metrics.profitFactor}`,
+      value: formatNumber(metrics.profitFactor),
       sub: `Gross Wins / Gross Losses`,
-      isPositive: metrics.profitFactor >= 1.5,
+      isPositive: (metrics.profitFactor ?? -Infinity) >= 1.5,
       icon: Zap,
       tooltip: 'Ratio of gross winning trades to gross losing trades.'
     },
     {
       label: 'Sortino Ratio',
-      value: `${metrics.sortinoRatio}`,
+      value: formatNumber(metrics.sortinoRatio),
       sub: 'Downside Volatility Adjusted',
-      isPositive: metrics.sortinoRatio >= 1.5,
+      isPositive: (metrics.sortinoRatio ?? -Infinity) >= 1.5,
       icon: BarChart3,
       tooltip: 'Sharpe variant penalizing only harmful downside volatility.'
     },
     {
-      label: 'Alpha vs NIFTY',
-      value: `${metrics.alpha >= 0 ? '+' : ''}${metrics.alpha}%`,
-      sub: `Beta: ${metrics.beta}`,
-      isPositive: metrics.alpha > 0,
+      label: 'Alpha vs Instrument',
+      value: formatNumber(metrics.alpha, 2, '%'),
+      sub: `Beta: ${formatNumber(metrics.beta)}`,
+      isPositive: (metrics.alpha ?? -Infinity) > 0,
       icon: Percent,
       tooltip: 'Excess return generated over and above the buy-and-hold market benchmark.'
     }

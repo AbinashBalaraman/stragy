@@ -17,22 +17,21 @@ import { TrendingUp, ShieldAlert } from 'lucide-react';
 interface EquityChartsProps {
   equityCurve: EquityPoint[];
   benchmarkReturnPercent?: number;
+  benchmarkLabel?: string;
   trades?: TradeRecord[];
   initialCapital?: number;
   layoutMode?: 'grid' | 'stacked';
 }
 
-export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, layoutMode = 'stacked' }) => {
+export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initialCapital, benchmarkLabel = 'Instrument buy-and-hold', layoutMode = 'stacked' }) => {
   if (!equityCurve || equityCurve.length === 0) return null;
 
   const firstPoint = equityCurve[0];
   const lastPoint = equityCurve[equityCurve.length - 1];
-  const totalStrategyReturn = firstPoint && lastPoint
-    ? (((lastPoint.equity - firstPoint.equity) / firstPoint.equity) * 100).toFixed(1)
-    : '0';
-  const totalBenchmarkReturn = firstPoint && lastPoint
-    ? (((lastPoint.benchmarkEquity - firstPoint.benchmarkEquity) / firstPoint.benchmarkEquity) * 100).toFixed(1)
-    : '0';
+  const capital = initialCapital ?? firstPoint.equity;
+  const signedPercent = (value: number) => (value >= 0 ? '+' : '') + value.toFixed(1) + '%';
+  const totalStrategyReturn = capital > 0 ? signedPercent((lastPoint.equity / capital - 1) * 100) : 'N/A';
+  const totalBenchmarkReturn = capital > 0 ? signedPercent((lastPoint.benchmarkEquity / capital - 1) * 100) : 'N/A';
 
   const maxDrawdown = Math.max(...equityCurve.map(p => Math.abs(p.drawdownPercent || 0))).toFixed(1);
 
@@ -45,11 +44,11 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, layoutM
             <div className="flex items-center gap-2">
               <h3 className="font-syne font-bold text-sm sm:text-base text-[#ececed]">Portfolio Equity vs Benchmark</h3>
               <span className="text-[10px] sm:text-xs font-mono font-semibold px-2 py-0.5 rounded bg-[rgba(0,255,163,0.1)] text-[#00ffa3] border border-[rgba(0,255,163,0.25)]">
-                +{totalStrategyReturn}% Strategy
+                {totalStrategyReturn} Strategy
               </span>
             </div>
             <p className="text-[11px] text-[rgba(236,236,237,0.5)] mt-0.5">
-              Initial Capital: ₹1,00,000 • Final: ₹{lastPoint?.equity?.toLocaleString('en-IN') || '1,00,000'}
+              Initial Capital: ₹{capital.toLocaleString('en-IN')} • Final: ₹{lastPoint.equity.toLocaleString('en-IN')}
             </p>
           </div>
 
@@ -59,7 +58,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, layoutM
             </span>
             <span className="text-neutral-600">•</span>
             <span className="flex items-center gap-1 font-mono text-neutral-400">
-              NIFTY (+{totalBenchmarkReturn}%)
+              {benchmarkLabel} ({totalBenchmarkReturn})
             </span>
           </div>
         </div>
@@ -92,7 +91,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, layoutM
                 }}
                 formatter={(val: any, name: string) => [
                   `₹${Number(val).toLocaleString('en-IN')}`,
-                  name === 'equity' ? 'Strategy Equity' : 'NIFTY 50 Benchmark'
+                  name === 'Strategy Equity' ? 'Strategy Equity' : benchmarkLabel
                 ]}
               />
               <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
@@ -111,7 +110,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, layoutM
                 strokeWidth={1.5}
                 strokeDasharray="4 4"
                 dot={false}
-                name="Benchmark (Buy & Hold)"
+                name={benchmarkLabel}
               />
             </LineChart>
           </ResponsiveContainer>

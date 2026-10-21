@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { StrategyAST, UniverseScanResponse, StockTrendData, MarketMoversData } from '../../shared/strategy/types';
+import React, { useState, useEffect, useRef } from 'react';
+import { StrategyAST, StockTrendData, MarketMoversData } from '../../shared/strategy/types';
+import { requestMarketSnapshot, requestScan } from '../../client/api';
+import { actualDataCutoff, scannerContextKey, ScannerRequestOwner } from './scannerRequestContext';
 import { OptionChainScanner } from './OptionChainScanner';
 import { VolumeProfileScanner } from './VolumeProfileScanner';
 import { GttBracketCalculator } from './GttBracketCalculator';
@@ -34,9 +36,26 @@ import {
   Calendar
 } from 'lucide-react';
 
+/** Price provenance is separate from model-only derivatives and universe membership. */
+function priceDataLabel(data: unknown): string {
+  if (!data || typeof data !== 'object') return 'Price source not yet reported';
+  const result = data as { mode?: string; provenance?: { mode?: string } | { mode?: string }[]; matches?: { provenance?: { mode?: string } }[]; sourceCoverage?: Record<string, number>; dataSource?: string; coverage?: { succeeded?: number }; succeeded?: number };
+  if ((result.coverage?.succeeded ?? result.succeeded) === 0) return 'Price data unavailable: no evaluated coverage';
+  const modes = new Set<string>();
+  if (result.mode) modes.add(result.mode);
+  const provenance = Array.isArray(result.provenance) ? result.provenance : result.provenance ? [result.provenance] : [];
+  for (const item of [...provenance, ...(result.matches || []).map(match => match.provenance)]) if (item?.mode) modes.add(item.mode);
+  for (const [source, count] of Object.entries(result.sourceCoverage || {})) if (count > 0 && (source === 'real' || source === 'demo')) modes.add(source);
+  if (modes.has('real') && modes.has('demo')) return 'Mixed observed and demo OHLCV · not live';
+  if (modes.has('demo')) return 'Demo OHLCV · not observed market prices';
+  if (modes.has('real')) return 'Observed OHLCV · not a live tick feed';
+  if (/demo/i.test(result.dataSource || '')) return 'Demo OHLCV · not observed market prices';
+  return 'Price source not reported; observed coverage unverified';
+}
+
 interface MarketScannerViewProps {
   strategy: StrategyAST;
-  onSelectStockAndBacktest: (symbolId: number) => void;
+  onSelectStockAndBacktest: (symbolId: number, asOf: string) => void;
 }
 
 export type MarketUniverseType =
@@ -64,10 +83,10 @@ interface UniverseConfig {
 }
 
 export const UNIVERSE_LIST: UniverseConfig[] = [
-  { id: 'ALL', label: 'All Markets (NSE + BSE — 2,088 Assets)', shortLabel: 'All (NSE+BSE)', category: 'All', description: 'Complete universe across all 2,088 NSE and BSE equities and benchmark indices', badge: 'NSE + BSE', icon: '🌐' },
-  { id: 'NSE', label: 'All NSE Stocks (2,050 Listed Equities)', shortLabel: 'All NSE (2050+)', category: 'Exchange', description: 'Complete universe across all 2,050+ National Stock Exchange (NSE) listed equities', badge: 'NSE 2000+', icon: '📈' },
+  { id: 'ALL', label: 'All configured markets (NSE + BSE)', shortLabel: 'All (NSE+BSE)', category: 'All', description: 'Configured NSE/BSE universe; current membership and partial data coverage', badge: 'NSE + BSE', icon: '🌐' },
+  { id: 'NSE', label: 'Configured NSE Stocks', shortLabel: 'NSE universe', category: 'Exchange', description: 'Configured National Stock Exchange equities; partial coverage', badge: 'NSE', icon: '📈' },
   { id: 'BSE', label: 'All BSE Stocks (SENSEX & Large-Caps)', shortLabel: 'All BSE', category: 'Exchange', description: 'Bombay Stock Exchange (BSE) listed equities', badge: 'BSE', icon: '🏛️' },
-  { id: 'NIFTY_50', label: 'NIFTY 50 Bluechips', shortLabel: 'NIFTY 50', category: 'Benchmark & Sector Indices', description: 'Top 50 large-cap bluechip stocks of India', badge: 'NIFTY 50', icon: '💎' },
+  { id: 'NIFTY_50', label: 'Configured NIFTY 50-labelled pool', shortLabel: 'NIFTY 50', category: 'Benchmark & Sector Indices', description: 'Bounded configured pool; current NIFTY 50 membership and count are unverified', badge: 'NIFTY 50', icon: '💎' },
   { id: 'BANK_NIFTY', label: 'Bank NIFTY', shortLabel: 'Bank Nifty', category: 'Benchmark & Sector Indices', description: 'Leading private and PSU banking giants', badge: 'BANK', icon: '🏦' },
   { id: 'NIFTY_IT', label: 'NIFTY IT', shortLabel: 'NIFTY IT', category: 'Benchmark & Sector Indices', description: 'Top technology & software exporters', badge: 'IT', icon: '💻' },
   { id: 'NIFTY_AUTO', label: 'NIFTY Auto', shortLabel: 'NIFTY Auto', category: 'Benchmark & Sector Indices', description: 'Leading automotive, 2-wheeler, EV & commercial vehicle OEMs', badge: 'AUTO', icon: '🚗' },
@@ -94,7 +113,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     | 'trends'
     | 'strategy_matches'
   >('movers');
-  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>('ALL');
+  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>('NIFTY_50');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
@@ -104,16 +123,46 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const TREND_ITEMS_PER_PAGE = 40;
   const [isScanning, setIsScanning] = useState(false);
   const [isLoadingTrends, setIsLoadingTrends] = useState(false);
-  const [scanResult, setScanResult] = useState<UniverseScanResponse | null>(null);
+  const [scanResult, setScanResult] = useState<Awaited<ReturnType<typeof requestScan>> | null>(null);
   const [trends, setTrends] = useState<StockTrendData[]>([]);
   const [movers, setMovers] = useState<MarketMoversData | null>(null);
 
+  const marketOwner = useRef(new ScannerRequestOwner());
+  const scanOwner = useRef(new ScannerRequestOwner());
+  const isStrategyView = activeTab === 'strategy_matches';
+  // Displaying an observed cutoff must not change the requested context.
+  const contextKey = isStrategyView
+    ? scannerContextKey(strategy, selectedUniverse, selectedDate)
+    : JSON.stringify(['market', selectedUniverse, selectedDate]);
+  const currentContext = useRef(contextKey);
+  currentContext.current = contextKey;
+  const [dataCutoff, setDataCutoff] = useState('');
+  const [latestDataCutoff, setLatestDataCutoff] = useState('');
+  const [scannerError, setScannerError] = useState('');
+  const [marketError, setMarketError] = useState('');
+  const [scanError, setScanError] = useState('');
+  const [coverageLabel, setCoverageLabel] = useState('Coverage not yet reported');
+  const [dataEvidence,setDataEvidence] = useState<{mode?:'real'|'demo';membership?:Awaited<ReturnType<typeof requestMarketSnapshot>>['membership'];observationDates?:Awaited<ReturnType<typeof requestMarketSnapshot>>['observationDates'];sourceCoverage?:Record<string,number>}|null>(null);
+  const [priceLabel, setPriceLabel] = useState('Price source not yet reported');
+  const [marketEvaluated, setMarketEvaluated] = useState(0);
+  const launchBacktest = (symbolId: number, observedDate?: string) => {
+    if (contextKey !== currentContext.current) return;
+    const cutoff = observedDate || dataCutoff;
+    if (!cutoff) { setScannerError('Data cutoff unavailable. Reload the scanner.'); return; }
+    onSelectStockAndBacktest(symbolId, selectedDate && selectedDate < cutoff ? selectedDate : cutoff);
+  };
+
+  const coveredTradingDates = availableTradingDates.filter(session => !latestDataCutoff || session.date <= latestDataCutoff).map(session => ({...session, label: session.date, fullLabel: session.date + ' (calendar session; price coverage may be partial)', isLatest: session.date === latestDataCutoff}));
+
   // Active universe metadata
-  const currentUniverseConfig = UNIVERSE_LIST.find(u => u.id === selectedUniverse) || UNIVERSE_LIST[0];
+  const baseUniverseConfig = UNIVERSE_LIST.find(u => u.id === selectedUniverse) || UNIVERSE_LIST[0];
+  const officialMembership = dataEvidence?.mode === 'real' && dataEvidence.membership?.source === 'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv';
+  const currentUniverseConfig = selectedUniverse === 'NIFTY_50' && officialMembership ? {...baseUniverseConfig,label:'NIFTY 50 (official constituent feed)',description:'Official NSE constituent feed retrieved '+dataEvidence?.membership?.observedAt+'. Historical research uses current constituents and has survivorship bias.'} : baseUniverseConfig;
 
   // Fetch available trading session dates on mount
   useEffect(() => {
-    fetch('/api/market/dates')
+    const abort = new AbortController();
+    fetch('/api/market/dates', { signal: abort.signal })
       .then(r => r.json())
       .then(data => {
         if (data && data.success && Array.isArray(data.dates)) {
@@ -121,89 +170,87 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         }
       })
       .catch(() => {});
+    return () => abort.abort();
   }, []);
 
-  // Fetch actual stock prices and quantitative market trends & movers for selected universe & date
-  const fetchMarketData = async (
-    forceSync: boolean = false,
-    univ: MarketUniverseType = selectedUniverse,
-    date: string = selectedDate
-  ) => {
-    setIsLoadingTrends(true);
-    try {
-      if (forceSync) {
-        await fetch('/api/market/refresh', { method: 'POST' }).catch(() => {});
-      }
-      const dateParam = date ? `&date=${encodeURIComponent(date)}` : '';
-      const [trendsRes, moversRes] = await Promise.all([
-        fetch(`/api/market/trends?universe=${encodeURIComponent(univ)}${dateParam}`)
-          .then(async r => {
-            if (!r.ok) return { success: false, error: `HTTP ${r.status}` };
-            return r.json().catch(() => ({ success: false, error: 'Malformed response' }));
-          })
-          .catch(err => ({ success: false, error: err?.message || 'Network error' })),
-        fetch(`/api/market/movers?universe=${encodeURIComponent(univ)}${dateParam}`)
-          .then(async r => {
-            if (!r.ok) return { success: false, error: `HTTP ${r.status}` };
-            return r.json().catch(() => ({ success: false, error: 'Malformed response' }));
-          })
-          .catch(err => ({ success: false, error: err?.message || 'Network error' }))
-      ]);
-
-      if (trendsRes && trendsRes.success && Array.isArray(trendsRes.trends)) {
-        setTrends(trendsRes.trends);
-      }
-      if (moversRes && moversRes.success) {
-        setMovers(moversRes);
-        if (moversRes.availableTradingSessions && moversRes.availableTradingSessions.length > 0) {
-          setAvailableTradingDates(moversRes.availableTradingSessions);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load market scanner data:', e);
-    } finally {
-      setIsLoadingTrends(false);
+  const recordCutoff = (data: unknown) => {
+    const cutoff = actualDataCutoff(data);
+    if (cutoff) {
+      setDataCutoff(cutoff);
+      if (!selectedDate) setLatestDataCutoff(cutoff);
     }
   };
 
-  // Run strategy rule screener
-  const runScan = async (univ: MarketUniverseType = selectedUniverse) => {
-    setIsScanning(true);
+  const fetchMarketData = async () => {
+    const ticket = marketOwner.current.begin(contextKey);
+    setIsLoadingTrends(true);
+    setMarketError(''); setScannerError('');
+    setTrends([]); setMovers(null); setDataCutoff(''); setMarketEvaluated(0);
+    setPriceLabel('Price source not yet reported');
+    setCoverageLabel('Coverage not yet reported');setDataEvidence(null);
     try {
-      const scanUniv = univ;
-      const res = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          universe: scanUniv,
-          strategyJson: strategy,
-          limit: 35
-        })
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && data.success) {
-          setScanResult(data);
-        }
-      }
+      const data = await requestMarketSnapshot({ universe: selectedUniverse, asOf: selectedDate || undefined }, ticket.signal);
+      if (!marketOwner.current.owns(ticket, currentContext.current)) return;
+      if (data.coverage.succeeded > 0) recordCutoff(data);
+      setTrends(data.trends);setDataEvidence(data);
+      setMovers(data.coverage.succeeded > 0 ? data.movers || null : null);
+      setMarketEvaluated(data.coverage.succeeded);
+      setPriceLabel(priceDataLabel(data));
+      setCoverageLabel(data.coverage ? 'Coverage: ' + JSON.stringify(data.coverage) : 'Coverage not reported; current membership, not full exchange coverage');
+      if (data.errors.length) setMarketError('Some market data is unavailable for this context. ' + JSON.stringify(data.errors));
+      if (data.movers?.availableTradingSessions?.length) setAvailableTradingDates(data.movers.availableTradingSessions);
     } catch (e) {
-      console.error('Scan failed:', e);
+      if (marketOwner.current.owns(ticket, currentContext.current)) setMarketError(e instanceof Error ? e.message : 'Market data unavailable');
     } finally {
-      setIsScanning(false);
+      if (marketOwner.current.owns(ticket, currentContext.current)) setIsLoadingTrends(false);
+    }
+  };
+
+  const runScan = async () => {
+    const ticket = scanOwner.current.begin(contextKey);
+    setIsScanning(true);
+    setScanError(''); setScannerError(''); setScanResult(null); setDataCutoff('');
+    setPriceLabel('Price source not yet reported');
+    setCoverageLabel('Coverage not yet reported');setDataEvidence(null);
+    try {
+      const data = await requestScan({ universe: selectedUniverse, strategy, limit: 35, asOf: selectedDate || undefined }, ticket.signal);
+      if (!scanOwner.current.owns(ticket, currentContext.current)) return;
+      setScanResult(data);setDataEvidence(data);
+      setPriceLabel(priceDataLabel(data));
+      if (data.succeeded > 0) recordCutoff(data);
+      setCoverageLabel(`Evaluated: ${data.succeeded}; unavailable: ${data.unavailable}; failed: ${data.failed}. Source coverage: ${JSON.stringify(data.sourceCoverage)}`);
+    } catch (e) {
+      if (scanOwner.current.owns(ticket, currentContext.current)) setScanError(e instanceof Error ? e.message : 'Scan unavailable');
+    } finally {
+      if (scanOwner.current.owns(ticket, currentContext.current)) setIsScanning(false);
     }
   };
 
   useEffect(() => {
-    fetchMarketData(false, selectedUniverse, selectedDate);
-    runScan(selectedUniverse);
-  }, [selectedUniverse, selectedDate]);
+    setTrends([]); setMovers(null); setScanResult(null); setDataCutoff(''); setMarketEvaluated(0);
+    setPriceLabel('Price source not yet reported');
+    setScannerError(''); setMarketError(''); setScanError('');
+    setIsScanning(false); setIsLoadingTrends(false);
+    setCoverageLabel('Coverage not yet reported');setDataEvidence(null);
+    if (isStrategyView) void runScan();
+    else void fetchMarketData();
+    return () => { marketOwner.current.cancel(); scanOwner.current.cancel(); };
+  }, [contextKey]);
+
+  const retryActiveView = () => { if (isStrategyView) void runScan(); else void fetchMarketData(); };
+  const activeError = isStrategyView ? scanError : marketError;
+  const activePending = isStrategyView ? isScanning : isLoadingTrends;
 
   const handleUniverseChange = (newUniv: MarketUniverseType) => {
+    if (newUniv === selectedUniverse) return;
+    marketOwner.current.cancel(); scanOwner.current.cancel();
     setSelectedUniverse(newUniv);
     setTrendPage(1);
   };
 
   const handleDateChange = (newDate: string) => {
+    if (newDate === selectedDate) return;
+    marketOwner.current.cancel(); scanOwner.current.cancel();
     setSelectedDate(newDate);
     setTrendPage(1);
   };
@@ -234,6 +281,14 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
   return (
     <div className="w-full max-w-6xl mx-auto p-3 sm:p-5 space-y-4 pb-24">
+      <div role="status" className="text-xs text-amber-300">{priceLabel}. Derivatives/OI/PCR and related model fields are model-only, not observed derivatives or live quotes. Universe membership is unverified unless explicitly reported; current membership may introduce survivorship bias. {coverageLabel}</div>
+      {dataEvidence && <p className="text-xs text-neutral-300">Sources: {JSON.stringify(dataEvidence.sourceCoverage ?? {})}. {dataEvidence.observationDates && <>Observed sessions: {dataEvidence.observationDates.earliest} to {dataEvidence.observationDates.latest}; stale datasets: {dataEvidence.observationDates.staleSymbols}. </>}{dataEvidence.membership && <>Membership source: {dataEvidence.membership.source}; retrieved {dataEvidence.membership.observedAt}; {dataEvidence.membership.freshness}.</>}</p>}
+      {scannerError && <div role="alert" className="text-xs text-red-400">{scannerError}</div>}
+      {activeError && <div role="alert" className="text-xs text-red-400 space-x-2">
+        <span>{isStrategyView ? 'Strategy scan unavailable: ' : 'Market snapshot unavailable: '}{activeError}</span>
+        <button type="button" onClick={retryActiveView} disabled={activePending} className="underline">Retry {isStrategyView ? 'strategy scan' : 'market snapshot'}</button>
+      </div>}
+      {!isStrategyView && isLoadingTrends && <p role="status" className="text-xs text-neutral-400">Loading market snapshot...</p>}
       {/* Top Header Card */}
       <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -245,15 +300,15 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2 flex-wrap">
                 <span>NSE & BSE Market Scanner & Institutional Intelligence</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                  SmartAPI Synchronized
+                  Research snapshot · not live
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1d1d21] text-neutral-300 border border-[rgba(236,236,237,0.12)] font-mono flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-amber-400" />
-                  <span>Session: {movers?.formattedDate || movers?.asOfDate || availableTradingDates[0]?.label || 'Latest Live Session'}</span>
+                  <span>Session: {dataCutoff || 'Cutoff unavailable'}</span>
                 </span>
               </h2>
               <p className="text-xs text-neutral-400">
-                Live Top Gainers/Losers across NSE, BSE, Nifty 50, Bank Nifty, Sectoral Indexes, 52W Radars, and Derivatives Telemetry
+                Snapshot Gainers/Losers across NSE, BSE, Nifty 50, Bank Nifty, Sectoral Indexes, 52W Radars, and Derivatives Telemetry
               </p>
             </div>
           </div>
@@ -264,14 +319,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               onClick={async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                await fetchMarketData(true, selectedUniverse, selectedDate);
-                await runScan(selectedUniverse);
+                retryActiveView();
               }}
-              disabled={isScanning || isLoadingTrends}
+              disabled={activePending}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1d1d21] hover:bg-[#27272a] text-white font-semibold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] shadow-sm active:scale-95 transition-all disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isScanning || isLoadingTrends ? 'animate-spin text-amber-400' : ''}`} />
-              <span>{isScanning || isLoadingTrends ? 'Syncing Live Feed...' : 'Sync Live Market'}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${activePending ? 'animate-spin text-amber-400' : ''}`} />
+              <span>{activePending ? 'Loading snapshot...' : 'Reload snapshot'}</span>
             </button>
           </div>
         </div>
@@ -284,7 +338,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <Filter className="w-3.5 h-3.5 text-amber-400" />
               <span>Market Universe / Index:</span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 font-mono border border-amber-500/20">
-                {currentUniverseConfig.label} ({movers?.totalFilteredCount || trends.length} Assets)
+                {currentUniverseConfig.label} ({isStrategyView ? (scanResult && scanResult.succeeded > 0 ? `${scanResult.succeeded} evaluated` : 'evaluation pending or unavailable') : (movers ? `${movers.totalFilteredCount} Assets` : 'count pending or unavailable')})
               </span>
             </div>
             
@@ -300,7 +354,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <option value="BSE">🏛️ All BSE Stocks</option>
               </optgroup>
               <optgroup label="Popular Benchmark Indices">
-                <option value="NIFTY_50">💎 NIFTY 50 Bluechips</option>
+                <option value="NIFTY_50">{officialMembership ? 'NIFTY 50 (official 50-member feed)' : 'NIFTY 50-labelled pool'}</option>
                 <option value="BANK_NIFTY">🏦 Bank NIFTY</option>
                 <option value="BSE_SENSEX">🏢 BSE SENSEX 30</option>
                 <option value="POPULAR_INDICES">📊 Popular Indices Feed</option>
@@ -350,17 +404,18 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <Calendar className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
                 <span>Choose Any Date (Calendar View)</span>
                 <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/30 text-white font-mono">
-                  {selectedDate || availableTradingDates[0]?.date || 'Latest Session'}
+                  {selectedDate || dataCutoff || 'Cutoff unavailable'}
                 </span>
               </button>
 
               {/* Date Session Dropdown */}
               <select
-                value={selectedDate || availableTradingDates[0]?.date || ''}
+                value={selectedDate}
                 onChange={(e) => handleDateChange(e.target.value)}
                 className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-cyan-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 font-medium max-w-[200px] truncate"
               >
-                {availableTradingDates.map((item) => (
+                <option value="">Latest available cutoff</option>
+                {coveredTradingDates.map((item) => (
                   <option key={item.date} value={item.date}>
                     {item.label}
                   </option>
@@ -372,20 +427,20 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <span className="text-[10px] text-neutral-400 font-medium hidden sm:inline">Custom Date:</span>
                 <input
                   type="date"
-                  value={selectedDate || availableTradingDates[0]?.date || ''}
-                  max={availableTradingDates[0]?.date || undefined}
-                  min={availableTradingDates[availableTradingDates.length - 1]?.date || '2024-01-01'}
+                  value={selectedDate}
+                  max={coveredTradingDates[0]?.date || undefined}
+                  min={coveredTradingDates[coveredTradingDates.length - 1]?.date || '2024-01-01'}
                   onChange={(e) => handleDateChange(e.target.value)}
                   className="bg-transparent text-white text-xs focus:outline-none font-mono cursor-pointer"
                 />
               </div>
 
               {/* Quick Reset to Latest Session */}
-              {selectedDate && selectedDate !== availableTradingDates[0]?.date && (
+              {selectedDate && selectedDate !== coveredTradingDates[0]?.date && (
                 <button
                   onClick={() => handleDateChange('')}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-300 hover:bg-amber-500 hover:text-[#0c0c0e] border border-amber-500/30 text-xs font-bold transition-all"
-                  title="Reset to current/latest live market session"
+                  title="Reset to latest available data cutoff"
                 >
                   <RefreshCw className="w-3 h-3" />
                   <span>Reset to Latest</span>
@@ -396,7 +451,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             {/* Quick Session Date Pills */}
             <div className="flex items-center gap-1 overflow-x-auto no-scrollbar text-[11px]">
               <span className="text-neutral-500 text-[10px] uppercase font-bold mr-1">Recent Sessions:</span>
-              {availableTradingDates.slice(0, 5).map((item) => {
+              {coveredTradingDates.slice(0, 5).map((item) => {
                 const isSelected = (!selectedDate && item.isLatest) || selectedDate === item.date;
                 return (
                   <button
@@ -515,7 +570,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             }`}
           >
             <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Strategy Matches ({scanResult?.matched || 0})</span>
+            <span>Strategy Matches ({isScanning ? 'pending' : scanError ? 'unavailable' : scanResult && scanResult.succeeded > 0 ? scanResult.matched : 'not evaluated'})</span>
           </button>
         </div>
       </div>
@@ -535,7 +590,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                     Top Gainers & Losers Ranking — {currentUniverseConfig.label}
                   </h3>
                   <span className="text-[10px] px-2 py-0.5 rounded bg-[#141417] border border-[rgba(236,236,237,0.08)] text-amber-400 font-mono">
-                    {movers?.totalFilteredCount || 0} Assets Evaluated
+                    {movers ? `${movers.totalFilteredCount} Assets Evaluated` : 'Evaluation pending or unavailable'}
                   </span>
                   <span className={`text-[10px] px-2 py-0.5 rounded border font-mono flex items-center gap-1 ${
                     movers?.isHistorical
@@ -543,7 +598,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       : 'bg-[#141417] border-[rgba(236,236,237,0.08)] text-neutral-300'
                   }`}>
                     <Calendar className="w-2.5 h-2.5 text-cyan-400" />
-                    <span>{movers?.isHistorical ? `Historical Session: ${movers?.formattedDate || movers?.asOfDate}` : `Session: ${movers?.formattedDate || movers?.asOfDate || '14 Aug 2026'}`}</span>
+                    <span>{movers?.isHistorical ? `Historical Session: ${movers?.formattedDate || movers?.asOfDate}` : `Session: ${movers?.formattedDate || movers?.asOfDate || 'Cutoff unavailable'}`}</span>
                   </span>
                 </div>
                 <p className="text-[11px] text-neutral-400">{currentUniverseConfig.description}</p>
@@ -594,7 +649,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#141417] border border-emerald-500/30 text-emerald-400 font-mono font-bold">
                     <Calendar className="w-3 h-3 text-emerald-400" />
-                    <span>{movers?.formattedDate || movers?.asOfDate || availableTradingDates[0]?.label || 'Latest'}</span>
+                    <span>{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
                   </span>
                 </div>
               </div>
@@ -602,7 +657,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <div className="space-y-2.5">
                 {(!movers?.topGainers || movers.topGainers.length === 0) ? (
                   <div className="p-8 text-center text-neutral-400 text-xs border border-dashed border-[rgba(236,236,237,0.08)] rounded-xl">
-                    No gainers found in the selected universe for this session.
+                    {marketEvaluated > 0 ? 'No gainers in the evaluated subset for this session; full-universe coverage is not established.' : 'Gainers unavailable: no evaluated price coverage.'}
                   </div>
                 ) : (
                   movers.topGainers.map((stock, i) => (
@@ -653,7 +708,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                         </div>
 
                         <button
-                          onClick={() => onSelectStockAndBacktest(stock.id)}
+                          onClick={() => launchBacktest(stock.id, stock.date)}
                           className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-[#0c0c0e] text-[11px] font-bold border border-emerald-500/30 transition-all flex items-center gap-1"
                           title="Backtest active strategy on this gainer"
                         >
@@ -682,7 +737,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#141417] border border-rose-500/30 text-rose-400 font-mono font-bold">
                     <Calendar className="w-3 h-3 text-rose-400" />
-                    <span>{movers?.formattedDate || movers?.asOfDate || availableTradingDates[0]?.label || 'Latest'}</span>
+                    <span>{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
                   </span>
                 </div>
               </div>
@@ -690,7 +745,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <div className="space-y-2.5">
                 {(!movers?.topLosers || movers.topLosers.length === 0) ? (
                   <div className="p-8 text-center text-neutral-400 text-xs border border-dashed border-[rgba(236,236,237,0.08)] rounded-xl">
-                    No losers found in the selected universe for this session.
+                    {marketEvaluated > 0 ? 'No losers in the evaluated subset for this session; full-universe coverage is not established.' : 'Losers unavailable: no evaluated price coverage.'}
                   </div>
                 ) : (
                   movers.topLosers.map((stock, i) => (
@@ -741,7 +796,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                         </div>
 
                         <button
-                          onClick={() => onSelectStockAndBacktest(stock.id)}
+                          onClick={() => launchBacktest(stock.id, stock.date)}
                           className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-[#0c0c0e] text-[11px] font-bold border border-rose-500/30 transition-all flex items-center gap-1"
                           title="Backtest active strategy on this dip candidate"
                         >
@@ -811,7 +866,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   </div>
 
                   <button
-                    onClick={() => onSelectStockAndBacktest(s.id)}
+                    onClick={() => launchBacktest(s.id, s.date)}
                     className="w-full py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#0c0c0e] text-xs font-bold border border-amber-500/30 transition-all flex items-center justify-center gap-1"
                   >
                     <span>Backtest {s.ticker}</span>
@@ -852,7 +907,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                         -{s.distFrom52WHigh}% away
                       </span>
                       <button
-                        onClick={() => onSelectStockAndBacktest(s.id)}
+                        onClick={() => launchBacktest(s.id, s.date)}
                         className="p-1 rounded bg-[#1d1d21] hover:bg-[#27272a] text-white"
                         title="Backtest"
                       >
@@ -892,7 +947,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                         +{s.distFrom52WLow}% off low
                       </span>
                       <button
-                        onClick={() => onSelectStockAndBacktest(s.id)}
+                        onClick={() => launchBacktest(s.id, s.date)}
                         className="p-1 rounded bg-[#1d1d21] hover:bg-[#27272a] text-white"
                         title="Backtest"
                       >
@@ -907,6 +962,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </div>
       )}
 
+      {['option_chain', 'volume_profile', 'gtt_bracket', 'basis_spreads'].includes(activeTab) && (!latestDataCutoff || selectedDate !== latestDataCutoff) && <div role="status" className="text-xs text-amber-300">These latest-only models do not support the selected historical cutoff.</div>}
       {/* TAB 3: DERIVATIVES OPEN INTEREST & PCR SENTIMENT */}
       {activeTab === 'derivatives_oi' && (
         <div className="space-y-4">
@@ -924,7 +980,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 {movers?.derivativesBuildup.longBuildup.slice(0, 4).map(s => (
                   <div
                     key={`long_buildup_${s.id}_${s.ticker}`}
-                    onClick={() => onSelectStockAndBacktest(s.id)}
+                    onClick={() => launchBacktest(s.id, s.date)}
                     className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-emerald-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
@@ -947,7 +1003,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 {movers?.derivativesBuildup.shortCovering.slice(0, 4).map(s => (
                   <div
                     key={`short_covering_${s.id}_${s.ticker}`}
-                    onClick={() => onSelectStockAndBacktest(s.id)}
+                    onClick={() => launchBacktest(s.id, s.date)}
                     className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-cyan-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
@@ -970,7 +1026,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 {movers?.derivativesBuildup.shortBuildup.slice(0, 4).map(s => (
                   <div
                     key={`short_buildup_${s.id}_${s.ticker}`}
-                    onClick={() => onSelectStockAndBacktest(s.id)}
+                    onClick={() => launchBacktest(s.id, s.date)}
                     className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-rose-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
@@ -993,7 +1049,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 {movers?.derivativesBuildup.longUnwinding.slice(0, 4).map(s => (
                   <div
                     key={`long_unwind_${s.id}_${s.ticker}`}
-                    onClick={() => onSelectStockAndBacktest(s.id)}
+                    onClick={() => launchBacktest(s.id, s.date)}
                     className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-amber-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
@@ -1007,23 +1063,23 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       )}
 
       {/* TAB: OPTION CHAIN & GREEKS */}
-      {activeTab === 'option_chain' && (
-        <OptionChainScanner onSelectStockAndBacktest={onSelectStockAndBacktest} />
+      {activeTab === 'option_chain' && (!!latestDataCutoff && selectedDate === latestDataCutoff) && (
+        <OptionChainScanner key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
       {/* TAB: VOLUME PROFILE & MICROSTRUCTURE VWAP */}
-      {activeTab === 'volume_profile' && (
-        <VolumeProfileScanner onSelectStockAndBacktest={onSelectStockAndBacktest} />
+      {activeTab === 'volume_profile' && (!!latestDataCutoff && selectedDate === latestDataCutoff) && (
+        <VolumeProfileScanner key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
       {/* TAB: AUTOMATED GTT BRACKET & TRAILING STOP-LOSS ORDER CALCULATOR */}
-      {activeTab === 'gtt_bracket' && (
-        <GttBracketCalculator onSelectStockAndBacktest={onSelectStockAndBacktest} />
+      {activeTab === 'gtt_bracket' && (!!latestDataCutoff && selectedDate === latestDataCutoff) && (
+        <GttBracketCalculator key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
       {/* TAB: CASH VS FUTURES BASIS & CALENDAR SPREAD SCANNER */}
-      {activeTab === 'basis_spreads' && (
-        <BasisSpreadScanner onSelectStockAndBacktest={onSelectStockAndBacktest} />
+      {activeTab === 'basis_spreads' && (!!latestDataCutoff && selectedDate === latestDataCutoff) && (
+        <BasisSpreadScanner key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
       {/* TAB 4: MARKET BREADTH & SECTOR HEATMAP */}
@@ -1159,13 +1215,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           {isLoadingTrends ? (
             <div className="p-16 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#161619]/30 text-neutral-400 space-y-3">
               <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs">Fetching real-time stock prices and evaluating technical trends across 2,000+ symbols...</p>
+              <p className="text-xs">Loading available price data and evaluating trends; coverage may be partial.</p>
             </div>
           ) : filteredTrends.length === 0 ? (
             <div className="p-12 text-center border border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#161619]/30 text-neutral-400 space-y-2">
               <Search className="w-6 h-6 text-neutral-500 mx-auto" />
-              <p className="text-sm font-semibold text-neutral-300">No matching stocks found for "{trendSearchQuery}"</p>
-              <p className="text-xs text-neutral-500">Try searching for a different symbol or clear your filter</p>
+              <p className="text-sm font-semibold text-neutral-300">{marketEvaluated > 0 ? `No matching stocks in the evaluated subset for "${trendSearchQuery}"` : 'Trends unavailable: no evaluated price coverage.'}</p>
+              <p className="text-xs text-neutral-500">{marketEvaluated > 0 ? 'Try searching for a different symbol or clear your filter' : 'Reload the snapshot to retry unavailable data.'}</p>
             </div>
           ) : (
             <>
@@ -1256,7 +1312,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                     </div>
 
                     <button
-                      onClick={() => onSelectStockAndBacktest(t.id)}
+                      onClick={() => launchBacktest(t.id, t.date)}
                       className="w-full py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#0c0c0e] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
                     >
                       <span>⚡ Backtest Active Strategy on {t.ticker}</span>
@@ -1305,13 +1361,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       {/* TAB 6: STRATEGY SCREENER MATCHES */}
       {activeTab === 'strategy_matches' && (
         <div className="space-y-3">
-          {scanResult && (
+          {scanResult && !scanError && (
             <div className="flex items-center justify-between text-xs text-neutral-400 px-1">
               <span>
-                Scanned <strong className="text-white">{scanResult.scanned}</strong> stocks • Found{' '}
-                <strong className="text-emerald-400">{scanResult.matched}</strong> matching trigger setups
+                Evaluated <strong className="text-white">{scanResult.succeeded}</strong> symbols in the requested subset • Found{' '}
+                <strong className="text-emerald-400">{scanResult.succeeded > 0 ? scanResult.matched : 'unavailable'}</strong> matching trigger setups. Unavailable: {scanResult.unavailable}; failed: {scanResult.failed}.
               </span>
-              <span className="text-[11px] font-mono text-neutral-500">Live Feed: {scanResult.dataSource}</span>
+              <span className="text-[11px] font-mono text-neutral-500">Source: {scanResult.dataSource} · not live</span>
             </div>
           )}
 
@@ -1320,7 +1376,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
               <p className="text-xs">Evaluating technical rules against universe...</p>
             </div>
-          ) : scanResult && scanResult.matches.length > 0 ? (
+          ) : !scanError && scanResult && scanResult.matches.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
               {scanResult.matches.map((m, idx) => (
                 <div
@@ -1361,7 +1417,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   </div>
 
                   <button
-                    onClick={() => onSelectStockAndBacktest(m.symbolId)}
+                    onClick={() => launchBacktest(m.symbolId, m.lastDate)}
                     className="w-full py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#0c0c0e] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
                   >
                     <span>Load & Run Backtest on {m.ticker}</span>
@@ -1372,7 +1428,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </div>
           ) : (
             <div className="p-12 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#161619]/30 text-neutral-500 text-xs space-y-2">
-              <p>No stocks currently trigger the active strategy entry conditions.</p>
+              <p>{scanError ? 'Strategy scan failed. Results are unavailable; retry the scan.' : scanResult && scanResult.succeeded > 0 && scanResult.matched === 0 ? `No matches in the ${scanResult.succeeded} evaluated symbols. This does not establish no matches across the full universe.` : 'Strategy results unavailable: no evaluated coverage was reported.'}</p>
+              {!scanError && <button type="button" onClick={() => void runScan()} className="underline text-amber-400">Retry strategy scan</button>}
               <button
                 onClick={() => setActiveTab('movers')}
                 className="px-3 py-1.5 rounded-lg bg-[#1d1d21] text-amber-400 font-semibold text-xs border border-[rgba(236,236,237,0.12)] hover:bg-[#27272a]"
@@ -1388,11 +1445,11 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       <TradingCalendarModal
         isOpen={isCalendarModalOpen}
         onClose={() => setIsCalendarModalOpen(false)}
-        selectedDate={selectedDate || availableTradingDates[0]?.date || '2026-08-14'}
+        selectedDate={selectedDate || dataCutoff}
         onSelectDate={(date) => handleDateChange(date)}
-        availableDates={availableTradingDates}
+        availableDates={coveredTradingDates}
         activeUniverseLabel={currentUniverseConfig.label}
-        totalAssetsCount={trends.length || 2088}
+        totalAssetsCount={trends.length}
       />
     </div>
   );

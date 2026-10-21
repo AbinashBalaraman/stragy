@@ -1,260 +1,57 @@
-import {
-  TradeRecord,
-  MonteCarloResult,
-  TrainTestSplitResult,
-  SensitivityHeatmapResult,
-  OHLCVBar,
-  StrategyAST
-} from '../../shared/strategy/types';
-
-/**
- * 500-Run Monte Carlo Simulation with Bootstrap Resampling
- */
-export function runMonteCarloSimulation(
-  trades: TradeRecord[],
-  initialCapital: number,
-  simulationCount: number = 500
-): MonteCarloResult {
-  if (trades.length === 0) {
-    const defaultPoints = [initialCapital, initialCapital];
-    return {
-      simulationsCount: simulationCount,
-      percentileCurves: {
-        p10: defaultPoints,
-        p25: defaultPoints,
-        p50: defaultPoints,
-        p75: defaultPoints,
-        p90: defaultPoints
-      },
-      dates: ['Start', 'End'],
-      medianMaxDrawdown: 0,
-      probDrawdownOver15: 0,
-      probDrawdownOver25: 0,
-      p10TerminalEquity: initialCapital,
-      p50TerminalEquity: initialCapital,
-      p90TerminalEquity: initialCapital
-    };
-  }
-
-  const tradeReturns = trades.map(t => t.netPnl / (initialCapital * 0.1 || 10000));
-  const numSteps = Math.max(trades.length, 20);
-  const sampleDates = trades.map((t, idx) => t.exitDate || `Trade ${idx + 1}`);
-
-  const allEquityPaths: number[][] = [];
-  const maxDrawdowns: number[] = [];
-  const terminalEquities: number[] = [];
-
-  for (let sim = 0; sim < simulationCount; sim++) {
-    const path: number[] = [initialCapital];
-    let curEquity = initialCapital;
-    let peak = initialCapital;
-    let maxDd = 0;
-
-    for (let step = 0; step < numSteps; step++) {
-      // Bootstrap with replacement
-      const randomIdx = Math.floor(Math.random() * tradeReturns.length);
-      const ret = tradeReturns[randomIdx];
-      const pnl = curEquity * (ret * 0.1); // Scaled return
-      curEquity += pnl;
-      if (curEquity < 0) curEquity = 0;
-
-      path.push(curEquity);
-      if (curEquity > peak) peak = curEquity;
-      const dd = peak > 0 ? ((peak - curEquity) / peak) * 100 : 0;
-      if (dd > maxDd) maxDd = dd;
-    }
-
-    allEquityPaths.push(path);
-    maxDrawdowns.push(maxDd);
-    terminalEquities.push(curEquity);
-  }
-
-  // Calculate percentiles at each step
-  const pathLength = allEquityPaths[0].length;
-  const p10: number[] = [];
-  const p25: number[] = [];
-  const p50: number[] = [];
-  const p75: number[] = [];
-  const p90: number[] = [];
-
-  for (let step = 0; step < pathLength; step++) {
-    const stepValues = allEquityPaths.map(p => p[step]).sort((a, b) => a - b);
-    p10.push(Math.round(stepValues[Math.floor(simulationCount * 0.1)]));
-    p25.push(Math.round(stepValues[Math.floor(simulationCount * 0.25)]));
-    p50.push(Math.round(stepValues[Math.floor(simulationCount * 0.5)]));
-    p75.push(Math.round(stepValues[Math.floor(simulationCount * 0.75)]));
-    p90.push(Math.round(stepValues[Math.floor(simulationCount * 0.9)]));
-  }
-
-  terminalEquities.sort((a, b) => a - b);
-  maxDrawdowns.sort((a, b) => a - b);
-
-  const medianMaxDrawdown = Number(maxDrawdowns[Math.floor(simulationCount * 0.5)].toFixed(2));
-  const countOver15 = maxDrawdowns.filter(d => d >= 15).length;
-  const countOver25 = maxDrawdowns.filter(d => d >= 25).length;
-
-  return {
-    simulationsCount: simulationCount,
-    percentileCurves: { p10, p25, p50, p75, p90 },
-    dates: ['Start', ...sampleDates],
-    medianMaxDrawdown,
-    probDrawdownOver15: Number(((countOver15 / simulationCount) * 100).toFixed(1)),
-    probDrawdownOver25: Number(((countOver25 / simulationCount) * 100).toFixed(1)),
-    p10TerminalEquity: Math.round(terminalEquities[Math.floor(simulationCount * 0.1)]),
-    p50TerminalEquity: Math.round(terminalEquities[Math.floor(simulationCount * 0.5)]),
-    p90TerminalEquity: Math.round(terminalEquities[Math.floor(simulationCount * 0.9)])
-  };
+import type { BacktestResponse, OHLCVBar, StrategyAST, RobustnessSuite, MonteCarloResult, TrainTestSplitResult, SensitivityHeatmapResult } from '../../shared/strategy/types';
+import type { BacktestOptions } from './engine';
+import { equityReturns } from './metrics';
+type Simulator = (strategy: StrategyAST, bars: OHLCVBar[], options?: BacktestOptions) => BacktestResponse;
+export function seededRandom(seed: number): () => number {
+  let value = seed >>> 0 || 0x9e3779b9;
+  return () => { value ^= value << 13; value ^= value >>> 17; value ^= value << 5; return (value >>> 0) / 4294967296; };
 }
-
-/**
- * 70/30 In-Sample vs Out-of-Sample Split Validation
- */
-export function calculateTrainTestSplit(
-  trades: TradeRecord[],
-  bars: OHLCVBar[]
-): TrainTestSplitResult {
-  const splitIdx = Math.floor(bars.length * 0.7);
-  const splitDate = bars[splitIdx]?.date || '2024-01-01';
-  const splitTimestamp = bars[splitIdx]?.timestamp || 0;
-
-  const trainTrades = trades.filter(t => t.entryTimestamp <= splitTimestamp);
-  const testTrades = trades.filter(t => t.entryTimestamp > splitTimestamp);
-
-  const calcSubsetMetrics = (subset: TradeRecord[], durationYears: number) => {
-    if (subset.length === 0) {
-      return { cagr: 0, sharpe: 0, maxDrawdown: 0, winRate: 0, profitFactor: 1, tradesCount: 0 };
-    }
-    const wins = subset.filter(t => t.netPnl > 0);
-    const grossGains = wins.reduce((s, t) => s + t.netPnl, 0);
-    const losses = subset.filter(t => t.netPnl <= 0);
-    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.netPnl, 0));
-    const winRate = Number(((wins.length / subset.length) * 100).toFixed(1));
-    const profitFactor = grossLoss > 0 ? Number((grossGains / grossLoss).toFixed(2)) : grossGains > 0 ? 5.0 : 1.0;
-
-    let equity = 100000;
-    let peak = equity;
-    let maxDd = 0;
-    const rets: number[] = [];
-
-    for (const t of subset) {
-      const prev = equity;
-      equity += t.netPnl;
-      if (equity > peak) peak = equity;
-      const dd = peak > 0 ? ((peak - equity) / peak) * 100 : 0;
-      if (dd > maxDd) maxDd = dd;
-      rets.push(prev > 0 ? (equity - prev) / prev : 0);
-    }
-
-    const totalRet = (equity - 100000) / 100000;
-    const cagr = durationYears > 0 ? Number(((Math.pow(Math.max(1 + totalRet, 0.001), 1 / durationYears) - 1) * 100).toFixed(2)) : 0;
-
-    // Sharpe
-    const meanRet = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
-    const variance = rets.reduce((s, r) => s + Math.pow(r - meanRet, 2), 0) / (rets.length || 1);
-    const stdDev = Math.sqrt(variance) || 0.0001;
-    const sharpe = Number(((meanRet / stdDev) * Math.sqrt(252 / Math.max(1, subset.length / durationYears))).toFixed(2));
-
-    return {
-      cagr,
-      sharpe: isNaN(sharpe) ? 0 : sharpe,
-      maxDrawdown: Number(maxDd.toFixed(2)),
-      winRate,
-      profitFactor,
-      tradesCount: subset.length
-    };
-  };
-
-  const totalYears = Math.max(bars.length / 252, 0.5);
-  const trainYears = totalYears * 0.7;
-  const testYears = totalYears * 0.3;
-
-  const trainMetrics = calcSubsetMetrics(trainTrades, trainYears);
-  const testMetrics = calcSubsetMetrics(testTrades, testYears);
-
-  const cagrDecayRatio = trainMetrics.cagr !== 0
-    ? Number((testMetrics.cagr / trainMetrics.cagr).toFixed(2))
-    : testMetrics.cagr > 0 ? 1.0 : 0.0;
-
-  const sharpeDecayRatio = trainMetrics.sharpe !== 0
-    ? Number((testMetrics.sharpe / trainMetrics.sharpe).toFixed(2))
-    : testMetrics.sharpe > 0 ? 1.0 : 0.0;
-
-  let overfittingRisk: 'LOW' | 'MODERATE' | 'HIGH' = 'LOW';
-  if (cagrDecayRatio < 0.4 || testMetrics.maxDrawdown > trainMetrics.maxDrawdown * 1.8) {
-    overfittingRisk = 'HIGH';
-  } else if (cagrDecayRatio < 0.7 || testMetrics.sharpe < trainMetrics.sharpe * 0.6) {
-    overfittingRisk = 'MODERATE';
-  }
-
-  return {
-    trainMetrics,
-    testMetrics,
-    cagrDecayRatio,
-    sharpeDecayRatio,
-    overfittingRisk,
-    splitDate
-  };
+export function quantile(values: number[], p: number): number {
+  if (!values.length || !Number.isFinite(p) || p < 0 || p > 1) throw new Error('INVALID_QUANTILE');
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 }
-
-/**
- * 2D Parameter Sensitivity Grid around base strategy risk / indicator parameters
- */
-export function generateSensitivityHeatmap(
-  strategy: StrategyAST,
-  baseSharpe: number,
-  baseNetPnlPercent: number
-): SensitivityHeatmapResult {
-  const baseSl = strategy.risk.stopLoss?.value || 2.0;
-  const baseTp = strategy.risk.takeProfit?.value || (baseSl * 2.5);
-
-  const param1Name = 'Stop Loss (%)';
-  const param1Values = [
-    Number((baseSl * 0.5).toFixed(1)),
-    Number((baseSl * 0.75).toFixed(1)),
-    Number(baseSl.toFixed(1)),
-    Number((baseSl * 1.25).toFixed(1)),
-    Number((baseSl * 1.5).toFixed(1))
-  ];
-
-  const param2Name = 'Take Profit (%)';
-  const param2Values = [
-    Number((baseTp * 0.6).toFixed(1)),
-    Number((baseTp * 0.8).toFixed(1)),
-    Number(baseTp.toFixed(1)),
-    Number((baseTp * 1.2).toFixed(1)),
-    Number((baseTp * 1.5).toFixed(1))
-  ];
-
-  const matrix: any[][] = [];
-
-  for (let i = 0; i < param1Values.length; i++) {
-    const row: any[] = [];
-    const sl = param1Values[i];
-
-    for (let j = 0; j < param2Values.length; j++) {
-      const tp = param2Values[j];
-
-      // Realistic quantitative sensitivity simulation model
-      const slFactor = 1 - Math.pow((sl - baseSl) / (baseSl || 1), 2) * 0.4;
-      const tpFactor = 1 - Math.pow((tp - baseTp) / (baseTp || 1), 2) * 0.3;
-      const noise = (Math.sin(i * 3 + j * 7) * 0.1);
-
-      const computedSharpe = Number(Math.max(baseSharpe * slFactor * tpFactor + noise, -2.5).toFixed(2));
-
-      row.push({
-        param1Value: sl,
-        param2Value: tp,
-        metricValue: computedSharpe
-      });
-    }
-    matrix.push(row);
+function emptyMonte(reason: string): MonteCarloResult {
+  return { status: 'unavailable', reason, method: 'iid-daily-net-equity-bootstrap', simulationsCount: 0, percentileCurves: { p10: [], p25: [], p50: [], p75: [], p90: [] }, dates: [], medianMaxDrawdown: null, probDrawdownOver15: null, probDrawdownOver25: null, p10TerminalEquity: null, p50TerminalEquity: null, p90TerminalEquity: null };
+}
+const emptyMetrics = () => ({ cagr: null, sharpe: null, maxDrawdown: 0, winRate: null, profitFactor: null, tradesCount: 0 });
+function emptySplit(reason: string): TrainTestSplitResult { return { status: 'unavailable', reason, method: 'independent-chronological-holdout', trainMetrics: emptyMetrics(), testMetrics: emptyMetrics(), cagrDecayRatio: null, sharpeDecayRatio: null, overfittingRisk: 'UNAVAILABLE', splitDate: '' }; }
+export function unavailableRobustness(reason: string): RobustnessSuite { return { monteCarlo: emptyMonte(reason), trainTestSplit: emptySplit(reason), sensitivityHeatmap: { status: 'unavailable', reason, param1Name: '', param2Name: '', param1Values: [], param2Values: [], matrix: [] } }; }
+export function bootstrapReturns(returns: number[], initialCapital: number, simulations = 100, seed = 42, random?: () => number): MonteCarloResult {
+  if (!Number.isInteger(simulations) || simulations < 1 || simulations > 500 || !Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !Number.isFinite(initialCapital) || initialCapital <= 0) throw new Error('INVALID_BOOTSTRAP_OPTIONS');
+  if (!returns.length || !returns.every(r => Number.isFinite(r) && r >= -1)) return emptyMonte('INSUFFICIENT_OR_INVALID_RETURNS');
+  const rng = random ?? seededRandom(seed), horizon = returns.length, paths: number[][] = [], drawdowns: number[] = [];
+  for (let s = 0; s < simulations; s++) {
+    let equity = initialCapital, peak = initialCapital, dd = 0; const path = [equity];
+    for (let i = 0; i < horizon; i++) { const sample = rng(); if (!(sample >= 0 && sample < 1)) throw new Error('INVALID_RANDOM_SAMPLE'); equity *= 1 + returns[Math.floor(sample * returns.length)]; peak = Math.max(peak, equity); dd = Math.max(dd, (peak - equity) / peak * 100); path.push(equity); }
+    paths.push(path); drawdowns.push(dd);
   }
-
-  return {
-    param1Name,
-    param1Values,
-    param2Name,
-    param2Values,
-    matrix
-  };
+  const curve = (p: number) => Array.from({ length: horizon + 1 }, (_, i) => quantile(paths.map(path => path[i]), p));
+  const terminal = paths.map(path => path.at(-1)!);
+  return { status: 'available', method: 'iid-daily-net-equity-bootstrap/xorshift32-v1/nearest-rank', seed, simulationsCount: simulations, percentileCurves: { p10: curve(.1), p25: curve(.25), p50: curve(.5), p75: curve(.75), p90: curve(.9) }, dates: Array.from({ length: horizon + 1 }, (_, i) => 'Step ' + i), medianMaxDrawdown: quantile(drawdowns, .5), probDrawdownOver15: drawdowns.filter(d => d >= 15).length / simulations * 100, probDrawdownOver25: drawdowns.filter(d => d >= 25).length / simulations * 100, p10TerminalEquity: quantile(terminal, .1), p50TerminalEquity: quantile(terminal, .5), p90TerminalEquity: quantile(terminal, .9) };
+}
+export function buildRobustnessSuite(base: BacktestResponse, bars: OHLCVBar[], options: BacktestOptions, simulate: Simulator): RobustnessSuite {
+  const seed = options.seed ?? 42;
+  const monteCarlo = base.trades.length ? bootstrapReturns(equityReturns(base.equityCurve), base.metrics.initialCapital, options.simulations ?? 100, seed) : emptyMonte('NO_TRADES');
+  const start = options.startIndex ?? 0, end = options.endIndex ?? bars.length, split = start + Math.floor((end - start) * .7);
+  let trainTestSplit = emptySplit('INSUFFICIENT_WINDOW');
+  if (split - start >= 2 && end - split >= 2) {
+    try {
+      const train = simulate(base.strategy, bars, { ...options, robustness: false, startIndex: start, endIndex: split, liquidateAtEnd: true });
+      const test = simulate(base.strategy, bars, { ...options, robustness: false, startIndex: split, endIndex: end, liquidateAtEnd: true });
+      const pack = (r: BacktestResponse) => ({ cagr: r.metrics.cagr, sharpe: r.metrics.sharpeRatio, maxDrawdown: r.metrics.maxDrawdownPercent, winRate: r.metrics.winRate, profitFactor: r.metrics.profitFactor, tradesCount: r.trades.length });
+      const ratio = (a: number | null, b: number | null) => a !== null && b !== null && a > 0 && b >= 0 ? b / a : null;
+      trainTestSplit = { status: 'available', reason: 'Fixed strategy holdout; no verified parameter-selection history, so overfitting risk is not classified.', method: 'independent-chronological-holdout', trainMetrics: pack(train), testMetrics: pack(test), cagrDecayRatio: ratio(train.metrics.cagr, test.metrics.cagr), sharpeDecayRatio: ratio(train.metrics.sharpeRatio, test.metrics.sharpeRatio), overfittingRisk: 'UNAVAILABLE', splitDate: bars[split].date };
+    } catch (e) { trainTestSplit = emptySplit('Window failed: ' + (e as Error).message); }
+  }
+  const stop = base.strategy.risk.stopLoss, target = base.strategy.risk.takeProfit;
+  const unique = (xs: number[]) => [...new Set(xs)];
+  const p1 = unique([stop.value * .8, stop.value, stop.value * 1.2].filter(v => v > 0 && (stop.type !== 'percent' || v <= 100)));
+  const p2 = target ? unique([target.value * .8, target.value, target.value * 1.2]) : unique([Math.max(0, base.strategy.costs.slippageBps - 2), base.strategy.costs.slippageBps, Math.min(100, base.strategy.costs.slippageBps + 2)]);
+  const sensitivityHeatmap: SensitivityHeatmapResult = { status: 'available', metric: 'totalReturnPercent', param1Name: 'Stop loss (' + stop.type + ')', param1Values: p1, param2Name: target ? 'Take profit (' + target.type + ')' : 'Slippage (bps)', param2Values: p2,
+    matrix: p1.map(v1 => p2.map(v2 => { const strategy: StrategyAST = JSON.parse(JSON.stringify(base.strategy)); strategy.risk.stopLoss.value = v1; if (target) strategy.risk.takeProfit!.value = v2; else strategy.costs.slippageBps = v2;
+      try { const run = simulate(strategy, bars, { ...options, robustness: false }); return { param1Value: v1, param2Value: v2, metricValue: run.metrics.totalReturnPercent }; }
+      catch (e) { return { param1Value: v1, param2Value: v2, metricValue: null, reason: (e as Error).message }; }
+    })) };
+  return { monteCarlo, trainTestSplit, sensitivityHeatmap };
 }

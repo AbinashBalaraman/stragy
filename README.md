@@ -1,166 +1,72 @@
-<div align="center">
+# Stragy research upgrade
 
-# ⚡ Stragy
+React 19, TypeScript, Vite, Tailwind, Express and Zod trading-research workspace. The reviewed starting revision was `163a80c6d603eec2bed28a7e9220b6a867e8dac7`.
 
-### Institutional-Grade Quantitative Strategy Builder, Algorithmic Backtester & Market Intelligence Engine
+## Current status
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-stragy.onrender.com-00C853?style=for-the-badge&logo=render&logoColor=white)](https://stragy.onrender.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](./LICENSE)
-[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Tailwind CSS v4](https://img.shields.io/badge/Tailwind-v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![Node.js](https://img.shields.io/badge/Node.js-22+-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+The research upgrade now includes an observed daily-data adapter, official Nifty 50 membership, temporal RSI screening and explicit chat-to-backtest actions. Deployment verification is recorded separately; none of this certifies live trading.
 
-**[Explore Live Demo →](https://stragy.onrender.com/)**
+Verified with Node **26.5.0** and npm **11.17.0**:
 
----
+- Standard Vitest coverage run: **346 tests passed, 35 files, zero failures**.
+- Configured financial/strategy coverage: **94.84% statements/lines, 80.47% branches, 95.94% functions**. This is not whole-application coverage.
+- Standard typecheck, lint and production build passed. Typecheck enables strictNullChecks; full TypeScript strict mode is not claimed.
+- Local production startup and read-only smoke passed, including denial of backend artifacts and environment files.
+- Production browser checks confirmed explicit local save, duplicate, soft-delete and restore. Automated component tests cover revisions, storage failures, recovery conflicts, draft-only copilot actions and request ownership.
 
-</div>
+See [observed-data and chat behavior](docs/upgrade/observed-data-chat.md) and [current release verification](docs/upgrade/verification/observed-release-report.json). The original [implementation report](docs/upgrade/implementation-status.md), native-release report and fallback-probe reports are historical. Full manual accessibility/responsive review, all planned E2E journeys and hosted durability remain unverified.
 
-## 📌 Overview
+## Research behavior
 
-**Stragy** is a full-stack algorithmic backtesting and quantitative trading platform purpose-built for the Indian Financial Markets (NSE & BSE) and global equities. It bridges the gap between visual, no-code strategy creation and institutional-grade risk verification.
+- Daily (1D), long-only, cash-funded market orders. Close signals fill at the next open.
+- Conservative gaps, stop-first intrabar ambiguity and next-bar trailing-stop changes.
+- One fee-inclusive reconciled cash ledger. Slippage is embedded in fills, not charged twice.
+- Explicit warmups, bounded requested evaluation windows and nullable undefined metrics with reasons.
+- Seeded return bootstrap, independent chronological holdout windows and actual sensitivity reruns. These are exploratory diagnostics, not forecasts.
+- Strict canonical strategy validation, documented legacy migration and explicit equality tolerance.
+- Bounded jobs, cancellation, idempotency conflicts and immutable run identity. Incompatible runs are not ranked together.
+- Local-first My Strategies: explicit save-as, rename, duplicate, immutable revisions, JSON export, trash/restore, retention limits and Web Locks conflict protection. Quota/denial failures are visible; corrupt bytes are preserved before replacement.
+- Reviewed imports and one-step draft undo. Selecting retained results does not replace the builder draft.
+- Copilot proposals are drafts. Applying and running are separate explicit actions. External AI is disabled by default.
+- Historical scanner cutoffs are retained when launching a backtest. Modeled derivatives/order previews are labeled and never submit orders.
 
-Whether you are designing intraday momentum breakouts, mean-reversion swing systems, or multi-indicator trend-following algorithms, Stragy provides instant backtesting, rigorous walkforward out-of-sample testing, Monte Carlo robustness suites, real-time market scanners, and native broker execution mapping.
+## Data and safety
 
----
+The public-research deployment uses **observed Yahoo daily OHLCV**, not generated prices or live tick streaming. Nifty 50 membership comes from the official NSE CSV; current constituents introduce historical survivorship bias. Results expose source, cutoff, checksum, freshness, coverage, assumptions and warnings. Unavailable real data never falls back to generated bars. Catalog reference prices are not observed quotes and are hidden outside demo mode. The benchmark is the actual instrument's buy-and-hold series, not an unrelated index.
 
-## ✨ Key Features
+Local development defaults to an explicitly labelled deterministic demo. Real mode requires `MARKET_PROVIDER=yahoo`; this public adapter is not a licensed exchange feed. Cash-fee rates are dated illustrative assumptions, not certified statutory/broker schedules. DP and other broker-specific charges are excluded. Calendars, corporate actions, settlement, tick/lot/margin rules and entitlement require independent review.
 
-### 1. 🛠️ Visual Strategy Builder & AST Compiler
-- **Modular Rule Builder**: Compose complex entry and exit conditions using intuitive visual blocks.
-- **Rich Technical Indicators**: EMA, SMA, RSI, Bollinger Bands, MACD, Supertrend, ATR, and Volume-SMA.
-- **Custom Risk Controls**: Configurable Stop-Loss (%), Take-Profit (%), Trailing Stop (Dynamic %), Fixed-Fraction/Fixed-Risk Position Sizing, and Max Drawdown Circuit Breakers.
-- **JSON Strategy AST**: Export, import, and share versioned Strategy Abstract Syntax Trees (ASTs).
+Optional local-file server storage is atomic and single-instance, not multi-instance storage or verified durability on ephemeral hosts. Public modes disable server strategy saves; browser-local My Strategies remains available. There are no broker logins or live orders. External AI in public-research mode requires per-request zero-price verification and has no paid fallback. The existing provider key may need permission to use the selected free model; a parser is never labelled AI.
 
-### 2. 📊 Institutional Backtesting Engine
-- **Full Quantitative Metrics**: Computes CAGR, Sharpe Ratio, Sortino Ratio, Calmar Ratio, Alpha, Beta, Win Rate, Profit Factor, and Max Consecutive Losses.
-- **Indian Market Statutory Costs**: Realistic simulation including **STT** (Securities Transaction Tax), **SEBI turnover charges**, **Exchange transaction fees**, **Stamp Duty**, **GST (18%)**, and customizable slippage.
-- **Visual Analytics**: Interactive Equity Curve vs Benchmark, Drawdown Underwater Charts, Monthly Returns Heatmaps, and Trade Logs with PnL distributions.
+## Install and verify
 
-### 3. 🛡️ Robustness & Anti-Overfitting Suite
-- **Monte Carlo Simulations**: Runs 100+ randomized iterations to forecast drawdown confidence intervals (P10, P50, P90).
-- **Walk-Forward Train/Test Split**: Automatically tests strategies on out-of-sample market regimes to flag overfitting risk.
-- **2D Parameter Sensitivity Heatmap**: Evaluates parameter fragility across 2D matrices to ensure stable parameter plateaus.
+Use the pinned runtime in `.node-version` and the npm lockfile:
 
-### 4. 🔍 Multi-Universe Market Scanner & Real-Time Intelligence
-- **Universes Supported**: All NSE Equities (2,050+), BSE Equities, NIFTY 50, Bank NIFTY, NIFTY IT, NIFTY Auto, NIFTY Pharma, NIFTY Metal, NIFTY FMCG, and Major Indices.
-- **Market Movers**: Top Gainers, Top Losers, Volume Shockers (>1.25x 20D volume), and 52-Week High/Low breakout alerts.
-- **Derivatives Open Interest (OI)**: Real-time categorization into *Long Buildup*, *Short Covering*, *Short Buildup*, and *Long Unwinding*.
-- **Option Chain & Volume Profile**: Real-time PCR, Max Pain strikes, Point of Control (POC), and Value Area (VAH/VAL) mapping.
-- **Trading Session Calendar**: Snap scanner data to historical trading dates across the past 250 market sessions.
-
-### 5. 🤖 AI Quantitative Copilot
-- Natural language strategy generation, logic debugging, and automated risk optimization.
-- One-click application of AI-generated strategies directly into the backtesting engine.
-
-### 6. 🔌 Angel One SmartAPI Ready
-- Pre-mapped token IDs for seamless connection with Angel One's SmartAPI ecosystem.
-- Ready for live quote polling, WebSocket feeds, and automated GTT bracket order dispatching.
-
----
-
-## 🏗️ Architecture & Technology Stack
-
-```
-stragy/
-├── src/
-│   ├── components/            # React 19 UI Components
-│   │   ├── chat/              # AI Copilot Dock & Floating Assistant
-│   │   ├── layout/            # Navigation, Status Bar & Header
-│   │   ├── library/           # Strategy Templates & Saved Strategies
-│   │   ├── results/           # Backtest Dashboard, Charts & Comparison
-│   │   ├── scanner/           # Market Scanner, Option Chain, Volume Profile
-│   │   └── strategy/          # Visual Strategy Builder & Indicator Panels
-│   ├── server/                # Backend Quantitative Engine
-│   │   ├── backtest/          # Engine, Indicators, Simulator & Scanner
-│   │   └── data/              # Symbols Universe, SmartAPI & OHLCV Store
-│   └── shared/                # Shared Types, Schemas & Templates
-├── server.ts                  # Express Backend & API Router
-├── start.js                   # Self-Healing Production Runner
-└── render.yaml                # Cloud Blueprint Deployment Config
-```
-
-- **Frontend**: React 19, TypeScript, Tailwind CSS v4, Motion, Lucide Icons, Recharts.
-- **Backend**: Node.js, Express, esbuild, TypeScript.
-- **Data & Math**: Vectorized indicator math in RAM, in-memory caching with TTL.
-
----
-
-## 🚀 Quick Start (Local Development)
-
-### Prerequisites
-- Node.js `v18.0.0` or higher
-- npm or yarn
-
-### 1. Clone the repository
-```bash
-git clone https://github.com/AbinashBalaraman/stragy.git
-cd stragy
-```
-
-### 2. Install dependencies
-```bash
-npm install
-```
-
-### 3. Setup environment variables (Optional)
-```bash
-cp .env.example .env
-```
-*(Optionally add your Gemini API Key or Angel One SmartAPI credentials to `.env`)*
-
-### 4. Start the development server
-```bash
-npm run dev
-```
-Open **`http://localhost:3000`** in your browser.
-
----
-
-## 📦 Production Build & Deployment
-
-### Build Command
-```bash
+```text
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run test:coverage
 npm run build
 ```
 
-### Start Command
-```bash
-npm start
-```
+`npm run dev` starts local demo development. The build produces public `dist/client` and private server/worker modules under `dist/server`. `npm start` requires these artifacts and never rebuilds automatically.
 
-### Deploy to Render
-1. Connect your GitHub repository `AbinashBalaraman/stragy` to [Render](https://render.com).
-2. Render will automatically detect `render.yaml` with the following configuration:
-   - **Build Command**: `npm install && npm run build`
-   - **Start Command**: `npm start`
-   - **Environment Variable**: `NODE_ENV=production`
+For a local production demo, set NODE_ENV=production, DATA_MODE=demo, AI_PROVIDER=none, EXPOSURE_MODE=demo-public, STORAGE_MODE=ephemeral and HOST=127.0.0.1 before starting. Then run `npm run test:smoke` against that server (SMOKE_BASE_URL selects its local port).
 
----
+Private production requires an explicit API token or an independently verified authentication boundary. Do not publish a private instance without that verification. The Render blueprint uses public-research mode on the existing free service; deployment and provider connectivity must be checked independently.
 
-## ⚙️ Environment Variables
+Run manifests use SOURCE_COMMIT or Render's RENDER_GIT_COMMIT when it is a valid commit SHA; otherwise they honestly report unknown-working-tree rather than labeling modified code as the old baseline.
 
-| Variable | Required | Description |
-| :--- | :--- | :--- |
-| `PORT` | Optional | Port for the server (defaults to `3000`) |
-| `NODE_ENV` | Optional | Environment mode (`development` / `production`) |
-| `GEMINI_API_KEY` | Required | API Key for AI Copilot strategy generation |
-| `SMARTAPI_API_KEY` | Required | Angel One SmartAPI Key |
-| `SMARTAPI_CLIENT_CODE` | Required | Angel One Client ID |
-| `SMARTAPI_PASSWORD` | Required | Angel One Pin / Password |
-| `SMARTAPI_TOTP_SECRET` | Required | TOTP Secret for automated 2FA login |
+The build uses the official Rollup WASM Node distribution and Terser, avoiding native Windows compiler temporary-file failures. The real TypeScript compiler emits private server/worker modules. No parser, financial results or assertions are stubbed in the standard suite.
 
----
+## Owner action and scope
 
-## 📄 License
+The credential-shaped fallback removed from the original baseline must still be **revoked/rotated by its owner**, including copies in repository history. No value is reproduced here.
 
-This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+See `UPGRADE_PLAN.md` and `docs/upgrade/TASKS.json`. Plan acceptance criteria that have not been independently verified remain open. Optional P31-P34 work (licensed extended feeds, advanced research, accounts and order execution) is deferred.
 
----
+## License
 
-## 👨‍💻 Author
-
-**Abinash Balaraman**
-- GitHub: [@AbinashBalaraman](https://github.com/AbinashBalaraman)
-- Live App: [stragy.onrender.com](https://stragy.onrender.com)
+MIT. Original project: Abinash Balaraman, [stragy](https://github.com/AbinashBalaraman/stragy).

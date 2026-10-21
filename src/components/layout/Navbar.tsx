@@ -4,6 +4,7 @@ import { SymbolMeta, StrategyAST } from '../../shared/strategy/types';
 import { SymbolSearchSelector } from './SymbolSearchSelector';
 
 interface NavbarProps {
+  dataMode?: 'real' | 'demo' | 'unknown';
   activeTab: 'builder' | 'results' | 'scanner' | 'library';
   setActiveTab: (tab: 'builder' | 'results' | 'scanner' | 'library') => void;
   symbols: SymbolMeta[];
@@ -17,6 +18,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
+  dataMode = 'unknown',
   activeTab,
   setActiveTab,
   symbols,
@@ -28,39 +30,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   isCopilotOpen,
   onToggleCopilot
 }) => {
-  const currentSymbol = symbols.find(s => s.id === currentSymbolId) || symbols[0];
-  const [smartApiStatus, setSmartApiStatus] = React.useState<{
-    configured: boolean;
-    connected: boolean;
-    streamState: string;
-    latencyMs: number;
-    provider: string;
-    clientCode?: string;
-  }>({
-    configured: false,
-    connected: false,
-    streamState: 'SIMULATED_HIGH_FIDELITY',
-    latencyMs: 12,
-    provider: 'Angel One SmartAPI'
-  });
-
-  React.useEffect(() => {
-    fetch('/api/smartapi/status')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success || data.streamState) {
-          setSmartApiStatus({
-            configured: !!data.configured,
-            connected: !!data.connected,
-            streamState: data.streamState || 'CONNECTED',
-            latencyMs: data.latencyMs || 14,
-            provider: data.provider || 'Angel One SmartAPI',
-            clientCode: data.clientCode
-          });
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   return (
     <header className="h-16 w-full max-w-full border-b border-[rgba(236,236,237,0.08)] bg-[#0c0c0e] px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40 gap-3 select-none">
@@ -73,7 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </svg>
           </div>
           <span className="font-syne font-extrabold tracking-[-0.04em] text-lg sm:text-xl text-[#ececed] shrink-0">STRAGY</span>
-          <div className="badge-mint hidden md:inline-flex shrink-0">NSE & BSE LIVE</div>
+          <div className="badge-mint hidden md:inline-flex shrink-0">{dataMode === 'real' ? 'MARKET RESEARCH' : dataMode === 'demo' ? 'DEMO RESEARCH' : 'RESEARCH'}</div>
         </div>
 
         <div className="h-4 w-px bg-[rgba(236,236,237,0.1)] hidden lg:block shrink-0" />
@@ -82,6 +51,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="shrink-0">
           <SymbolSearchSelector
             symbols={symbols}
+            showReferencePrices={dataMode === 'demo'}
             currentSymbolId={currentSymbolId}
             onSymbolChange={onSymbolChange}
           />
@@ -164,19 +134,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="hidden md:inline">AI Chatbot</span>
         </button>
 
-        <div
-          title={
-            smartApiStatus.configured
-              ? `Angel One SmartAPI active (${smartApiStatus.clientCode || 'Client'})`
-              : 'SmartAPI Engine active'
-          }
-          className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 bg-transparent border border-[rgba(236,236,237,0.12)] rounded-xl text-[11px] font-mono uppercase"
-        >
-          <span className="status-dot-mint" />
-          <span className="font-semibold text-[#ececed]">SMARTAPI ACTIVE</span>
-          <span className="text-neutral-500">•</span>
-          <span className="text-[rgba(236,236,237,0.5)] text-[10px]">{smartApiStatus.latencyMs}ms</span>
-        </div>
+        <div title="No broker connection or order execution is available" className="hidden 2xl:flex items-center px-3 py-1.5 border border-neutral-700 rounded-xl text-[11px] text-neutral-400">NO BROKER CONNECTED</div>
 
         <button
           id="btn-run-backtest-nav"

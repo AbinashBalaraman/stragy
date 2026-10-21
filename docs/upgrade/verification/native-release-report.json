@@ -1,0 +1,61 @@
+{
+  "verifiedAt": "2026-10-14T16:36:07.023Z",
+  "runtime": {
+    "node": "26.5.0",
+    "npm": "11.17.0"
+  },
+  "baseline": "163a80c6d603eec2bed28a7e9220b6a867e8dac7",
+  "tests": {
+    "files": 25,
+    "total": 261,
+    "passed": 261,
+    "failed": 0,
+    "runner": "Vitest 3.2.4; standard npm run test:coverage"
+  },
+  "coverage": {
+    "lines": {
+      "total": 1204,
+      "covered": 1142,
+      "skipped": 0,
+      "pct": 94.85
+    },
+    "statements": {
+      "total": 1204,
+      "covered": 1142,
+      "skipped": 0,
+      "pct": 94.85
+    },
+    "functions": {
+      "total": 72,
+      "covered": 69,
+      "skipped": 0,
+      "pct": 95.83
+    },
+    "branches": {
+      "total": 704,
+      "covered": 560,
+      "skipped": 0,
+      "pct": 79.54
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "checks": {
+    "typecheck": "passed",
+    "lint": "passed",
+    "productionBuild": "passed",
+    "readOnlyProductionSmoke": "passed",
+    "browserLibrary": "save, duplicate, soft-delete and restore passed"
+  },
+  "limitations": [
+    "Not deployed",
+    "Full manual accessibility/responsive certification not claimed",
+    "Real feeds/entitlements and fee schedules unverified; real mode fails closed",
+    "Local-file storage is single-instance; hosted durability not certified",
+    "Owner must revoke/rotate the baseline exposed credential"
+  ]
+}

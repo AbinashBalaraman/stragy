@@ -1,0 +1,436 @@
+{
+  "schemaVersion": 1,
+  "project": "Stragy",
+  "planDate": "2026-10-13",
+  "reviewedCommit": "163a80c6d603eec2bed28a7e9220b6a867e8dac7",
+  "implementationStatus": "NOT_STARTED",
+  "specification": "03-implementation-backlog.md",
+  "dependencyPolicy": "Dependencies are completion prerequisites. Fixture-based UI and accessibility primitives may begin early as described in the specification. Owner actions such as exposed-key revocation and optional provider/hosting/live-trading decisions are separate gates, not implied authorized by this index.",
+  "tasks": [
+    {
+      "id": "P00",
+      "title": "Establish checkout, reproducible build, and safe artifact boundaries",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [],
+      "specSection": "P00",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P01",
+      "title": "Install the offline test and quality harness",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P00"
+      ],
+      "specSection": "P01",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P02",
+      "title": "Contain credentials and define safe runtime configuration",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P00"
+      ],
+      "specSection": "P02",
+      "notes": "Owner key revocation/rotation is immediate and separate from code removal.",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P03",
+      "title": "Freeze a canonical strategy v2 language and migration contract",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P01"
+      ],
+      "specSection": "P03",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P04",
+      "title": "Extract app/routes and enforce request/response contracts",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P02",
+        "P03"
+      ],
+      "specSection": "P04",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P05",
+      "title": "Make provenance and capabilities truthful end to end",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P04"
+      ],
+      "specSection": "P05",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P06",
+      "title": "Normalize provider data, instrument identities, and caches",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P05"
+      ],
+      "specSection": "P06",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P07",
+      "title": "Build a calendar and strict historical cutoff model",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P06"
+      ],
+      "specSection": "P07",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P08",
+      "title": "Correct indicator registry, warmup, and shared rule evaluation",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P03"
+      ],
+      "specSection": "P08",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P09",
+      "title": "Implement causal order/fill timing",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P06",
+        "P08"
+      ],
+      "specSection": "P09",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P10",
+      "title": "Unify cash, sizing, risk, and settlement",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P09",
+        "P11"
+      ],
+      "specSection": "P10",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P11",
+      "title": "Implement versioned per-fill costs and verify rate provenance",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P03"
+      ],
+      "specSection": "P11",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P12",
+      "title": "Replace placeholder metrics with one reviewed metrics module",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P10"
+      ],
+      "specSection": "P12",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P13",
+      "title": "Replace fabricated robustness with reproducible experiments",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P07",
+        "P12"
+      ],
+      "specSection": "P13",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P14",
+      "title": "Make scanning complete, historical, and coverage-aware",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P04",
+        "P07",
+        "P08"
+      ],
+      "specSection": "P14",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P15",
+      "title": "Separate observed derivatives from models and keep GTT preview-only",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P05",
+        "P07"
+      ],
+      "specSection": "P15",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P16",
+      "title": "Refactor AI into bounded, validated strategy proposals",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P02",
+        "P03",
+        "P04"
+      ],
+      "specSection": "P16",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P17",
+      "title": "Isolate expensive work in bounded cancellable jobs",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P04",
+        "P06",
+        "P13",
+        "P14"
+      ],
+      "specSection": "P17",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P18",
+      "title": "Build atomic local workspace persistence and a saved library",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P03"
+      ],
+      "specSection": "P18",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P19",
+      "title": "Store immutable runs and make persistence mode explicit",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P17",
+        "P18"
+      ],
+      "specSection": "P19",
+      "notes": "Durable server mode is conditional on verified persistent hosting; local/export mode must remain complete.",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P20",
+      "title": "Centralize frontend requests and immutable run state",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P17",
+        "P18"
+      ],
+      "specSection": "P20",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P21",
+      "title": "Make the active builder faithful and add safe transfers",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P08",
+        "P18",
+        "P20"
+      ],
+      "specSection": "P21",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P22",
+      "title": "Repair results, comparisons, charts, and exports",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P12",
+        "P13",
+        "P19",
+        "P20"
+      ],
+      "specSection": "P22",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P23",
+      "title": "Repair scanner/session UX and contextual panel states",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P14",
+        "P15",
+        "P20"
+      ],
+      "specSection": "P23",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P24",
+      "title": "Implement an explicit copilot proposal lifecycle",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P16",
+        "P20"
+      ],
+      "specSection": "P24",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P25",
+      "title": "Complete accessibility and responsive usability",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P21",
+        "P22",
+        "P23",
+        "P24"
+      ],
+      "specSection": "P25",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P26",
+      "title": "Enforce exposure, abuse limits, and secret isolation",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P02",
+        "P04",
+        "P17",
+        "P19"
+      ],
+      "specSection": "P26",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P27",
+      "title": "Add observability and measured performance controls",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P17",
+        "P19",
+        "P26"
+      ],
+      "specSection": "P27",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P28",
+      "title": "Make deployment repeatable and reversible",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P00",
+        "P02",
+        "P26",
+        "P27"
+      ],
+      "specSection": "P28",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P29",
+      "title": "Run full regression, reconciliation, and independent review",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P21",
+        "P22",
+        "P23",
+        "P24",
+        "P25",
+        "P28"
+      ],
+      "specSection": "P29",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P30",
+      "title": "Publish honest documentation and complete the release checklist",
+      "status": "IN_PROGRESS",
+      "requiredForCore": true,
+      "dependsOn": [
+        "P29"
+      ],
+      "specSection": "P30",
+      "implementationNote": "Code partially implemented; completion is not certified. See implementation-status.md for executed subsets and blockers."
+    },
+    {
+      "id": "P31",
+      "title": "Add verified provider capabilities incrementally",
+      "status": "NOT_STARTED",
+      "requiredForCore": false,
+      "dependsOn": [
+        "P30"
+      ],
+      "specSection": "P31",
+      "implementationNote": "Optional work deferred; no completion claim."
+    },
+    {
+      "id": "P32",
+      "title": "Add advanced research only on the corrected engine",
+      "status": "NOT_STARTED",
+      "requiredForCore": false,
+      "dependsOn": [
+        "P30"
+      ],
+      "specSection": "P32",
+      "implementationNote": "Optional work deferred; no completion claim."
+    },
+    {
+      "id": "P33",
+      "title": "Add multi-user ownership and scalable persistence if needed",
+      "status": "NOT_STARTED",
+      "requiredForCore": false,
+      "dependsOn": [
+        "P30"
+      ],
+      "specSection": "P33",
+      "implementationNote": "Optional work deferred; no completion claim."
+    },
+    {
+      "id": "P34",
+      "title": "Treat paper/live execution as a separately authorized product",
+      "status": "NOT_STARTED",
+      "requiredForCore": false,
+      "dependsOn": [
+        "P30"
+      ],
+      "specSection": "P34",
+      "notes": "Scoping gate only. Requires verified broker capability and separately authorized risk/security/compliance review; no trading authorization.",
+      "implementationNote": "Optional work deferred; no completion claim."
+    }
+  ],
+  "implementationStatusFile": "implementation-status.md"
+}

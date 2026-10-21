@@ -15,6 +15,7 @@ import {
 import { SymbolMeta } from '../../shared/strategy/types';
 
 interface SymbolSearchSelectorProps {
+  showReferencePrices?: boolean;
   symbols: SymbolMeta[];
   currentSymbolId: number;
   onSymbolChange: (symbolId: number) => void;
@@ -52,6 +53,7 @@ const POPULAR_TICKERS = [
 
 export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
   symbols,
+  showReferencePrices = false,
   currentSymbolId,
   onSymbolChange,
   className = '',
@@ -144,7 +146,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           s.ticker.includes('BANKNIFTY')
       );
     } else if (selectedCategory === 'NIFTY50') {
-      list = list.filter(s => s.indices?.includes('NIFTY_50') || s.id <= 50);
+      list = list.filter(s => s.indices?.includes('NIFTY_50'));
     } else if (selectedCategory === 'BANKING') {
       list = list.filter(
         s =>
@@ -254,7 +256,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         type="button"
         onClick={() => setIsOpen(prev => !prev)}
         className="group flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 rounded-xl bg-[#141417] hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] hover:border-[#00ffa3]/50 shadow-sm transition-all text-left focus:outline-none focus:border-[#00ffa3] select-none shrink-0"
-        title="Search & select from 2,000+ stocks & indices (Click to open search)"
+        title={showReferencePrices ? 'Search demo instruments. Reference prices are illustrative, not live.' : 'Select an instrument. Observed prices are shown in scanner and backtest results.'}
       >
         {/* Ticker & Exchange Badge */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -274,8 +276,8 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           </span>
         </div>
 
-        {/* Live Price & Change Badge */}
-        <div className="hidden md:flex items-center gap-1.5 shrink-0">
+        {/* Never show illustrative catalog prices as observed quotes. */}
+        {showReferencePrices && <div className="hidden md:flex items-center gap-1.5 shrink-0">
           <span className="text-xs font-mono font-semibold text-[#ececed]">
             ₹{currentSymbol.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
           </span>
@@ -294,7 +296,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
             )}
             <span>{currentSymbol.changePercent >= 0 ? '+' : ''}{currentSymbol.changePercent}%</span>
           </span>
-        </div>
+        </div>}
 
         <Search className="w-3 h-3 text-neutral-400 group-hover:text-[#00ffa3] transition-colors shrink-0 ml-0.5" />
       </button>
@@ -329,7 +331,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                 setHighlightedIndex(0);
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Search 2,000+ stocks or indices (e.g. NIFTY, RELIANCE, TATA)..."
+              placeholder="Search instruments (e.g. RELIANCE, TCS)..."
               className="w-full bg-transparent text-[#ececed] placeholder-neutral-500 text-xs sm:text-sm font-medium focus:outline-none"
             />
             {searchQuery && (
@@ -490,9 +492,9 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       </p>
                     </div>
 
-                    {/* Right: Live Price & Today's % Change */}
+                    {/* Catalog reference prices are shown only in explicit demo mode. */}
                     <div className="text-right shrink-0 flex items-center gap-2.5">
-                      <div>
+                      {showReferencePrices && <div>
                         <div className="text-xs sm:text-sm font-bold font-mono text-white">
                           ₹{sym.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </div>
@@ -503,7 +505,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                         >
                           {sym.changePercent >= 0 ? '+' : ''}{sym.changePercent}%
                         </div>
-                      </div>
+                      </div>}
 
                       {isSelected && (
                         <div className="w-5 h-5 rounded-full bg-[#00ffa3] text-[#0c0c0e] flex items-center justify-center shrink-0">

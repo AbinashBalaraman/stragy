@@ -79,7 +79,7 @@ export function formatOperator(op: string): string {
 }
 
 export function renderRuleInPlainLanguage(rule: RuleNode, indicators: IndicatorConfig[]): string {
-  const left = getIndicatorLabel(rule.leftIndicator, indicators);
+  const left = rule.leftValue !== undefined ? String(rule.leftValue) : getIndicatorLabel(rule.leftIndicator, indicators);
   const op = formatOperator(rule.operator);
   let right = '';
 
@@ -89,7 +89,8 @@ export function renderRuleInPlainLanguage(rule: RuleNode, indicators: IndicatorC
     right = `${rule.rightValue}`;
   }
 
-  return `${left} ${op} ${right}`;
+  const comparison = rule.operator === 'approxEq' ? `${left} approximately equals ${right} (absolute difference < ${rule.absoluteTolerance})` : `${left} ${op} ${right}`;
+  return rule.lookback ? `${comparison} on at least one of the preceding ${rule.lookback.bars} completed bars (excluding the current bar)` : comparison;
 }
 
 export function renderStrategyInPlainLanguage(strategy: StrategyAST): {

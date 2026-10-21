@@ -1,6 +1,10 @@
 import { OHLCVBar, IndicatorConfig } from '../../shared/strategy/types';
+import { IndicatorV2Schema, RESERVED_SERIES, legacyOutputNames } from '../../shared/strategy/registry';
+function validPeriod(period: number): void { if (!Number.isInteger(period) || period < 1 || period > 10000) throw new Error('INVALID_INDICATOR_PERIOD'); }
+
 
 export function calcSMA(bars: OHLCVBar[], period: number): (number | null)[] {
+  validPeriod(period);
   const result: (number | null)[] = new Array(bars.length).fill(null);
   let sum = 0;
   for (let i = 0; i < bars.length; i++) {
@@ -16,6 +20,7 @@ export function calcSMA(bars: OHLCVBar[], period: number): (number | null)[] {
 }
 
 export function calcEMA(bars: OHLCVBar[], period: number): (number | null)[] {
+  validPeriod(period);
   const result: (number | null)[] = new Array(bars.length).fill(null);
   if (bars.length < period) return result;
 
@@ -36,6 +41,7 @@ export function calcEMA(bars: OHLCVBar[], period: number): (number | null)[] {
 }
 
 export function calcRSI(bars: OHLCVBar[], period: number = 14): (number | null)[] {
+  validPeriod(period);
   const result: (number | null)[] = new Array(bars.length).fill(null);
   if (bars.length <= period) return result;
 
@@ -51,7 +57,7 @@ export function calcRSI(bars: OHLCVBar[], period: number = 14): (number | null)[
   let avgGain = gains / period;
   let avgLoss = losses / period;
 
-  result[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  result[period] = avgLoss === 0 ? (avgGain === 0 ? 50 : 100) : 100 - 100 / (1 + avgGain / avgLoss);
 
   for (let i = period + 1; i < bars.length; i++) {
     const change = bars[i].close - bars[i - 1].close;
@@ -62,7 +68,7 @@ export function calcRSI(bars: OHLCVBar[], period: number = 14): (number | null)[
     avgLoss = (avgLoss * (period - 1) + loss) / period;
 
     if (avgLoss === 0) {
-      result[i] = 100;
+      result[i] = avgGain === 0 ? 50 : 100;
     } else {
       const rs = avgGain / avgLoss;
       result[i] = 100 - 100 / (1 + rs);
@@ -73,6 +79,7 @@ export function calcRSI(bars: OHLCVBar[], period: number = 14): (number | null)[
 }
 
 export function calcATR(bars: OHLCVBar[], period: number = 14): (number | null)[] {
+  validPeriod(period);
   const result: (number | null)[] = new Array(bars.length).fill(null);
   if (bars.length < period) return result;
 
@@ -121,7 +128,7 @@ export function calcSupertrend(
   let prevDirection: 1 | -1 = 1;
 
   for (let i = period - 1; i < bars.length; i++) {
-    const curAtr = atr[i] || (bars[i].high - bars[i].low);
+    const curAtr = atr[i] ?? (bars[i].high - bars[i].low);
     const hl2 = (bars[i].high + bars[i].low) / 2;
 
     let curBasicUpper = hl2 + multiplier * curAtr;
@@ -267,40 +274,48 @@ export function calculateAllIndicators(
   series['upperWick'] = bars.map(b => b.high - Math.max(b.open, b.close));
   series['lowerWick'] = bars.map(b => Math.min(b.open, b.close) - b.low);
 
-  for (const ind of indicators) {
+  const namespace = new Set<string>(RESERVED_SERIES);
+  for (const raw of indicators) {
+    const ind = IndicatorV2Schema.parse(raw);
+    for (const name of Object.keys(legacyOutputNames(ind))) { if (namespace.has(name)) throw new Error('INDICATOR_NAMESPACE_COLLISION: ' + name); namespace.add(name); }
     const id = ind.id;
     const type = ind.type;
     const params = ind.params;
 
-    if (type === 'SMA') {
-      series[id] = calcSMA(bars, params.period || 20);
-    } else if (type === 'EMA') {
-      series[id] = calcEMA(bars, params.period || 20);
-    } else if (type === 'RSI') {
-      series[id] = calcRSI(bars, params.period || 14);
-    } else if (type === 'ATR') {
-      series[id] = calcATR(bars, params.period || 14);
-    } else if (type === 'SUPERTREND') {
-      const { supertrend, direction } = calcSupertrend(bars, params.period || 10, params.multiplier || 3);
+    if (ind.type === 'SMA') {
+      series[id] = calcSMA(bars, ind.params.period || 20);
+    } else if (ind.type === 'VOLUME_SMA') {
+      series[id] = calcSMA(bars.map(b => ({ ...b, close: b.volume })), ind.params.period);
+    } else if (ind.type === 'EMA') {
+      series[id] = calcEMA(bars, ind.params.period || 20);
+    } else if (ind.type === 'RSI') {
+      series[id] = calcRSI(bars, ind.params.period || 14);
+    } else if (ind.type === 'ATR') {
+      series[id] = calcATR(bars, ind.params.period || 14);
+    } else if (ind.type === 'SUPERTREND') {
+      const { supertrend, direction } = calcSupertrend(bars, ind.params.period || 10, ind.params.multiplier || 3);
       series[id] = supertrend;
       series[`${id}_dir`] = direction;
-    } else if (type === 'BBANDS') {
-      const { upper, middle, lower } = calcBBANDS(bars, params.period || 20, params.stdDev || 2);
+      series[`${id}_direction`] = direction;
+      series[`${id}_line`] = supertrend;
+    } else if (ind.type === 'BBANDS') {
+      const { upper, middle, lower } = calcBBANDS(bars, ind.params.period || 20, ind.params.stdDev || 2);
       series[id] = middle;
       series[`${id}_upper`] = upper;
       series[`${id}_middle`] = middle;
       series[`${id}_lower`] = lower;
-    } else if (type === 'MACD') {
+    } else if (ind.type === 'MACD') {
       const { line, signal, hist } = calcMACD(
         bars,
-        params.fastPeriod || 12,
-        params.slowPeriod || 26,
-        params.signalPeriod || 9
+        ind.params.fastPeriod || 12,
+        ind.params.slowPeriod || 26,
+        ind.params.signalPeriod || 9
       );
       series[id] = line;
       series[`${id}_line`] = line;
       series[`${id}_signal`] = signal;
       series[`${id}_hist`] = hist;
+      series[`${id}_histogram`] = hist;
     }
   }
 

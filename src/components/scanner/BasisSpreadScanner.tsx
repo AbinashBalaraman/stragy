@@ -1,38 +1,22 @@
-import React, { useState, useEffect } from 'react';
-import { BasisSpreadItem } from '../../shared/strategy/types';
-import { RefreshCw, TrendingUpDown, ArrowRight, Activity, Percent, ShieldCheck } from 'lucide-react';
+import React from 'react';
+import { useDerivativeRequest } from './useDerivativeRequest';
+import { parseBasisSpreads } from './derivativeContracts';
+import { RefreshCw, TrendingUpDown } from 'lucide-react';
 
 interface BasisSpreadScannerProps {
   onSelectStockAndBacktest: (symbolId: number) => void;
 }
 
-export const BasisSpreadScanner: React.FC<BasisSpreadScannerProps> = ({ onSelectStockAndBacktest }) => {
-  const [spreads, setSpreads] = useState<BasisSpreadItem[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-
-  const fetchSpreads = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch('/api/market/basis-spreads');
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && data.success && Array.isArray(data.spreads)) {
-          setSpreads(data.spreads);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load basis spreads:', e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchSpreads();
-  }, []);
+export const BasisSpreadScanner: React.FC<BasisSpreadScannerProps> = () => {
+  const { data, isLoading, error, refresh } = useDerivativeRequest('basis', '/api/market/basis-spreads', parseBasisSpreads);
+  const spreads = data?.spreads ?? [];
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Not observations or a live feed.</p>
+      {isLoading && <p role="status">Loading demo/model…</p>}
+      {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+      {data && data.spreads.map(s => <p key={s.ticker} className="text-xs text-neutral-400">{s.ticker}: {s.provenance.source} · Model as-of {s.provenance.asOf}. {s.provenance.assumptions.join('; ')}</p>)}
       {/* Header */}
       <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -42,19 +26,19 @@ export const BasisSpreadScanner: React.FC<BasisSpreadScannerProps> = ({ onSelect
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Cash vs. Futures Basis & Calendar Spread Arbitrage</span>
+                <span>Demo Cash/Futures Basis & Calendar Spread</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                  Multi-Month Rollover Yields
+                  Modeled carry, not executable arbitrage
                 </span>
               </h3>
               <p className="text-xs text-neutral-400">
-                Track spot vs near/next-month futures basis, contango/backwardation mispricings, and annualized risk-free cash-and-carry yields
+                Fictional spot/futures basis. Carry assumes 6.8% annually and 12/40 days to expiry; fees, funding and execution risks are excluded. Yields are not risk-free.
               </p>
             </div>
           </div>
 
           <button
-            onClick={fetchSpreads}
+            onClick={refresh}
             disabled={isLoading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1d1d21] hover:bg-[#27272a] text-white font-semibold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] shadow-sm active:scale-95 transition-all disabled:opacity-50"
           >
@@ -103,7 +87,7 @@ export const BasisSpreadScanner: React.FC<BasisSpreadScannerProps> = ({ onSelect
                       {isContango ? '+' : ''}{s.nearBasisInr} ({s.nearBasisPct}%)
                     </td>
                     <td className="py-2.5 px-2 text-right text-cyan-300">
-                      +{s.calendarSpreadInr} ({s.calendarSpreadPct}%)
+                      {s.calendarSpreadInr > 0 ? '+' : ''}{s.calendarSpreadInr} ({s.calendarSpreadPct}%)
                     </td>
                     <td className="py-2.5 px-2 text-right font-extrabold text-emerald-400">
                       {s.annualizedYieldPct}% p.a.

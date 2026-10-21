@@ -1,0 +1,137 @@
+{
+  "recordedAt": "2026-10-21T11:45:47.580Z",
+  "runtime": "Node 26.5.0 / npm 11.17.0",
+  "gates": {
+    "lint": 0,
+    "build": 0,
+    "compiledSmoke": 0,
+    "tests": 0,
+    "typecheck": 0
+  },
+  "tests": {
+    "passed": 346,
+    "failed": 0,
+    "files": 35
+  },
+  "configuredFinancialStrategyCoverage": {
+    "lines": {
+      "total": 1241,
+      "covered": 1177,
+      "skipped": 0,
+      "pct": 94.84
+    },
+    "statements": {
+      "total": 1241,
+      "covered": 1177,
+      "skipped": 0,
+      "pct": 94.84
+    },
+    "functions": {
+      "total": 74,
+      "covered": 71,
+      "skipped": 0,
+      "pct": 95.94
+    },
+    "branches": {
+      "total": 758,
+      "covered": 610,
+      "skipped": 0,
+      "pct": 80.47
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "observedDataSmoke": {
+    "base": "http://127.0.0.1:3910",
+    "startedAt": "2026-10-21T11:44:43.522Z",
+    "checks": [
+      {
+        "check": "readiness",
+        "passed": true
+      },
+      {
+        "check": "capabilities",
+        "passed": true,
+        "mode": "real",
+        "provider": "yahoo",
+        "ai": "tokenrouter",
+        "model": "stealth/union-alpha",
+        "costPolicy": "free-only"
+      },
+      {
+        "check": "official membership",
+        "passed": true,
+        "requested": 50,
+        "unmapped": 0
+      },
+      {
+        "check": "actual daily bars",
+        "passed": true,
+        "ticker": "RELIANCE",
+        "bars": 496,
+        "source": "YAHOO_PUBLIC_CHART",
+        "date": "2026-10-21",
+        "close": 1209,
+        "freshness": "public-delayed-end-of-day"
+      },
+      {
+        "check": "exact temporal chat screen",
+        "passed": true,
+        "method": "rule_parser",
+        "missingBacktestRules": [
+          "exits",
+          "positionSizing",
+          "executionAndCosts"
+        ]
+      },
+      {
+        "check": "observed Nifty screen",
+        "passed": true,
+        "evaluated": 50,
+        "requested": 50,
+        "unavailable": 0,
+        "failed": 0,
+        "matched": 0,
+        "dates": {
+          "earliest": "2026-10-21",
+          "latest": "2026-10-21",
+          "staleSymbols": 0
+        },
+        "sources": {
+          "YAHOO_PUBLIC_CHART": 50
+        },
+        "errors": []
+      },
+      {
+        "check": "exact-signal research backtest",
+        "passed": true,
+        "ticker": "RELIANCE",
+        "trades": 1,
+        "source": "YAHOO_PUBLIC_CHART",
+        "execution": "next_open_long_cash_v1",
+        "reconciliationDifference": 0,
+        "assumptions": "Smoke test explicitly uses unchanged template exits, risk, costs and 1,000,000 initial capital. Not a user-selected investment strategy."
+      },
+      {
+        "check": "actual free AI conversation",
+        "passed": false,
+        "blocked": true,
+        "reason": "External AI request failed (http_error): AI provider refused access (HTTP 403). Check the configured key's model permissions. No alternate or paid model was used."
+      }
+    ],
+    "externalAIStatus": "blocked_model_permissions",
+    "success": true,
+    "finishedAt": "2026-10-21T11:44:51.730Z"
+  },
+  "deployment": "Not certified by this local report. Verify the deployed commit, readiness and browser workflows separately.",
+  "limitations": [
+    "Public delayed/end-of-day OHLCV, not live tick streaming",
+    "Current official membership is not historical point-in-time membership",
+    "Illustrative fee and instrument assumptions remain unverified",
+    "Existing TokenRouter key denies access to the verified free model. No paid model was called."
+  ]
+}

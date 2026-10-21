@@ -1,0 +1,19 @@
+{
+  "runner": "Real Node workers, TypeScript emission; not production bundle",
+  "passed": 3,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "real worker computes and validates Q01",
+      "status": "passed"
+    },
+    {
+      "name": "clean worker exit without result fails before deadline",
+      "status": "passed"
+    },
+    {
+      "name": "empty result message fails closed",
+      "status": "passed"
+    }
+  ]
+}

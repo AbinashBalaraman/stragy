@@ -3,6 +3,7 @@ import { BacktestResponse, StrategyAST } from '../../shared/strategy/types';
 import { MetricsGrid } from './MetricsGrid';
 import { PriceChart } from './PriceChart';
 import { EquityCharts } from './EquityCharts';
+import { RunProvenance } from './RunProvenance';
 import { RobustnessView } from './RobustnessView';
 import { IndianCostWaterfall } from './IndianCostWaterfall';
 import { TradeLogTable } from './TradeLogTable';
@@ -95,6 +96,7 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
         </div>
       </div>
 
+      <RunProvenance result={result} />
       {/* KPI Metrics Matrix in clean #161619 theme */}
       <MetricsGrid metrics={result.metrics} />
 
@@ -173,6 +175,7 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
           />
           <EquityCharts
             equityCurve={result.equityCurve}
+            benchmarkLabel={result.symbol.ticker + ' buy-and-hold'}
             benchmarkReturnPercent={result.metrics.benchmarkReturnPercent}
             trades={result.trades}
             initialCapital={result.metrics.initialCapital}

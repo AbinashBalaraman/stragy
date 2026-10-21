@@ -3,10 +3,37 @@ services:
     name: stragy
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
+    healthCheckPath: /health/ready
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
         value: --max-old-space-size=450
+      - key: HOST
+        value: 0.0.0.0
+      - key: EXPOSURE_MODE
+        value: public-research
+      - key: DATA_MODE
+        value: real
+      - key: MARKET_PROVIDER
+        value: yahoo
+      - key: AI_PROVIDER
+        value: tokenrouter
+      - key: AI_MODEL
+        value: stealth/union-alpha
+      - key: AI_COST_POLICY
+        value: free-only
+      - key: AI_TIMEOUT_MS
+        value: 60000
+      - key: AI_MAX_OUTPUT_TOKENS
+        value: 2000
+      - key: AI_MAX_REQUESTS_PER_HOUR
+        value: 12
+      - key: MAX_JOB_MS
+        value: 90000
+      - key: MAX_QUEUE
+        value: 4
+      - key: STORAGE_MODE
+        value: ephemeral
