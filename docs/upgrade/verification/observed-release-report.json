@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-10-23T06:52:42.406Z",
+  "recordedAt": "2026-10-23T15:35:55.239Z",
   "runtime": "Node 26.5.0 / npm 11.17.0",
   "gates": {
     "tests": 0,
+    "typecheck": 0,
     "build": 0,
     "lint": 0,
-    "typecheck": 0,
     "compiledSmoke": 0
   },
   "tests": {
@@ -47,7 +47,7 @@
   },
   "observedDataSmoke": {
     "base": "http://127.0.0.1:3910",
-    "startedAt": "2026-10-23T06:52:05.831Z",
+    "startedAt": "2026-10-23T15:32:09.587Z",
     "checks": [
       {
         "check": "readiness",
@@ -72,10 +72,10 @@
         "check": "actual daily bars",
         "passed": true,
         "ticker": "RELIANCE",
-        "bars": 495,
+        "bars": 496,
         "source": "YAHOO_PUBLIC_CHART",
-        "date": "2026-10-22",
-        "close": 1184.5,
+        "date": "2026-10-23",
+        "close": 1190,
         "freshness": "public-delayed-end-of-day"
       },
       {
@@ -97,8 +97,8 @@
         "failed": 0,
         "matched": 0,
         "dates": {
-          "earliest": "2026-10-21",
-          "latest": "2026-10-22",
+          "earliest": "2026-10-23",
+          "latest": "2026-10-23",
           "staleSymbols": 0
         },
         "sources": {
@@ -113,12 +113,13 @@
         "sources": {
           "YAHOO_PUBLIC_CHART": 50
         },
-        "date": "2026-10-22",
+        "date": "2026-10-23",
         "calendarSessions": 250
       },
       {
         "check": "exact-signal research backtest",
         "passed": true,
+        "sourceCommit": "unknown-working-tree",
         "ticker": "RELIANCE",
         "trades": 1,
         "source": "YAHOO_PUBLIC_CHART",
@@ -130,22 +131,28 @@
         "check": "actual free AI conversation",
         "passed": false,
         "blocked": true,
-        "reason": "External AI request failed (http_error): AI provider refused access (HTTP 403). Check the configured key's model permissions. No alternate or paid model was used."
+        "reason": "External AI request failed (timeout): AI request timed out after 60000 ms.",
+        "checkedAt": "2026-10-23T15:35:31.708Z"
       }
     ],
-    "externalAIStatus": "blocked_model_permissions",
     "success": true,
-    "finishedAt": "2026-10-23T06:52:22.539Z"
+    "finishedAt": "2026-10-23T15:35:31.709Z",
+    "externalAIStatus": "blocked_provider_or_pricing",
+    "validationNote": "Successful core data checks retained; AI unavailable path rechecked separately."
   },
   "deployment": "Not certified by this local report. Verify the deployed commit, readiness and browser workflows separately.",
   "limitations": [
     "Public delayed/end-of-day OHLCV, not live tick streaming",
     "Current official membership is not historical point-in-time membership",
     "Illustrative fee and instrument assumptions remain unverified",
-    "Existing TokenRouter key denies access to the verified free model. No paid model was called."
+    "Existing TokenRouter key denies access to the verified free model. No paid model was called.",
+    "External AI was last observed to time out; earlier requests also showed model-permission denial. No external AI completion is certified."
   ],
   "scannerFixes": [
     "Calendar choices derive from actually loaded constituent observations; no unrelated cached index required",
     "Missing real-market derivatives are nullable, not fabricated zeroes, and accepted by client contracts"
-  ]
+  ],
+  "endpoint": "https://query2.finance.yahoo.com/v8/finance/chart/",
+  "endpointEvidence": "https://github.com/ranaroussi/yfinance/blob/main/yfinance/const.py",
+  "hostedDataStatus": "Previous query1 deployment returned HTTP 429 from Render. Query2 production connectivity must be verified after deployment."
 }
