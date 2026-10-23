@@ -23,3 +23,9 @@ describe('research chat plans',()=>{
   const out=await researchChat({message:'set stop loss to 3%',currentStrategy:validStrategy(),allowLocalFallback:true,originatingRevision:7},{env:{AI_PROVIDER:'none'}});expect(out.kind).toBe('proposal');if(out.kind==='proposal'){expect(out.proposal.applied).toBe(false);expect(out.proposal.executes).toBe(false);expect(out.originatingRevision).toBe(7);}
  });
 });
+
+it('does not treat a do-not-scan instruction as screening intent',async()=>{
+ const fetch=vi.fn(),deps={env:{AI_PROVIDER:'none'},fetch};
+ const edit=await researchChat({message:'Set stop loss to 3%. Verification only: return an unapplied draft. Do not scan, backtest, save, or place orders.',currentStrategy:validStrategy(),allowLocalFallback:true},deps);expect(edit.kind).toBe('proposal');if(edit.kind==='proposal'){expect(edit.proposal.applied).toBe(false);expect(edit.proposal.executes).toBe(false);}
+ const forbidden=await researchChat({message:prompt+'. Do not run a scan.',currentStrategy:validStrategy()},deps);expect(forbidden.kind).not.toBe('screen');expect(fetch).not.toHaveBeenCalled();
+});

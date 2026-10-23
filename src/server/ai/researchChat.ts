@@ -14,7 +14,8 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
   const input=parsed.data, rev=input.originatingRevision??null, message=sanitizeText(input.message,4000).replace(/over[ -]+bought/gi,'overbought').replace(/over[ -]+sold/gi,'oversold');
   const cfg=deps.config??resolveAIConfig(deps.env??process.env), d={...deps,config:cfg};
   const base={schemaVersion:1 as const,originatingRevision:rev,warnings:[] as string[]};
-  const wantsScreen=/\b(find|screen|scan|stocks|which stocks|nifty\s*50)\b/i.test(message);
+  const scanForbidden=/\b(?:do\s+not|don't|never)\s+(?:(?:run|execute)\s+)?(?:a\s+)?(?:stock\s+)?(?:scan|screen)\b/i.test(message);
+  const wantsScreen=!scanForbidden&&/\b(find|screen|scan|stocks|which stocks|nifty\s*50)\b/i.test(message);
   if(wantsScreen){
     if(!/nifty\s*50/i.test(message)&&!input.screenContext)return unavailable('Please specify the Nifty 50 universe. Other screening universes are not supported in research chat yet.',rev);
     const current=input.currentStrategy;

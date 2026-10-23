@@ -1,15 +1,15 @@
 {
-  "recordedAt": "2026-10-23T15:35:55.239Z",
+  "recordedAt": "2026-10-23T15:46:18.001Z",
   "runtime": "Node 26.5.0 / npm 11.17.0",
   "gates": {
-    "tests": 0,
     "typecheck": 0,
     "build": 0,
     "lint": 0,
+    "tests": 0,
     "compiledSmoke": 0
   },
   "tests": {
-    "passed": 349,
+    "passed": 350,
     "failed": 0,
     "files": 36
   },
@@ -154,5 +154,6 @@
   ],
   "endpoint": "https://query2.finance.yahoo.com/v8/finance/chart/",
   "endpointEvidence": "https://github.com/ranaroussi/yfinance/blob/main/yfinance/const.py",
-  "hostedDataStatus": "Previous query1 deployment returned HTTP 429 from Render. Query2 production connectivity must be verified after deployment."
+  "hostedDataStatus": "Both query1 and query2 returned HTTP 429 from the deployed Render service. Actual hosted screens and backtests remain blocked. Local observed-data checks passed; this is not hosted-data certification.",
+  "chatSafetyFix": "Explicit do-not-scan requests do not enter the automatic screening path. Compiled draft check returned local_heuristic, applied=false, executes=false."
 }
