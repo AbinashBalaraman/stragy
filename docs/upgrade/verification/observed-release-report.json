@@ -1,42 +1,42 @@
 {
-  "recordedAt": "2026-10-21T11:45:47.580Z",
+  "recordedAt": "2026-10-23T06:52:42.406Z",
   "runtime": "Node 26.5.0 / npm 11.17.0",
   "gates": {
-    "lint": 0,
-    "build": 0,
-    "compiledSmoke": 0,
     "tests": 0,
-    "typecheck": 0
+    "build": 0,
+    "lint": 0,
+    "typecheck": 0,
+    "compiledSmoke": 0
   },
   "tests": {
-    "passed": 346,
+    "passed": 349,
     "failed": 0,
-    "files": 35
+    "files": 36
   },
   "configuredFinancialStrategyCoverage": {
     "lines": {
-      "total": 1241,
-      "covered": 1177,
+      "total": 1243,
+      "covered": 1196,
       "skipped": 0,
-      "pct": 94.84
+      "pct": 96.21
     },
     "statements": {
-      "total": 1241,
-      "covered": 1177,
+      "total": 1243,
+      "covered": 1196,
       "skipped": 0,
-      "pct": 94.84
+      "pct": 96.21
     },
     "functions": {
       "total": 74,
-      "covered": 71,
+      "covered": 72,
       "skipped": 0,
-      "pct": 95.94
+      "pct": 97.29
     },
     "branches": {
-      "total": 758,
-      "covered": 610,
+      "total": 791,
+      "covered": 630,
       "skipped": 0,
-      "pct": 80.47
+      "pct": 79.64
     },
     "branchesTrue": {
       "total": 0,
@@ -47,7 +47,7 @@
   },
   "observedDataSmoke": {
     "base": "http://127.0.0.1:3910",
-    "startedAt": "2026-10-21T11:44:43.522Z",
+    "startedAt": "2026-10-23T06:52:05.831Z",
     "checks": [
       {
         "check": "readiness",
@@ -72,10 +72,10 @@
         "check": "actual daily bars",
         "passed": true,
         "ticker": "RELIANCE",
-        "bars": 496,
+        "bars": 495,
         "source": "YAHOO_PUBLIC_CHART",
-        "date": "2026-10-21",
-        "close": 1209,
+        "date": "2026-10-22",
+        "close": 1184.5,
         "freshness": "public-delayed-end-of-day"
       },
       {
@@ -98,13 +98,23 @@
         "matched": 0,
         "dates": {
           "earliest": "2026-10-21",
-          "latest": "2026-10-21",
+          "latest": "2026-10-22",
           "staleSymbols": 0
         },
         "sources": {
           "YAHOO_PUBLIC_CHART": 50
         },
         "errors": []
+      },
+      {
+        "check": "observed market movers and calendar",
+        "passed": true,
+        "evaluated": 50,
+        "sources": {
+          "YAHOO_PUBLIC_CHART": 50
+        },
+        "date": "2026-10-22",
+        "calendarSessions": 250
       },
       {
         "check": "exact-signal research backtest",
@@ -125,7 +135,7 @@
     ],
     "externalAIStatus": "blocked_model_permissions",
     "success": true,
-    "finishedAt": "2026-10-21T11:44:51.730Z"
+    "finishedAt": "2026-10-23T06:52:22.539Z"
   },
   "deployment": "Not certified by this local report. Verify the deployed commit, readiness and browser workflows separately.",
   "limitations": [
@@ -133,5 +143,9 @@
     "Current official membership is not historical point-in-time membership",
     "Illustrative fee and instrument assumptions remain unverified",
     "Existing TokenRouter key denies access to the verified free model. No paid model was called."
+  ],
+  "scannerFixes": [
+    "Calendar choices derive from actually loaded constituent observations; no unrelated cached index required",
+    "Missing real-market derivatives are nullable, not fabricated zeroes, and accepted by client contracts"
   ]
 }

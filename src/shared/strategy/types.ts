@@ -308,10 +308,10 @@ export interface StockTrendData {
   momentumScore: number;
   signal: 'BUY_BREAKOUT' | 'PULLBACK_ENTRY' | 'OVERSOLD_RSI' | 'GOLDEN_CROSS' | 'NEUTRAL';
   signalLabel: string;
-  openInterest: number;
-  oiChangePercent: number;
-  oiInterpretation: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'SHORT_BUILDUP' | 'LONG_UNWINDING';
-  pcrRatio: number;
+  openInterest: number | null;
+  oiChangePercent: number | null;
+  oiInterpretation: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'SHORT_BUILDUP' | 'LONG_UNWINDING' | null;
+  pcrRatio: number | null;
   dataSource: 'DEMO_MODEL' | 'OHLCV_ANALYSIS';
   exchange?: 'NSE' | 'BSE';
   indices?: string[];

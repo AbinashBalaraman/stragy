@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { OHLCVBar } from '../../shared/strategy/types';
 import { getSymbolById, NSE_SYMBOLS } from './symbols';
-import { getAvailableTradingDates } from './realMarketData';
+import { tradingSessionsFromDates } from './realMarketData';
 import { getDataMode,getMarketSeries,validateDate,MarketDataError } from './marketSeries';
 
 // Angel One NSE Symbol to Token Mapping for Nifty 50, Indices & Top Equities
@@ -432,10 +432,10 @@ export interface StockTrendData {
   momentumScore: number;
   signal: 'BUY_BREAKOUT' | 'PULLBACK_ENTRY' | 'OVERSOLD_RSI' | 'GOLDEN_CROSS' | 'NEUTRAL';
   signalLabel: string;
-  openInterest: number;
-  oiChangePercent: number;
-  oiInterpretation: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'SHORT_BUILDUP' | 'LONG_UNWINDING';
-  pcrRatio: number;
+  openInterest: number | null;
+  oiChangePercent: number | null;
+  oiInterpretation: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'SHORT_BUILDUP' | 'LONG_UNWINDING' | null;
+  pcrRatio: number | null;
   dataSource: 'DEMO_MODEL' | 'OHLCV_ANALYSIS';
   provenance?: {mode:string;source:string;asOf:string;warnings:string[]};
   exchange?: 'NSE' | 'BSE';
@@ -618,10 +618,10 @@ export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: st
     momentumScore,
     signal,
     signalLabel,
-    openInterest: getDataMode()==='demo'?baseOI:null as unknown as number,
-    oiChangePercent:getDataMode()==='demo'?oiChangePercent:null as unknown as number,
-    oiInterpretation:getDataMode()==='demo'?oiInterpretation:null as unknown as StockTrendData['oiInterpretation'],
-    pcrRatio:getDataMode()==='demo'?pcrRatio:null as unknown as number,
+    openInterest: getDataMode()==='demo'?baseOI:null,
+    oiChangePercent:getDataMode()==='demo'?oiChangePercent:null,
+    oiInterpretation:getDataMode()==='demo'?oiInterpretation:null,
+    pcrRatio:getDataMode()==='demo'?pcrRatio:null,
     dataSource: getDataMode()==='demo'?'DEMO_MODEL':'OHLCV_ANALYSIS',
     provenance:{mode:getDataMode(),source:getDataMode()==='demo'?'DEMO_OI_PCR_MODEL':'OHLCV_ONLY',asOf:barDate,warnings:['OI/PCR are modeled only in demo; unavailable in real','Licensing and fee verification unverified']},
     exchange: sym.exchange || 'NSE',
@@ -669,7 +669,7 @@ export interface MarketMoversData {
 /**
  * Calculates Market Movers, Top Gainers/Losers, Volume Shockers & Sector Heatmap with Universe support
  */
-export function calculateMarketMovers(trends: StockTrendData[], universe: string = 'ALL', requestedDate?: string): MarketMoversData {
+export function calculateMarketMovers(trends: StockTrendData[], universe: string = 'ALL', requestedDate?: string, observedSessions?: ReturnType<typeof tradingSessionsFromDates>): MarketMoversData {
   let targetPool: StockTrendData[];
 
   if (universe === 'POPULAR_INDICES') {
@@ -688,7 +688,7 @@ export function calculateMarketMovers(trends: StockTrendData[], universe: string
 
   const latestDate = targetPool[0]?.date || requestedDate || new Date().toISOString().split('T')[0];
   const latestFormattedDate = targetPool[0]?.formattedDate || latestDate;
-  const availableTradingSessions = getAvailableTradingDates();
+  const availableTradingSessions = observedSessions ?? tradingSessionsFromDates(targetPool.flatMap(t=>t.date?[t.date]:[]),getDataMode());
   const isHistorical = requestedDate ? requestedDate !== availableTradingSessions[0]?.date : false;
 
   // Top Gainers (highest % change)

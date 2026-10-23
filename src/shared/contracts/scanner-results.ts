@@ -17,9 +17,9 @@ const trend = z.object({
   trend: z.enum(['STRONG_BULLISH', 'BULLISH', 'NEUTRAL', 'BEARISH', 'OVERSOLD_REVERSAL']),
   trendLabel: z.string(), momentumScore: finite,
   signal: z.enum(['BUY_BREAKOUT', 'PULLBACK_ENTRY', 'OVERSOLD_RSI', 'GOLDEN_CROSS', 'NEUTRAL']), signalLabel: z.string(),
-  openInterest: finite, oiChangePercent: finite,
-  oiInterpretation: z.enum(['LONG_BUILDUP', 'SHORT_COVERING', 'SHORT_BUILDUP', 'LONG_UNWINDING']),
-  pcrRatio: finite, dataSource: z.enum(['DEMO_MODEL', 'OHLCV_ANALYSIS']),
+  openInterest: finite.nullable(), oiChangePercent: finite.nullable(),
+  oiInterpretation: z.enum(['LONG_BUILDUP', 'SHORT_COVERING', 'SHORT_BUILDUP', 'LONG_UNWINDING']).nullable(),
+  pcrRatio: finite.nullable(), dataSource: z.enum(['DEMO_MODEL', 'OHLCV_ANALYSIS']),
   exchange: z.enum(['NSE', 'BSE']).optional(), indices: z.array(z.string()).optional(),
   date: date.optional(), formattedDate: z.string().optional(), timestamp: finite.optional(),
 });

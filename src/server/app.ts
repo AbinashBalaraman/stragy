@@ -4,7 +4,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { parseConfig, redact, type RuntimeConfig } from './config';
 import { sourceCommit } from './buildInfo';
-import { ALL_SYMBOLS, UNIVERSE_OPTIONS, filterSymbolsByUniverse, getSymbolById } from './data/symbols';
+import { ALL_SYMBOLS, NSE_SYMBOLS, UNIVERSE_OPTIONS, filterSymbolsByUniverse, getSymbolById } from './data/symbols';
 import { loadMarketSeries, getAvailableTradingDates, findNearestTradingDate, MarketDataError } from './data/realMarketData';
 import { calculateStockTrends, calculateMarketMovers, getSmartApiStatus, getSmartApiRateLimitsAndSpecs, getOptionChainData, getVolumeProfileAndVWAP, calculateGttBracketOrder, getBasisAndCalendarSpreads } from './data/smartApi';
 import { scanUniverse } from './backtest/scanner';
@@ -89,8 +89,8 @@ export async function createApp(deps: AppDependencies = {}) {
   app.get('/api/smartapi/status', wrap(async (_req, res) => res.json({ success: true, ...await getSmartApiStatus() })));
   app.get('/api/smartapi/rate-limits', (_req, res) => res.json({ success: true, ...getSmartApiRateLimitsAndSpecs() }));
   app.get('/api/market/universes', (_req, res) => res.json({ success: true, universes: UNIVERSE_OPTIONS }));
-  app.get('/api/market/dates', (_req, res) => { const dates = getAvailableTradingDates(250); res.json({ success: true, count: dates.length, dates, mode: config.DATA_MODE, warning: 'Calendar sessions are not evidence of observed price availability.' }); });
-  app.get('/api/market/calendar', wrap(async (req, res) => { const requested = parse(DateSchema, req.query.date); const dates = getAvailableTradingDates(250), resolved = findNearestTradingDate(requested); res.json({ success: true, totalSessions: dates.length, minDate: dates.at(-1)?.date, maxDate: dates[0]?.date, latestSessionDate: dates[0]?.date, latestSessionLabel: dates[0]?.fullLabel, requestedDate: requested ?? dates[0]?.date, ...resolved, tradingDates: dates }); }));
+  app.get('/api/market/dates', wrap(async (_req, res) => { await loadMarketSeries(NSE_SYMBOLS[0].id,{mode:config.DATA_MODE});const dates = getAvailableTradingDates(250); res.json({ success: true, count: dates.length, dates, mode: config.DATA_MODE, warning: 'Calendar sessions are not evidence of observed price availability for every symbol.' }); }));
+  app.get('/api/market/calendar', wrap(async (req, res) => { const requested = parse(DateSchema, req.query.date); await loadMarketSeries(NSE_SYMBOLS[0].id,{mode:config.DATA_MODE});const dates = getAvailableTradingDates(250), resolved = findNearestTradingDate(requested); res.json({ success: true, totalSessions: dates.length, minDate: dates.at(-1)?.date, maxDate: dates[0]?.date, latestSessionDate: dates[0]?.date, latestSessionLabel: dates[0]?.fullLabel, requestedDate: requested ?? dates[0]?.date, ...resolved, tradingDates: dates }); }));
   async function waitResult(id: string): Promise<unknown> {
     const deadline = Date.now() + config.MAX_JOB_MS + 5000;
     for (;;) { const job = deps.jobs?.get(id); if (!job) throw new ApiFailure(404, 'JOB_NOT_FOUND', 'Job expired.'); if (job.status === 'succeeded') return job.result; if (['failed','cancelled'].includes(job.status)) throw new ApiFailure(422, 'JOB_FAILED', 'Research job did not complete.', job.error); if (Date.now() > deadline) throw new ApiFailure(504, 'JOB_TIMEOUT', 'Research deadline exceeded.'); await new Promise(r => setTimeout(r, 30)); }

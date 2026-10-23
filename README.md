@@ -8,8 +8,8 @@ The research upgrade now includes an observed daily-data adapter, official Nifty
 
 Verified with Node **26.5.0** and npm **11.17.0**:
 
-- Standard Vitest coverage run: **346 tests passed, 35 files, zero failures**.
-- Configured financial/strategy coverage: **94.84% statements/lines, 80.47% branches, 95.94% functions**. This is not whole-application coverage.
+- Standard Vitest coverage run: **349 tests passed, 36 files, zero failures**.
+- Configured financial/strategy coverage: **96.21% statements/lines, 79.64% branches, 97.29% functions**. This is not whole-application coverage.
 - Standard typecheck, lint and production build passed. Typecheck enables strictNullChecks; full TypeScript strict mode is not claimed.
 - Local production startup and read-only smoke passed, including denial of backend artifacts and environment files.
 - Production browser checks confirmed explicit local save, duplicate, soft-delete and restore. Automated component tests cover revisions, storage failures, recovery conflicts, draft-only copilot actions and request ownership.

@@ -140,19 +140,14 @@ export function getLastMarketOperatedDate(now: Date = new Date()): Date {
 /**
  * Returns available trading session dates across the market universe (up to 250 trading sessions ~ 1 year)
  */
-export function getAvailableTradingDates(maxCount: number = 250): { date: string; label: string; fullLabel: string; dayOfWeek: string; isLatest: boolean }[] {
+export function tradingSessionsFromDates(dates:string[],mode:'demo'|'real',maxCount=250): { date: string; label: string; fullLabel: string; dayOfWeek: string; isLatest: boolean }[] {
   if(!Number.isInteger(maxCount)||maxCount<1||maxCount>2000)throw new MarketDataError('INVALID_COUNT','Count must be 1..2000');
-  // Calendar choices must describe available bars, not hypothetical sessions after
-  // the last generated/cached observation. No network/provider login is performed.
-  const series = getMarketSeries(NSE_SYMBOLS[0].id);
-  return series.bars.slice(-maxCount).reverse().map((bar, index) => {
-    const date = new Date(bar.date + 'T12:00:00Z');
-    const formatted = date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    const dayOfWeek = date.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'UTC' });
-    const suffix = series.provenance.mode === 'demo' ? 'Generated Demo Bar' : 'Cached Observation';
-    return { date: bar.date, label: formatted + (index === 0 ? ` (Latest ${suffix})` : ''), fullLabel: `${dayOfWeek}, ${formatted} (${suffix})`, dayOfWeek, isLatest: index === 0 };
-  });
-
+  const formatter=new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}),weekday=new Intl.DateTimeFormat('en-IN',{weekday:'long',timeZone:'UTC'});
+  return [...new Set(dates.map(validateDate))].sort().slice(-maxCount).reverse().map((value,index)=>{const date=new Date(value+'T12:00:00Z'),formatted=formatter.format(date),dayOfWeek=weekday.format(date),suffix=mode==='demo'?'Generated Demo Bar':'Observed Daily Bar';return {date:value,label:formatted+(index===0?' (Latest '+suffix+')':''),fullLabel:dayOfWeek+', '+formatted+' ('+suffix+')',dayOfWeek,isLatest:index===0};});
+}
+export function getAvailableTradingDates(maxCount:number=250):ReturnType<typeof tradingSessionsFromDates>{
+  const series=getMarketSeries(NSE_SYMBOLS[0].id);
+  return tradingSessionsFromDates(series.bars.map(bar=>bar.date),series.provenance.mode,maxCount);
 }
 
 /**
