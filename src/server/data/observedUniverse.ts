@@ -28,5 +28,5 @@ export async function resolveObservedUniverse(name:string):Promise<ObservedUnive
  if(!pending)pending=(async()=>{const signal=AbortSignal.timeout(5000);try{const r=await boundedPublicText(NIFTY50_CSV_URL,signal,65536);cached=parseNifty50Constituents(r.text,new Date().toISOString(),r.lastModified);return cached;}catch(e){throw new MarketDataError('MEMBERSHIP_UNAVAILABLE','Official NIFTY 50 constituents unavailable; no illustrative pool substituted'+(e instanceof MarketDataError?' ('+e.code+')':''));}})();
  try{return structuredClone(await pending);}finally{pending=undefined;}
 }
-/** A shared cursor keeps at most four fetch/evaluation operations in flight. */
-export async function forEachMarketSymbol<T>(items:T[],run:(item:T)=>Promise<void>):Promise<void>{let cursor=0;await Promise.all(Array.from({length:Math.min(4,items.length)},async()=>{while(cursor<items.length){const item=items[cursor++];await run(item);}}));}
+/** Production observed data is sequential and provider-paced; offline/demo work remains bounded by four. */
+export async function forEachMarketSymbol<T>(items:T[],run:(item:T)=>Promise<void>):Promise<void>{let cursor=0;const concurrency=process.env.NODE_ENV==='production'&&process.env.DATA_MODE==='real'?1:4;await Promise.all(Array.from({length:Math.min(concurrency,items.length)},async()=>{while(cursor<items.length){const item=items[cursor++];await run(item);}}));}

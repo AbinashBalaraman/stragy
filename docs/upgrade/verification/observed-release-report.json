@@ -1,17 +1,17 @@
 {
-  "recordedAt": "2026-10-23T15:46:18.001Z",
+  "recordedAt": "2026-10-24T08:50:41.227Z",
   "runtime": "Node 26.5.0 / npm 11.17.0",
   "gates": {
-    "typecheck": 0,
     "build": 0,
-    "lint": 0,
+    "typecheck": 0,
     "tests": 0,
+    "lint": 0,
     "compiledSmoke": 0
   },
   "tests": {
-    "passed": 350,
+    "passed": 356,
     "failed": 0,
-    "files": 36
+    "files": 37
   },
   "configuredFinancialStrategyCoverage": {
     "lines": {
@@ -47,7 +47,7 @@
   },
   "observedDataSmoke": {
     "base": "http://127.0.0.1:3910",
-    "startedAt": "2026-10-23T15:32:09.587Z",
+    "startedAt": "2026-10-24T08:47:19.382Z",
     "checks": [
       {
         "check": "readiness",
@@ -131,14 +131,12 @@
         "check": "actual free AI conversation",
         "passed": false,
         "blocked": true,
-        "reason": "External AI request failed (timeout): AI request timed out after 60000 ms.",
-        "checkedAt": "2026-10-23T15:35:31.708Z"
+        "reason": "External AI request failed (http_error): AI provider refused access (HTTP 403). Check the configured key's model permissions. No alternate or paid model was used."
       }
     ],
+    "externalAIStatus": "blocked_model_permissions",
     "success": true,
-    "finishedAt": "2026-10-23T15:35:31.709Z",
-    "externalAIStatus": "blocked_provider_or_pricing",
-    "validationNote": "Successful core data checks retained; AI unavailable path rechecked separately."
+    "finishedAt": "2026-10-24T08:49:13.969Z"
   },
   "deployment": "Not certified by this local report. Verify the deployed commit, readiness and browser workflows separately.",
   "limitations": [
@@ -154,6 +152,14 @@
   ],
   "endpoint": "https://query2.finance.yahoo.com/v8/finance/chart/",
   "endpointEvidence": "https://github.com/ranaroussi/yfinance/blob/main/yfinance/const.py",
-  "hostedDataStatus": "Both query1 and query2 returned HTTP 429 from the deployed Render service. Actual hosted screens and backtests remain blocked. Local observed-data checks passed; this is not hosted-data certification.",
-  "chatSafetyFix": "Explicit do-not-scan requests do not enter the automatic screening path. Compiled draft check returned local_heuristic, applied=false, executes=false."
+  "hostedDataStatus": "Previous live version evaluated 35/50 before HTTP 429, then market snapshot lacked coverage. Paced shared-cache version requires post-deployment verification.",
+  "chatSafetyFix": "Explicit do-not-scan requests do not enter the automatic screening path. Compiled draft check returned local_heuristic, applied=false, executes=false.",
+  "cachePolicy": {
+    "productionRequestSpacingMs": 1100,
+    "productionUniverseConcurrency": 1,
+    "maximumCachedDownloads": 64,
+    "ttlMinutes": 15,
+    "originalFetchTimePreserved": true,
+    "syntheticFallback": false
+  }
 }

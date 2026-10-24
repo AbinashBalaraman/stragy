@@ -33,3 +33,7 @@ Production selects `stealth/union-alpha` with `AI_COST_POLICY=free-only`. Before
 ## Verification
 
 Offline tests cover causal lookback boundaries, canonical roundtrips, next-open entries, public-data parsing and identity, all 50 membership mappings, free-price failure closure, asynchronous job cancellation/deadlines and chat review/action separation. Runtime smoke and deployed UI verification are recorded separately; passing unit tests alone is not proof of live provider connectivity.
+
+## Provider pacing and shared observed-data cache
+
+Production universe loading is sequential, with at least 1.1 seconds between new Yahoo requests. Successful completed daily observations are atomically cached across workers for at most 15 minutes, with a 64-file cap, checksum/identity validation and original fetch timestamps. Invalid or expired cache records are not displayed; provider failures remain unavailable. No synthetic prices, paid provider, proxy or identity rotation is introduced.

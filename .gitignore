@@ -11,3 +11,6 @@ coverage/
 .verify-cjs/
 .verification-client/
 src/test/.tmp/
+
+.cache/
+.cache-test-*/

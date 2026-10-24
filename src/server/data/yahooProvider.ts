@@ -1,4 +1,6 @@
 import type { OHLCVBar, SymbolMeta } from '../../shared/strategy/types';
+import path from 'node:path';
+import { readObservedCache, writeObservedCache, waitForPublicRequest } from './observedCache';
 import { getSymbolById } from './symbols';
 import { MarketDataError, type MarketProvider, type ProviderObservation } from './marketSeries';
 export const ZOMATO_RENAME_SOURCE='https://nsearchives.nseindia.com/corporate/apandya_03042025182325_CML67420.pdf';
@@ -38,4 +40,15 @@ export function parseYahooChart(payload:unknown,expectedSymbol:string,now=Date.n
  const latest=bars.at(-1)!.date;const age=Math.floor((Date.parse(today)-Date.parse(latest))/86400000);
  return {bars,evidence:{source:'YAHOO_PUBLIC_CHART',providerSymbol:expectedSymbol,exchangeTimezone:zone,providerMarketTime:typeof m.regularMarketTime==='number'?new Date(m.regularMarketTime*1000).toISOString():undefined,adjustment:'Yahoo quote OHLC (split-adjusted by provider; not dividend total-return adjusted)',freshness:age>4?'stale-end-of-day':'public-delayed-end-of-day',calendarVersion:'provider-observed-sessions',warnings:['Public delayed/end-of-day data, not an exchange live-tick stream','Public endpoint availability and redistribution rights are not guaranteed',...(skipped?[skipped+' null/incomplete OHLCV rows omitted without synthesis']:[]),...(incomplete?[incomplete+' unfinished session rows omitted']:[]),...(bars.length<450?['Less than approximately two years of available daily history']:[])]}};
 }
-export function createYahooProvider(fetcher:typeof fetch=fetch):MarketProvider {return {name:'YAHOO_PUBLIC_CHART',async load(id,signal){const symbol=yahooSymbol(getSymbolById(id));const response=await boundedPublicText('https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(symbol)+'?range=2y&interval=1d&includePrePost=false',signal,2_000_000,fetcher);let json:unknown;try{json=JSON.parse(response.text);}catch{throw new MarketDataError('INVALID_RESPONSE','Yahoo response was not JSON');}return parseYahooChart(json,symbol);}};}
+export function createYahooProvider(fetcher:typeof fetch=fetch,options?:{cacheDirectory?:string;minIntervalMs?:number}):MarketProvider {
+ const production=process.env.NODE_ENV==='production';
+ const directory=options?.cacheDirectory??(production?path.join(process.cwd(),'.cache','observed-yahoo'):undefined);
+ const interval=options?.minIntervalMs??(production?1100:0);let nextRequestAt=0;
+ return {name:'YAHOO_PUBLIC_CHART',async load(id,signal){
+  const symbol=yahooSymbol(getSymbolById(id));signal.throwIfAborted();
+  if(directory){const cached=await readObservedCache(directory,id,symbol);if(cached){signal.throwIfAborted();return cached;}}
+  const slot=Math.max(Date.now(),nextRequestAt);nextRequestAt=slot+interval;await waitForPublicRequest(slot-Date.now(),signal);
+  const response=await boundedPublicText('https://query2.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(symbol)+'?range=2y&interval=1d&includePrePost=false',signal,2_000_000,fetcher);let json:unknown;try{json=JSON.parse(response.text);}catch{throw new MarketDataError('INVALID_RESPONSE','Yahoo response was not JSON');}
+  const observation={...parseYahooChart(json,symbol),fetchedAt:new Date().toISOString()};if(directory)await writeObservedCache(directory,id,symbol,observation);return observation;
+ }};
+}

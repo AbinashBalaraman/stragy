@@ -1,0 +1,22 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import {beforeEach,afterEach,it,expect,vi} from 'vitest';
+import {readObservedCache,writeObservedCache,waitForPublicRequest} from '../../server/data/observedCache';
+import {generateDemoBars,configureMarketProvider,loadMarketSeries,type ProviderObservation} from '../../server/data/marketSeries';
+import {createYahooProvider,yahooSymbol} from '../../server/data/yahooProvider';
+import {getSymbolById} from '../../server/data/symbols';
+import {forEachMarketSymbol} from '../../server/data/observedUniverse';
+let directory:string;
+beforeEach(async()=>{directory=await fs.mkdtemp(path.join(process.cwd(),'.cache-test-'));});
+afterEach(async()=>{configureMarketProvider();vi.useRealTimers();vi.unstubAllEnvs();await fs.rm(directory,{recursive:true,force:true});});
+const observation=():ProviderObservation=>({bars:generateDemoBars(1).slice(0,10),fetchedAt:new Date().toISOString(),evidence:{source:'YAHOO_PUBLIC_CHART',providerSymbol:'OFFLINE-FIXTURE.NS',adjustment:'synthetic offline fixture',freshness:'fixture',calendarVersion:'fixture',warnings:['Synthetic offline test data']}});
+it('shares immutable observed downloads across cache instances while preserving original fetch time',async()=>{const value=observation();await writeObservedCache(directory,1,'OFFLINE-FIXTURE.NS',value);const loaded=await readObservedCache(directory,1,'OFFLINE-FIXTURE.NS');expect(loaded?.bars).toEqual(value.bars);expect(loaded?.fetchedAt).toBe(value.fetchedAt);expect(loaded?.evidence.warnings.join()).toContain('Reused');expect(await readObservedCache(directory,1,'UNRELATED.NS')).toBeUndefined();expect(await readObservedCache(directory,1,'OFFLINE-FIXTURE.NS',Date.parse(value.fetchedAt!)+16*60*1000)).toBeUndefined();});
+it('rejects corrupted or oversized cache records instead of presenting fabricated observations',async()=>{await writeObservedCache(directory,1,'OFFLINE-FIXTURE.NS',observation());const file=path.join(directory,'1.json');const record=JSON.parse(await fs.readFile(file,'utf8'));record.bars[0].close=999;await fs.writeFile(file,JSON.stringify(record));expect(await readObservedCache(directory,1,'OFFLINE-FIXTURE.NS')).toBeUndefined();await fs.writeFile(file,'x'.repeat(2_000_001));expect(await readObservedCache(directory,1,'OFFLINE-FIXTURE.NS')).toBeUndefined();});
+it('bounds cache retention and leaves unrelated files alone',async()=>{await fs.writeFile(path.join(directory,'unrelated.txt'),'keep');for(let i=1;i<=66;i++)await writeObservedCache(directory,i,'OFFLINE-FIXTURE.NS',observation());expect((await fs.readdir(directory)).filter(n=>n.endsWith('.json'))).toHaveLength(64);expect(await fs.readFile(path.join(directory,'unrelated.txt'),'utf8')).toBe('keep');});
+it('cancels an allocated request wait without sending a provider request',async()=>{vi.useFakeTimers();const controller=new AbortController();const pending=waitForPublicRequest(1000,controller.signal).catch(e=>e);controller.abort();expect((await pending).name).toBe('AbortError');expect(vi.getTimerCount()).toBe(0);});
+it('limits production real-universe evaluation to one in-flight provider operation',async()=>{vi.stubEnv('NODE_ENV','production');vi.stubEnv('DATA_MODE','real');let active=0,peak=0;await forEachMarketSymbol([1,2,3,4],async()=>{active++;peak=Math.max(peak,active);await Promise.resolve();active--;});expect(peak).toBe(1);});
+
+it('reuses a successful download across fresh provider and loader instances without changing its fetch time',async()=>{
+ const bars=generateDemoBars(1).slice(-3),symbol=yahooSymbol(getSymbolById(1));const payload={chart:{result:[{meta:{symbol,currency:'INR',exchangeTimezoneName:'Asia/Kolkata'},timestamp:bars.map(b=>b.timestamp/1000),indicators:{quote:[{open:bars.map(b=>b.open),high:bars.map(b=>b.high),low:bars.map(b=>b.low),close:bars.map(b=>b.close),volume:bars.map(b=>b.volume)}]}}]}};
+ const fetcher=vi.fn().mockImplementation(async()=>new Response(JSON.stringify(payload)));configureMarketProvider(createYahooProvider(fetcher,{cacheDirectory:directory,minIntervalMs:0}));const a=await loadMarketSeries(1,{mode:'real'});configureMarketProvider(createYahooProvider(fetcher,{cacheDirectory:directory,minIntervalMs:0}));const b=await loadMarketSeries(1,{mode:'real'});expect(fetcher).toHaveBeenCalledTimes(1);expect(b.provenance.fetchedAt).toBe(a.provenance.fetchedAt);expect(b.provenance.checksum).toBe(a.provenance.checksum);expect(b.provenance.warnings.join()).toContain('Reused');
+});
