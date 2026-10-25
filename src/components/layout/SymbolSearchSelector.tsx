@@ -414,13 +414,13 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       }`}
                     >
                       <span>{sym.ticker}</span>
-                      <span
+                      {showReferencePrices && <span
                         className={`text-[9px] ${
                           sym.changePercent >= 0 ? 'text-[#00ffa3]' : 'text-rose-400'
                         }`}
                       >
                         {sym.changePercent >= 0 ? '+' : ''}{sym.changePercent}%
-                      </span>
+                      </span>}
                     </button>
                   );
                 })}
@@ -532,7 +532,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
               <span><kbd className="px-1 py-0.5 rounded bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Enter</kbd> to select</span>
               <span><kbd className="px-1 py-0.5 rounded bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Esc</kbd> to close</span>
             </div>
-            <span className="text-[#00ffa3] font-mono font-bold">2,088 Assets Active</span>
+            <span className="text-[#00ffa3] font-mono font-bold">{symbols.length.toLocaleString()} instruments available</span>
           </div>
         </div>
       )}

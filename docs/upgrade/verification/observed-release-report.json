@@ -1,17 +1,17 @@
 {
-  "recordedAt": "2026-10-24T08:50:41.227Z",
+  "recordedAt": "2026-10-25T07:50:28.788Z",
   "runtime": "Node 26.5.0 / npm 11.17.0",
   "gates": {
+    "tests": 0,
     "build": 0,
     "typecheck": 0,
-    "tests": 0,
     "lint": 0,
     "compiledSmoke": 0
   },
   "tests": {
-    "passed": 356,
+    "passed": 365,
     "failed": 0,
-    "files": 37
+    "files": 39
   },
   "configuredFinancialStrategyCoverage": {
     "lines": {
@@ -152,7 +152,7 @@
   ],
   "endpoint": "https://query2.finance.yahoo.com/v8/finance/chart/",
   "endpointEvidence": "https://github.com/ranaroussi/yfinance/blob/main/yfinance/const.py",
-  "hostedDataStatus": "Previous live version evaluated 35/50 before HTTP 429, then market snapshot lacked coverage. Paced shared-cache version requires post-deployment verification.",
+  "hostedDataStatus": "Verified at 91b003bc1ca7bdb83df6e8e81153daba7eb7cb37 on 2026-10-25: all50 observed screen and market coverage,250 calendar sessions, reconciled exact-signal backtest. Yahoo throttling can recur; unavailable coverage remains explicit. External AI remains blocked by HTTP403 model permissions.",
   "chatSafetyFix": "Explicit do-not-scan requests do not enter the automatic screening path. Compiled draft check returned local_heuristic, applied=false, executes=false.",
   "cachePolicy": {
     "productionRequestSpacingMs": 1100,
@@ -161,5 +161,102 @@
     "ttlMinutes": 15,
     "originalFetchTimePreserved": true,
     "syntheticFallback": false
-  }
+  },
+  "hostedDataSmoke": {
+    "base": "https://stragy.onrender.com",
+    "startedAt": "2026-10-25T07:34:18.649Z",
+    "checks": [
+      {
+        "check": "readiness",
+        "passed": true
+      },
+      {
+        "check": "capabilities",
+        "passed": true,
+        "mode": "real",
+        "provider": "yahoo",
+        "ai": "tokenrouter",
+        "model": "stealth/union-alpha",
+        "costPolicy": "free-only"
+      },
+      {
+        "check": "official membership",
+        "passed": true,
+        "requested": 50,
+        "unmapped": 0
+      },
+      {
+        "check": "actual daily bars",
+        "passed": true,
+        "ticker": "RELIANCE",
+        "bars": 496,
+        "source": "YAHOO_PUBLIC_CHART",
+        "date": "2026-10-23",
+        "close": 1190,
+        "freshness": "public-delayed-end-of-day"
+      },
+      {
+        "check": "exact temporal chat screen",
+        "passed": true,
+        "method": "rule_parser",
+        "missingBacktestRules": [
+          "exits",
+          "positionSizing",
+          "executionAndCosts"
+        ]
+      },
+      {
+        "check": "observed Nifty screen",
+        "passed": true,
+        "evaluated": 50,
+        "requested": 50,
+        "unavailable": 0,
+        "failed": 0,
+        "matched": 0,
+        "dates": {
+          "earliest": "2026-10-23",
+          "latest": "2026-10-23",
+          "staleSymbols": 0
+        },
+        "sources": {
+          "YAHOO_PUBLIC_CHART": 50
+        },
+        "errors": []
+      },
+      {
+        "check": "observed market movers and calendar",
+        "passed": true,
+        "evaluated": 50,
+        "sources": {
+          "YAHOO_PUBLIC_CHART": 50
+        },
+        "date": "2026-10-23",
+        "calendarSessions": 250
+      },
+      {
+        "check": "exact-signal research backtest",
+        "passed": true,
+        "sourceCommit": "91b003bc1ca7bdb83df6e8e81153daba7eb7cb37",
+        "ticker": "RELIANCE",
+        "trades": 1,
+        "source": "YAHOO_PUBLIC_CHART",
+        "execution": "next_open_long_cash_v1",
+        "reconciliationDifference": 0,
+        "assumptions": "Smoke test explicitly uses unchanged template exits, risk, costs and 1,000,000 initial capital. Not a user-selected investment strategy."
+      },
+      {
+        "check": "actual free AI conversation",
+        "passed": false,
+        "blocked": true,
+        "reason": "External AI request failed (http_error): AI provider refused access (HTTP 403). Check the configured key's model permissions. No alternate or paid model was used."
+      }
+    ],
+    "externalAIStatus": "blocked_model_permissions",
+    "success": true,
+    "finishedAt": "2026-10-25T07:34:40.667Z"
+  },
+  "finalUiCorrections": [
+    "Hide illustrative popular percentages outside explicit demo; derive loaded instrument count",
+    "Derive calendar latest date/count and month/year bounds; remove false live, verified, holiday and fabricated-date claims"
+  ]
 }

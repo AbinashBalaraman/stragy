@@ -46,8 +46,8 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
   selectedDate,
   onSelectDate,
   availableDates,
-  activeUniverseLabel = 'All NSE & BSE Equities',
-  totalAssetsCount = 2088
+  activeUniverseLabel = 'Selected universe',
+  totalAssetsCount
 }) => {
   // Earliest and latest dates available
   const oldestTradingDate = useMemo(() => {
@@ -177,9 +177,10 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
     const dd = String(day).padStart(2, '0');
     const targetDateStr = `${viewYear}-${mm}-${dd}`;
 
-    // If future date beyond latest session
+    if (!latestTradingDate) return;
+    // A date after the cutoff has no available observation.
     if (targetDateStr > latestTradingDate) {
-      setSnapNotice(`Target date ${targetDateStr} is in the future. Snapped to latest session.`);
+      setSnapNotice(`No observation for ${targetDateStr}; selected latest available session (${latestTradingDate}).`);
       setTempSelectedDate(latestTradingDate);
       return;
     }
@@ -191,20 +192,13 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
       return;
     }
 
-    // If weekend or market holiday, snap to closest previous trading date
-    const dObj = new Date(viewYear, viewMonth, day);
-    const dayOfWeek = dObj.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    // Missing data does not establish an exchange holiday.
 
     // Find nearest preceding trading date
     for (const session of availableDates) {
       if (session.date <= targetDateStr) {
         setTempSelectedDate(session.date);
-        setSnapNotice(
-          isWeekend
-            ? `${WEEKDAYS[dayOfWeek]} (${targetDateStr}) is a weekend (Market Closed). Snapped to previous trading session (${session.date}).`
-            : `Market holiday on ${targetDateStr}. Snapped to previous trading session (${session.date}).`
-        );
+        setSnapNotice(`No observation for ${targetDateStr}; selected previous available session (${session.date}).`);
         return;
       }
     }
@@ -216,6 +210,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
 
   // Handle preset quick selection
   const handlePresetSelect = (daysOffset: number | 'LATEST' | '1Y') => {
+    if (!latestTradingDate) return;
     if (daysOffset === 'LATEST') {
       setTempSelectedDate(latestTradingDate);
       setSnapNotice(null);
@@ -229,7 +224,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
       const oldest = availableDates[availableDates.length - 1];
       if (oldest) {
         setTempSelectedDate(oldest.date);
-        setSnapNotice(`Aligned to trading session 1 year ago (${oldest.date})`);
+        setSnapNotice(`Selected oldest available session (${oldest.date})`);
         const [y, m] = oldest.date.split('-').map(Number);
         setViewYear(y);
         setViewMonth(m - 1);
@@ -238,7 +233,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
     }
 
     if (typeof daysOffset === 'number') {
-      const targetSession = availableDates[Math.min(daysOffset, availableDates.length - 1)];
+      const targetSession = availableDates[daysOffset];
       if (targetSession) {
         setTempSelectedDate(targetSession.date);
         setSnapNotice(`Jumped ${daysOffset} trading sessions back to ${targetSession.date}`);
@@ -251,12 +246,14 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
 
   // Confirm selection and apply to API
   const handleApply = () => {
+    if (!tradingDateSet.has(tempSelectedDate || latestTradingDate)) return;
     onSelectDate(tempSelectedDate === latestTradingDate ? '' : tempSelectedDate);
     onClose();
   };
 
   // Reset to current latest live session
   const handleResetToLatest = () => {
+    if (!latestTradingDate) return;
     setTempSelectedDate(latestTradingDate);
     onSelectDate('');
     onClose();
@@ -269,8 +266,8 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
     date: tempSelectedDate || latestTradingDate,
     label: tempSelectedDate || latestTradingDate,
     fullLabel: tempSelectedDate || latestTradingDate,
-    dayOfWeek: 'Trading Day',
-    isLatest: tempSelectedDate === latestTradingDate
+    dayOfWeek: 'Session unavailable',
+    isLatest: Boolean(latestTradingDate) && tempSelectedDate === latestTradingDate
   };
 
   const daysInCurrentMonth = getDaysInMonth(viewYear, viewMonth);
@@ -287,13 +284,13 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                <span>Interactive Trading Session Calendar</span>
+                <span>Available Data Session Calendar</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono font-semibold border border-cyan-500/30">
-                  NSE & BSE Historical API
+                  Dataset session dates
                 </span>
               </h2>
               <p className="text-xs text-neutral-400">
-                Choose any trading session date to analyze gainers, losers, volume shockers & heatmap
+                Dates reflect available data, not a verified exchange holiday calendar.
               </p>
             </div>
           </div>
@@ -315,83 +312,91 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                 <span>Quick Session Jump:</span>
               </span>
-              <span className="text-[10px] text-neutral-500">250 Historical Sessions Available</span>
+              <span className="text-[10px] text-neutral-500">{availableDates.length} Data Sessions Available</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
               <button
                 type="button"
                 onClick={() => handlePresetSelect('LATEST')}
+                disabled={!latestTradingDate}
                 className={`px-2.5 py-1.5 rounded-lg border text-left font-medium transition-all flex items-center justify-between ${
                   tempSelectedDate === latestTradingDate
                     ? 'bg-amber-500 text-[#0c0c0e] font-bold border-amber-400 shadow-sm'
                     : 'bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border-[rgba(236,236,237,0.08)]'
                 }`}
               >
-                <span>⭐ Latest Session</span>
-                <span className="text-[10px] opacity-80 font-mono">14 Aug</span>
+                <span>Latest session</span>
+                <span className="text-[10px] opacity-80 font-mono">{latestTradingDate ? new Date(latestTradingDate + 'T00:00:00Z').toLocaleDateString('en-GB', {day:'2-digit',month:'short',timeZone:'UTC'}) : 'Unavailable'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handlePresetSelect(1)}
+                disabled={!availableDates[1]}
                 className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>1 Session Ago</span>
-                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[1]?.date.slice(5) || '13 Aug'}</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[1]?.date.slice(5) || 'Unavailable'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handlePresetSelect(5)}
+                disabled={!availableDates[5]}
                 className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
-                <span>1 Week Ago</span>
-                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[5]?.date.slice(5) || '07 Aug'}</span>
+                <span>5 Sessions Ago</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[5]?.date.slice(5) || 'Unavailable'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handlePresetSelect(10)}
+                disabled={!availableDates[10]}
                 className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
-                <span>2 Weeks Ago</span>
-                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[10]?.date.slice(5) || '31 Jul'}</span>
+                <span>10 Sessions Ago</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[10]?.date.slice(5) || 'Unavailable'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handlePresetSelect(21)}
+                disabled={!availableDates[21]}
                 className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
-                <span>1 Month Ago</span>
-                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[21]?.date.slice(5) || '15 Jul'}</span>
+                <span>21 Sessions Ago</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[21]?.date.slice(5) || 'Unavailable'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handlePresetSelect(63)}
+                disabled={!availableDates[63]}
                 className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
-                <span>3 Months Ago</span>
-                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[63]?.date.slice(5) || '14 May'}</span>
+                <span>63 Sessions Ago</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[63]?.date.slice(5) || 'Unavailable'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handlePresetSelect(125)}
+                disabled={!availableDates[125]}
                 className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
-                <span>6 Months Ago</span>
-                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[125]?.date.slice(5) || '12 Feb'}</span>
+                <span>125 Sessions Ago</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{availableDates[125]?.date.slice(5) || 'Unavailable'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handlePresetSelect('1Y')}
+                disabled={!oldestTradingDate}
                 className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
-                <span>1 Year Ago</span>
-                <span className="text-[10px] text-cyan-400 font-mono">{oldestTradingDate.slice(5) || 'Aug 2025'}</span>
+                <span>Oldest Session</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{oldestTradingDate.slice(5) || 'Unavailable'}</span>
               </button>
             </div>
           </div>
@@ -404,7 +409,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 <button
                   type="button"
                   onClick={handlePrevMonth}
-                  disabled={viewYear === 2025 && viewMonth <= 7}
+                  disabled={!latestTradingDate || !canGoPrev}
                   className="p-1.5 rounded-lg bg-[#161619] text-neutral-300 hover:text-white hover:bg-[#1d1d21] disabled:opacity-30 disabled:cursor-not-allowed border border-[rgba(236,236,237,0.08)] transition-all"
                   title="Previous Month"
                 >
@@ -417,7 +422,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                     className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer"
                   >
                     {MONTH_NAMES.map((name, idx) => {
-                      const isDisabled = (viewYear === 2026 && idx > 7) || (viewYear === 2025 && idx < 7);
+                      const isDisabled = !latestTradingDate || (viewYear === maxBounds.year && idx > maxBounds.month) || (viewYear === minBounds.year && idx < minBounds.month);
                       return (
                         <option key={name} value={idx} disabled={isDisabled}>
                           {name}
@@ -431,14 +436,13 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                     onChange={(e) => setViewYear(parseInt(e.target.value, 10))}
                     className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer font-mono"
                   >
-                    <option value={2026}>2026</option>
-                    <option value={2025}>2025</option>
+                    {Array.from({length:maxBounds.year-minBounds.year+1},(_,i)=>maxBounds.year-i).map(year=><option key={year} value={year}>{year}</option>)}
                   </select>
                 </div>
                 <button
                   type="button"
                   onClick={handleNextMonth}
-                  disabled={viewYear === 2026 && viewMonth >= 7}
+                  disabled={!latestTradingDate || !canGoNext}
                   className="p-1.5 rounded-lg bg-[#161619] text-neutral-300 hover:text-white hover:bg-[#1d1d21] disabled:opacity-30 disabled:cursor-not-allowed border border-[rgba(236,236,237,0.08)] transition-all"
                   title="Next Month"
                 >
@@ -503,15 +507,15 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                     key={dateStr}
                     type="button"
                     onClick={() => handleDayClick(dayNum)}
-                    disabled={isFuture}
+                    disabled={!latestTradingDate || isFuture || dateStr < oldestTradingDate}
                     title={`${dateStr}: ${
                       isTradingDay
                         ? isLatest
-                          ? 'Latest Live NSE/BSE Trading Session'
-                          : 'NSE/BSE Trading Session (Click to view historical movers)'
-                        : isWeekend
-                        ? 'Weekend (Closed) - Click to auto-snap to Friday session'
-                        : 'Market Holiday - Click to snap to previous trading day'
+                          ? 'Latest available data session'
+                          : 'Available data session (click to select)'
+                        : isFuture || !latestTradingDate
+                        ? 'After latest available session; no observation available'
+                        : 'No observation for this date; select previous available session'
                     }`}
                     className={`h-9 rounded-lg text-xs font-semibold flex flex-col items-center justify-center relative transition-all ${
                       isSelected
@@ -543,18 +547,18 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  <span>Trading Session</span>
+                  <span>Available data session</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span>Latest Live Session</span>
+                  <span>Latest available session</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded bg-cyan-500" />
                   <span>Selected Date</span>
                 </div>
               </div>
-              <span className="text-neutral-500">Click any weekend to auto-snap to previous session</span>
+              <span className="text-neutral-500">Missing dates can select the previous available session</span>
             </div>
           </div>
 
@@ -580,7 +584,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                     : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
                 }`}
               >
-                {selectedSessionInfo.isLatest ? '🟢 Latest Live Market Session' : '📅 Historical Session'}
+                {selectedSessionInfo.isLatest ? 'Latest available session' : 'Selected data date'}
               </span>
             </div>
 
@@ -590,12 +594,12 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                   {selectedSessionInfo.fullLabel || selectedSessionInfo.label}
                 </div>
                 <div className="text-[11px] text-neutral-400 font-mono">
-                  ISO Date: {selectedSessionInfo.date} • Universe: {activeUniverseLabel} ({totalAssetsCount} Assets)
+                  ISO Date: {selectedSessionInfo.date} • Universe: {activeUniverseLabel} ({typeof totalAssetsCount === 'number' ? totalAssetsCount + ' instruments' : 'count unavailable'})
                 </div>
               </div>
               <div className="text-right">
                 <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  Real Market Data Verified
+                  Coverage and provenance are shown in the scanner
                 </span>
               </div>
             </div>
@@ -607,10 +611,11 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
           <button
             type="button"
             onClick={handleResetToLatest}
+            disabled={!latestTradingDate}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#161619] hover:bg-[#1d1d21] text-neutral-300 hover:text-white border border-[rgba(236,236,237,0.12)] text-xs font-semibold transition-all"
           >
             <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
-            <span>Reset to Latest Live Session</span>
+            <span>Reset to Latest available session</span>
           </button>
 
           <div className="flex items-center gap-2">
@@ -625,6 +630,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
             <button
               type="button"
               onClick={handleApply}
+              disabled={!tradingDateSet.has(tempSelectedDate || latestTradingDate)}
               className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-[#0c0c0e] font-bold text-xs shadow-lg shadow-cyan-500/20 transition-all scale-[1.02] active:scale-[0.98]"
             >
               <span>Apply & Fetch Data for {selectedSessionInfo.date}</span>
