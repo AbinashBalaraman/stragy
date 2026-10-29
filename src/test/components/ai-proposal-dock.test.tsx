@@ -43,18 +43,19 @@ afterEach(() => { cleanup(); storageDom?.window.close(); storageDom = undefined;
 describe('proposal dock review and explicit actions', () => {
   it('renders real server provider metadata, without applying, running or scanning automatically', async () => {
     stubDraft();
-    const apply = vi.fn(), run = vi.fn(), scanner = vi.fn();
-    render(<AiCopilotDock strategy={validStrategy()} onApplyVariation={apply} onRunBacktest={run} onRunScanner={scanner}/>);
+    const apply = vi.fn();
+    render(<AiCopilotDock strategy={validStrategy()} onApplyVariation={apply}/>);
     generate();
     await screen.findByRole('article', { name: 'Draft proposal' });
-    expect(screen.getByText(/provider: local_heuristic; model: none; Not AI-generated/)).toBeTruthy();
-    expect(apply).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled(); expect(scanner).not.toHaveBeenCalled();
+    expect(screen.getByText('Local keyword rules · not AI', { selector: 'p' })).toBeTruthy();
+    expect(apply).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /Run current workspace/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Open scanner/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Apply draft' }));
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
     expect(apply.mock.calls[0][0].risk.stopLoss.value).toBe(3);
     expect(screen.getByText(/Waiting for workspace confirmation/)).toBeTruthy();
     expect(screen.queryByText(/Draft applied to the workspace/)).toBeNull();
-    expect(run).not.toHaveBeenCalled(); expect(scanner).not.toHaveBeenCalled();
   });
 
   it('confirms applying only after the workspace actually matches the draft', async () => {
@@ -132,7 +133,7 @@ describe('proposal dock review and explicit actions', () => {
     render(<AiCopilotDock strategy={validStrategy()}/>);
     generate(); await screen.findByRole('article', { name: 'Draft proposal' });
     fireEvent.click(screen.getByRole('button', { name: 'Copy draft JSON' }));
-    expect(screen.getByText('Copying draft...')).toBeTruthy();
+    expect(screen.getByText('Copying draft…')).toBeTruthy();
     expect(screen.queryByText(/Draft copied/)).toBeNull();
     finish(); expect(await screen.findByText(/Draft copied. Nothing was applied or run./)).toBeTruthy();
     expect(JSON.parse(writeText.mock.calls[0][0]).risk.stopLoss.value).toBe(3);

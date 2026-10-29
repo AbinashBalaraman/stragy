@@ -36,7 +36,7 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
   if (!result) {
     return (
       <div className="p-8 sm:p-12 text-center max-w-lg mx-auto space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-[#00ffa3]/10 border border-[#00ffa3]/30 flex items-center justify-center mx-auto text-[#00ffa3]">
+        <div className="w-12 h-12 rounded-2xl bg-[#a8c7fa]/10 border border-[#a8c7fa]/30 flex items-center justify-center mx-auto text-[#a8c7fa]">
           <Activity className="w-6 h-6 animate-pulse" />
         </div>
         <h3 className="text-base font-bold text-[#ececed]">No Simulation Results Yet</h3>
@@ -62,13 +62,13 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
   return (
     <div className="max-w-6xl mx-auto p-4 sm:p-8 space-y-6 pb-24">
       {/* Top Title & Strategy Sub-Header matching Stragy Theme */}
-      <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2.5 flex-wrap">
             <h2 className="font-syne font-extrabold text-xl sm:text-2xl text-[#ececed] tracking-[-0.03em]">
               {result.strategy.name}
             </h2>
-            <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-[rgba(0,255,163,0.1)] text-[#00ffa3] border border-[rgba(0,255,163,0.25)]">
+            <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-[rgba(168,199,250,0.1)] text-[#a8c7fa] border border-[rgba(168,199,250,0.25)]">
               {result.symbol.ticker} • {result.strategy.universe.timeframe}
             </span>
           </div>
@@ -80,9 +80,9 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
             onClick={() => setActiveTab('compare')}
-            className="px-3.5 py-2 rounded-lg bg-[#1d1d21] hover:bg-[#141417] text-[#ececed] font-semibold text-xs border border-[rgba(236,236,237,0.08)] hover:border-[#00ffa3] transition-all flex items-center gap-1.5"
+            className="px-3.5 py-2 rounded-lg bg-[#1e1e21] hover:bg-[#151517] text-[#ececed] font-semibold text-xs border border-[rgba(236,236,237,0.08)] hover:border-[#a8c7fa] transition-all flex items-center gap-1.5"
           >
-            <Scale className="w-3.5 h-3.5 text-[#00ffa3]" />
+            <Scale className="w-3.5 h-3.5 text-[#a8c7fa]" />
             <span>Compare Variations ({comparisonCount})</span>
           </button>
           <button
@@ -97,21 +97,21 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
       </div>
 
       <RunProvenance result={result} />
-      {/* KPI Metrics Matrix in clean #161619 theme */}
+      {/* KPI Metrics Matrix in clean #171719 theme */}
       <MetricsGrid metrics={result.metrics} />
 
-      {/* Analytics Tabs in clean #1d1d21 bar */}
-      <div className="flex flex-wrap items-center gap-1 bg-[#1d1d21] p-1 rounded-xl border border-[rgba(236,236,237,0.08)] text-xs font-semibold">
+      {/* Analytics Tabs in clean #1e1e21 bar */}
+      <div className="flex flex-wrap items-center gap-1 bg-[#1e1e21] p-1 rounded-xl border border-[rgba(236,236,237,0.08)] text-xs font-semibold">
         <button
           type="button"
           onClick={() => setActiveTab('overview')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
             activeTab === 'overview'
-              ? 'bg-[#0c0c0e] text-[#ececed] shadow-md shadow-black/40 font-bold'
+              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
           }`}
         >
-          <Activity className="w-3.5 h-3.5 text-[#00ffa3]" />
+          <Activity className="w-3.5 h-3.5 text-[#a8c7fa]" />
           <span>Overview & Charts</span>
         </button>
         <button
@@ -119,11 +119,11 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
           onClick={() => setActiveTab('compare')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
             activeTab === 'compare'
-              ? 'bg-[#0c0c0e] text-[#ececed] shadow-md shadow-black/40 font-bold'
+              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
           }`}
         >
-          <Scale className="w-3.5 h-3.5 text-[#00ffa3]" />
+          <Scale className="w-3.5 h-3.5 text-[#a8c7fa]" />
           <span>Multi-Strategy Matrix ({comparisonCount})</span>
         </button>
         <button
@@ -131,11 +131,11 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
           onClick={() => setActiveTab('robustness')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
             activeTab === 'robustness'
-              ? 'bg-[#0c0c0e] text-[#ececed] shadow-md shadow-black/40 font-bold'
+              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
           }`}
         >
-          <ShieldCheck className="w-3.5 h-3.5 text-[#00ffa3]" />
+          <ShieldCheck className="w-3.5 h-3.5 text-[#a8c7fa]" />
           <span>Robustness & Monte Carlo</span>
         </button>
         <button
@@ -143,11 +143,11 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
           onClick={() => setActiveTab('costs')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
             activeTab === 'costs'
-              ? 'bg-[#0c0c0e] text-[#ececed] shadow-md shadow-black/40 font-bold'
+              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
           }`}
         >
-          <Receipt className="w-3.5 h-3.5 text-[#00ffa3]" />
+          <Receipt className="w-3.5 h-3.5 text-[#a8c7fa]" />
           <span>NSE Cost Waterfall</span>
         </button>
         <button
@@ -155,11 +155,11 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
           onClick={() => setActiveTab('trades')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
             activeTab === 'trades'
-              ? 'bg-[#0c0c0e] text-[#ececed] shadow-md shadow-black/40 font-bold'
+              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
           }`}
         >
-          <List className="w-3.5 h-3.5 text-[#00ffa3]" />
+          <List className="w-3.5 h-3.5 text-[#a8c7fa]" />
           <span>Trade Log ({result.trades.length})</span>
         </button>
       </div>

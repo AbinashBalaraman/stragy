@@ -1,18 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #0c0c0e;
-  --ink: #ececed;
-  --accent: #00ffa3;
-  --panel: #161619;
-  --panel-card: #141417;
-  --panel-inner: #1a1a1f;
-  --border: rgba(236, 236, 237, 0.08);
-  --border-mint: rgba(0, 255, 163, 0.25);
-  --ink-faint: rgba(236, 236, 237, 0.5);
+  --bg: #101012;
+  --ink: #ececec;
+  --accent: #a8c7fa;
+  --accent-strong: #c7dbff;
+  --panel: #171719;
+  --panel-card: #1a1a1d;
+  --panel-inner: #1f1f23;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(168, 199, 250, 0.3);
+  --ink-faint: rgba(236, 236, 236, 0.52);
   --font-syne: 'Syne', sans-serif;
   --font-inter: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
 }
 
 body {
@@ -21,13 +28,12 @@ body {
   font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
   scrollbar-width: thin;
-  scrollbar-color: rgba(236, 236, 237, 0.16) transparent;
+  scrollbar-color: rgba(236, 236, 236, 0.14) transparent;
 }
 
-/* Custom Institutional Dark Theme Scrollbar (Global) */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(236, 236, 237, 0.18) transparent;
+  scrollbar-color: rgba(236, 236, 236, 0.16) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -40,7 +46,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(236, 236, 237, 0.16);
+  background: rgba(236, 236, 236, 0.16);
   border-radius: 9999px;
   border: 1px solid transparent;
   background-clip: padding-box;
@@ -48,11 +54,11 @@ body {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 255, 163, 0.45);
+  background: rgba(168, 199, 250, 0.4);
 }
 
 ::-webkit-scrollbar-thumb:active {
-  background: #00ffa3;
+  background: #a8c7fa;
 }
 
 ::-webkit-scrollbar-corner {
@@ -60,8 +66,13 @@ body {
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--bg);
+  background: #a8c7fa;
+  color: #101012;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(168, 199, 250, 0.75);
+  outline-offset: 2px;
 }
 
 .font-syne {
@@ -73,21 +84,19 @@ body {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Background subtle dot-matrix grid from design specification */
+/* The chat surface is intentionally quiet: no dot grid or dashboard texture. */
 .bg-dot-matrix {
-  background-image: radial-gradient(circle at 2px 2px, rgba(236, 236, 237, 0.035) 1px, transparent 0);
-  background-size: 32px 32px;
+  background-image: none;
 }
 
-/* Mint Badges & Labels from design */
 .badge-mint {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  background: rgba(0, 255, 163, 0.1);
-  border: 1px solid rgba(0, 255, 163, 0.25);
-  color: #00ffa3;
+  background: rgba(168, 199, 250, 0.08);
+  border: 1px solid rgba(168, 199, 250, 0.24);
+  color: #c7dbff;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.68rem;
   border-radius: 4px;
@@ -101,7 +110,7 @@ body {
   font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #00ffa3;
+  color: #c7dbff;
   display: block;
 }
 
@@ -110,31 +119,28 @@ body {
   font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: rgba(236, 236, 237, 0.45);
+  color: rgba(236, 236, 236, 0.45);
   display: block;
 }
 
-/* Status indicator with glowing neon mint box-shadow */
 .status-dot-mint {
   width: 8px;
   height: 8px;
-  background: #00ffa3;
+  background: #a8c7fa;
   border-radius: 50%;
   display: inline-block;
-  box-shadow: 0 0 10px #00ffa3;
 }
 
-/* Quant Card Styles */
 .card-quant {
-  background: #161619;
-  border: 1px solid rgba(236, 236, 237, 0.08);
+  background: #171719;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   overflow: hidden;
 }
 
 .card-quant-header {
   padding: 14px 20px;
-  border-bottom: 1px solid rgba(236, 236, 237, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -142,8 +148,8 @@ body {
 }
 
 .btn-primary-mint {
-  background: #00ffa3;
-  color: #0c0c0e;
+  background: #a8c7fa;
+  color: #101012;
   padding: 10px 20px;
   border-radius: 8px;
   font-weight: 700;
@@ -153,12 +159,11 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color 0.2s ease, transform 0.2s ease;
 }
 
 .btn-primary-mint:hover {
-  background: #2affb4;
-  box-shadow: 0 0 16px rgba(0, 255, 163, 0.3);
+  background: #c7dbff;
 }
 
 .btn-primary-mint:active {
@@ -167,19 +172,19 @@ body {
 
 .btn-ghost-quant {
   background: transparent;
-  color: #ececed;
-  border: 1px solid rgba(236, 236, 237, 0.1);
+  color: #ececec;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 6px 14px;
   border-radius: 6px;
   font-size: 0.78rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .btn-ghost-quant:hover {
   background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(236, 236, 237, 0.2);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 @layer utilities {

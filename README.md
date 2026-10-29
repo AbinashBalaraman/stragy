@@ -4,17 +4,17 @@ React 19, TypeScript, Vite, Tailwind, Express and Zod trading-research workspace
 
 ## Current status
 
-The research upgrade now includes an observed daily-data adapter, official Nifty 50 membership, temporal RSI screening and explicit chat-to-backtest actions. Deployment verification is recorded separately; none of this certifies live trading.
+Stragy now opens as a clean research conversation, with advanced tools tucked away. Natural-language screens and stock follow-ups lead to a plain-English review before execution. The research upgrade includes observed daily data, official Nifty 50 membership and causal temporal RSI screening. Deployment verification is recorded separately; none of this certifies live trading.
 
 Verified with Node **26.5.0** and npm **11.17.0**:
 
-- Standard Vitest coverage run: **365 tests passed, 39 files, zero failures**.
-- Configured financial/strategy coverage: **96.21% statements/lines, 79.64% branches, 97.29% functions**. This is not whole-application coverage.
+- Standard Vitest run: **424 tests passed, 45 files, zero failures**.
+- Historical pre-redesign configured financial/strategy coverage: **96.21% statements/lines, 79.64% branches, 97.29% functions**. This is not whole-application coverage.
 - Standard typecheck, lint and production build passed. Typecheck enables strictNullChecks; full TypeScript strict mode is not claimed.
 - Local production startup and read-only smoke passed, including denial of backend artifacts and environment files.
 - Production browser checks confirmed explicit local save, duplicate, soft-delete and restore. Automated component tests cover revisions, storage failures, recovery conflicts, draft-only copilot actions and request ownership.
 
-See [observed-data and chat behavior](docs/upgrade/observed-data-chat.md) and [current release verification](docs/upgrade/verification/observed-release-report.json). The original [implementation report](docs/upgrade/implementation-status.md), native-release report and fallback-probe reports are historical. Full manual accessibility/responsive review, all planned E2E journeys and hosted durability remain unverified.
+See [chat-first design and flows](docs/upgrade/chat-first-ui.md), [independent redesign verification](docs/upgrade/verification/chat-first-release-report.json), [observed-data and chat behavior](docs/upgrade/observed-data-chat.md) and [current release verification](docs/upgrade/verification/observed-release-report.json). The original [implementation report](docs/upgrade/implementation-status.md), native-release report and fallback-probe reports are historical. Full manual accessibility/responsive review, all planned E2E journeys and hosted durability remain unverified.
 
 ## Research behavior
 

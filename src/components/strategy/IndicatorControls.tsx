@@ -68,7 +68,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
 
       {/* Indicators List */}
       {indicators.length === 0 ? (
-        <div className="p-6 text-center border border-dashed border-[rgba(236,236,237,0.1)] rounded-xl bg-[#141417] text-neutral-400 text-xs font-mono">
+        <div className="p-6 text-center border border-dashed border-[rgba(236,236,237,0.1)] rounded-xl bg-[#151517] text-neutral-400 text-xs font-mono">
           No custom indicators configured. Click buttons above to add Supertrend, ATR, RSI, or Moving Averages.
         </div>
       ) : (
@@ -76,7 +76,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
           {indicators.map(ind => (
             <div
               key={ind.id}
-              className="p-4 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl shadow-sm hover:border-[rgba(236,236,237,0.16)] transition-all space-y-3"
+              className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl shadow-sm hover:border-[rgba(236,236,237,0.16)] transition-all space-y-3"
             >
               {/* Header */}
               <div className="flex items-center justify-between border-b border-[rgba(236,236,237,0.08)] pb-2">
@@ -106,7 +106,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           ATR PERIOD
                           <FinanceTooltip content="Lookback period for Average True Range volatility calculation." />
                         </span>
-                        <span className="font-mono text-[#00ffa3] font-semibold">{ind.params.period || 10}</span>
+                        <span className="font-mono text-[#a8c7fa] font-semibold">{ind.params.period || 10}</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <input
@@ -115,7 +115,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           max="50"
                           value={ind.params.period || 10}
                           onChange={e => handleParamChange(ind.id, 'period', Number(e.target.value))}
-                          className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+                          className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
                         />
                         <input
                           type="number"
@@ -123,7 +123,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           max="50"
                           value={ind.params.period || 10}
                           onChange={e => handleParamChange(ind.id, 'period', Number(e.target.value))}
-                          className="w-14 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                          className="w-14 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                         />
                       </div>
                     </div>
@@ -134,7 +134,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           MULTIPLIER
                           <FinanceTooltip content="ATR multiplier determining the distance of the trailing bands." />
                         </span>
-                        <span className="font-mono text-[#00ffa3] font-semibold">{ind.params.multiplier || 3}x</span>
+                        <span className="font-mono text-[#a8c7fa] font-semibold">{ind.params.multiplier || 3}x</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <input
@@ -144,7 +144,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           step="0.5"
                           value={ind.params.multiplier || 3}
                           onChange={e => handleParamChange(ind.id, 'multiplier', Number(e.target.value))}
-                          className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+                          className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
                         />
                         <input
                           type="number"
@@ -153,7 +153,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           step="0.5"
                           value={ind.params.multiplier || 3}
                           onChange={e => handleParamChange(ind.id, 'multiplier', Number(e.target.value))}
-                          className="w-14 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                          className="w-14 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                         />
                       </div>
                     </div>
@@ -167,7 +167,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                         {ind.type} PERIOD (LOOKBACK BARS)
                         <FinanceTooltip content={`Number of bars used to calculate the ${ind.type} series.`} />
                       </span>
-                      <span className="font-mono text-[#00ffa3] font-semibold">{ind.params.period || 14}</span>
+                      <span className="font-mono text-[#a8c7fa] font-semibold">{ind.params.period || 14}</span>
                     </div>
                     <div className="flex items-center gap-3">
                       <input
@@ -176,7 +176,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                         max="200"
                         value={ind.params.period || 14}
                         onChange={e => handleParamChange(ind.id, 'period', Number(e.target.value))}
-                        className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+                        className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
                       />
                       <input
                         type="number"
@@ -184,7 +184,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                         max="200"
                         value={ind.params.period || 14}
                         onChange={e => handleParamChange(ind.id, 'period', Number(e.target.value))}
-                        className="w-14 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                        className="w-14 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                       />
                     </div>
                   </div>
@@ -195,7 +195,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                     <div>
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-neutral-300 font-mono text-[11px]">PERIOD (SMA BASE)</span>
-                        <span className="font-mono text-[#00ffa3] font-semibold">{ind.params.period || 20}</span>
+                        <span className="font-mono text-[#a8c7fa] font-semibold">{ind.params.period || 20}</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <input
@@ -204,13 +204,13 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           max="100"
                           value={ind.params.period || 20}
                           onChange={e => handleParamChange(ind.id, 'period', Number(e.target.value))}
-                          className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+                          className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
                         />
                         <input
                           type="number"
                           value={ind.params.period || 20}
                           onChange={e => handleParamChange(ind.id, 'period', Number(e.target.value))}
-                          className="w-14 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                          className="w-14 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                         />
                       </div>
                     </div>
@@ -218,7 +218,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                     <div>
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-neutral-300 font-mono text-[11px]">STANDARD DEVIATIONS (σ)</span>
-                        <span className="font-mono text-[#00ffa3] font-semibold">{ind.params.stdDev || 2}σ</span>
+                        <span className="font-mono text-[#a8c7fa] font-semibold">{ind.params.stdDev || 2}σ</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <input
@@ -228,14 +228,14 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                           step="0.1"
                           value={ind.params.stdDev || 2}
                           onChange={e => handleParamChange(ind.id, 'stdDev', Number(e.target.value))}
-                          className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+                          className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
                         />
                         <input
                           type="number"
                           step="0.1"
                           value={ind.params.stdDev || 2}
                           onChange={e => handleParamChange(ind.id, 'stdDev', Number(e.target.value))}
-                          className="w-14 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                          className="w-14 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-0.5 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                         />
                       </div>
                     </div>
@@ -252,7 +252,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                         max="50"
                         value={ind.params.fastPeriod || 12}
                         onChange={e => handleParamChange(ind.id, 'fastPeriod', Number(e.target.value))}
-                        className="w-full bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                        className="w-full bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                       />
                     </div>
                     <div>
@@ -263,7 +263,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                         max="100"
                         value={ind.params.slowPeriod || 26}
                         onChange={e => handleParamChange(ind.id, 'slowPeriod', Number(e.target.value))}
-                        className="w-full bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                        className="w-full bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                       />
                     </div>
                     <div>
@@ -274,7 +274,7 @@ export const IndicatorControls: React.FC<IndicatorControlsProps> = ({ indicators
                         max="30"
                         value={ind.params.signalPeriod || 9}
                         onChange={e => handleParamChange(ind.id, 'signalPeriod', Number(e.target.value))}
-                        className="w-full bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                        className="w-full bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
                       />
                     </div>
                   </div>

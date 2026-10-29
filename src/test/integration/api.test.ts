@@ -8,6 +8,7 @@ import { ResearchRepository } from '../../server/storage/repository';
 import { simulate } from '../../server/backtest/engine';
 import { BacktestResponseSchema } from '../../shared/contracts/research';
 import { validateStrategy } from '../../shared/strategy/schema';
+import { canonicalStrategySignature } from '../../shared/strategy/backtestReview';
 import { bars, strategy } from '../fixtures/research';
 
 // Preserve production input validation, then replace data with tiny synthetic bars.
@@ -163,6 +164,20 @@ describe('bounded offline API contracts', () => {
     expect(runs.body.runs).toEqual([{ id: runId, name: original.strategy.name, executedAt: original.executedAt }]);
     expect(executor).toHaveBeenCalledTimes(1);
   });
+  it('returns the engine-normalized strategy with execution defaults while preserving review identity', async () => {
+    const { app } = await setup();
+    const submitted = strategy();
+    const accepted = await bounded(request(app).post('/api/v2/backtests').set('Idempotency-Key', 'fixture-normalized-strategy').send(body()));
+    expect(accepted.status).toBe(202);
+    const done = await poll(app, accepted.body.jobId);
+    expect(done.body.status).toBe('succeeded');
+    expect(done.body.result.strategy.execution).toMatchObject({
+      executionPolicy: 'next_open_long_cash_v1',
+      liquidateAtEnd: true,
+    });
+    expect(canonicalStrategySignature(done.body.result.strategy)).toBe(canonicalStrategySignature(submitted));
+  });
+
   it('reuses identical idempotent requests but rejects conflicting input', async () => {
     const { app, executor } = await setup();
     const first = await bounded(request(app).post('/api/v2/backtests').set('Idempotency-Key', 'fixture-idempotency').send(body()));

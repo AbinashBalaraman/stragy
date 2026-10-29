@@ -1,0 +1,158 @@
+{
+  "recordedAt": "2026-10-29T14:52:15.380Z",
+  "stage": "independently verified local release candidate; deployed verification follows publication",
+  "previousPublishedCommit": "90928ddbcf1b8551b0baa6fa5874a8499c7958c2",
+  "implementationAgent": "OpenCode DeepSeek V4.1 Flash Free, user-selected; Aside planned, reviewed and independently verified",
+  "tests": {
+    "passed": 424,
+    "failed": 0,
+    "files": 45
+  },
+  "gates": {
+    "tests": 0,
+    "typecheck": 0,
+    "build": 0,
+    "lint": 0,
+    "dataSmoke": 0,
+    "compiledSmoke": 0
+  },
+  "browser": {
+    "verifiedAt": "2026-10-29T14:51:12.845Z",
+    "build": "working tree after canonical-normalization fix",
+    "observedScreen": {
+      "succeeded": 50,
+      "requested": 50,
+      "unavailable": 0,
+      "failed": 0,
+      "matched": 0,
+      "observedThrough": "2026-10-29",
+      "source": "YAHOO_PUBLIC_CHART"
+    },
+    "checks": {
+      "desktopChatFirst": true,
+      "mobileLayout": true,
+      "mobileDrawerEscapeFocus": true,
+      "historyRecovery": true,
+      "noDirectChatRunBypass": true,
+      "unknownSecondStockSupersedesReview": true,
+      "staleApprovalRefused": true,
+      "assumptionsOnlyDoesNotRun": true,
+      "explicitReviewApproval": true,
+      "actualNormalizedServerResultRendered": true,
+      "matchingDetailsView": true,
+      "newChatClearsInlineResult": true,
+      "analyticsRetainedAfterNewChat": true
+    },
+    "result": {
+      "ticker": "RELIANCE",
+      "initialCapital": 100000,
+      "totalReturnPercent": 0.26,
+      "netPnlDisplayed": 258.53,
+      "trades": 1
+    },
+    "limitations": [
+      "Explicit smoke-test template assumptions only, not a user-selected investment strategy",
+      "Free-form external AI remains blocked by provider403",
+      "Yahoo public delayed daily-data availability is not guaranteed"
+    ]
+  },
+  "observedData": {
+    "base": "http://127.0.0.1:3910",
+    "startedAt": "2026-10-29T14:50:46.757Z",
+    "checks": [
+      {
+        "check": "readiness",
+        "passed": true
+      },
+      {
+        "check": "capabilities",
+        "passed": true,
+        "mode": "real",
+        "provider": "yahoo",
+        "ai": "tokenrouter",
+        "model": "stealth/union-alpha",
+        "costPolicy": "free-only"
+      },
+      {
+        "check": "official membership",
+        "passed": true,
+        "requested": 50,
+        "unmapped": 0
+      },
+      {
+        "check": "actual daily bars",
+        "passed": true,
+        "ticker": "RELIANCE",
+        "bars": 496,
+        "source": "YAHOO_PUBLIC_CHART",
+        "date": "2026-10-29",
+        "close": 1167.4000244140625,
+        "freshness": "public-delayed-end-of-day"
+      },
+      {
+        "check": "exact temporal chat screen",
+        "passed": true,
+        "method": "rule_parser",
+        "missingBacktestRules": [
+          "exits",
+          "positionSizing",
+          "executionAndCosts"
+        ]
+      },
+      {
+        "check": "observed Nifty screen",
+        "passed": true,
+        "evaluated": 50,
+        "requested": 50,
+        "unavailable": 0,
+        "failed": 0,
+        "matched": 0,
+        "dates": {
+          "earliest": "2026-10-29",
+          "latest": "2026-10-29",
+          "staleSymbols": 0
+        },
+        "sources": {
+          "YAHOO_PUBLIC_CHART": 50
+        },
+        "errors": []
+      },
+      {
+        "check": "observed market movers and calendar",
+        "passed": true,
+        "evaluated": 50,
+        "sources": {
+          "YAHOO_PUBLIC_CHART": 50
+        },
+        "date": "2026-10-29",
+        "calendarSessions": 250
+      },
+      {
+        "check": "exact-signal research backtest",
+        "passed": true,
+        "sourceCommit": "unknown-working-tree",
+        "ticker": "RELIANCE",
+        "trades": 1,
+        "source": "YAHOO_PUBLIC_CHART",
+        "execution": "next_open_long_cash_v1",
+        "reconciliationDifference": 0,
+        "assumptions": "Smoke test explicitly uses unchanged template exits, risk, costs and 1,000,000 initial capital. Not a user-selected investment strategy."
+      },
+      {
+        "check": "actual free AI conversation",
+        "passed": false,
+        "blocked": true,
+        "reason": "External AI request failed (http_error): AI provider refused access (HTTP 403). Check the configured key's model permissions. No alternate or paid model was used."
+      }
+    ],
+    "externalAIStatus": "blocked_model_permissions",
+    "success": true,
+    "finishedAt": "2026-10-29T14:50:59.904Z"
+  },
+  "coverage": "Full424-test run without coverage. Earlier configured financial/strategy coverage numbers in README are historical, not remeasured for this UI release.",
+  "limits": [
+    "External TokenRouter free-model completion remains blocked by existing key403; no provider/paid fallback changes",
+    "Observation/source coverage and dates are shown; Yahoo availability/throttling may recur",
+    "No orders, new services, paid plan or credentials changed"
+  ]
+}

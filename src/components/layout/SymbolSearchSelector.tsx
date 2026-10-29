@@ -255,12 +255,12 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         id="btn-symbol-pill-trigger"
         type="button"
         onClick={() => setIsOpen(prev => !prev)}
-        className="group flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 rounded-xl bg-[#141417] hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] hover:border-[#00ffa3]/50 shadow-sm transition-all text-left focus:outline-none focus:border-[#00ffa3] select-none shrink-0"
+        className="group flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 rounded-xl bg-[#151517] hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] hover:border-[#a8c7fa]/50 shadow-sm transition-all text-left focus:outline-none focus:border-[#a8c7fa] select-none shrink-0"
         title={showReferencePrices ? 'Search demo instruments. Reference prices are illustrative, not live.' : 'Select an instrument. Observed prices are shown in scanner and backtest results.'}
       >
         {/* Ticker & Exchange Badge */}
         <div className="flex items-center gap-1.5 shrink-0">
-          <span className="font-extrabold text-xs sm:text-sm text-[#ececed] tracking-tight group-hover:text-[#00ffa3] transition-colors font-mono">
+          <span className="font-extrabold text-xs sm:text-sm text-[#ececed] tracking-tight group-hover:text-[#a8c7fa] transition-colors font-mono">
             {currentSymbol.ticker}
           </span>
           <span
@@ -269,7 +269,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                 ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
                 : currentSymbol.exchange === 'BSE'
                 ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
-                : 'bg-[#00ffa3]/10 text-[#00ffa3] border-[#00ffa3]/30'
+                : 'bg-[#a8c7fa]/10 text-[#a8c7fa] border-[#a8c7fa]/30'
             }`}
           >
             {isIndex ? 'INDEX' : currentSymbol.exchange}
@@ -285,7 +285,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           <span
             className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ${
               currentSymbol.changePercent >= 0
-                ? 'bg-emerald-500/15 text-[#00ffa3] border border-[#00ffa3]/30'
+                ? 'bg-emerald-500/15 text-[#a8c7fa] border border-[#a8c7fa]/30'
                 : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
             }`}
           >
@@ -298,7 +298,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           </span>
         </div>}
 
-        <Search className="w-3 h-3 text-neutral-400 group-hover:text-[#00ffa3] transition-colors shrink-0 ml-0.5" />
+        <Search className="w-3 h-3 text-neutral-400 group-hover:text-[#a8c7fa] transition-colors shrink-0 ml-0.5" />
       </button>
 
       {/* Desktop Dedicated Quick Search Input Trigger */}
@@ -306,22 +306,22 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         id="btn-symbol-quicksearch-trigger"
         type="button"
         onClick={() => setIsOpen(true)}
-        className="hidden 2xl:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#141417] hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] hover:border-neutral-700 text-neutral-400 hover:text-[#ececed] transition-all text-xs font-medium focus:outline-none group shrink-0 w-36"
+        className="hidden 2xl:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#151517] hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] hover:border-neutral-700 text-neutral-400 hover:text-[#ececed] transition-all text-xs font-medium focus:outline-none group shrink-0 w-36"
         title="Search any stock, index, or sector (Press ⌘K or /)"
       >
-        <Search className="w-3.5 h-3.5 text-neutral-400 group-hover:text-[#00ffa3] transition-colors shrink-0" />
+        <Search className="w-3.5 h-3.5 text-neutral-400 group-hover:text-[#a8c7fa] transition-colors shrink-0" />
         <span className="truncate text-neutral-400 group-hover:text-[#ececed]">Search stock...</span>
-        <kbd className="ml-auto inline-flex items-center gap-0.5 text-[9px] font-mono px-1 py-0.2 rounded bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-neutral-400 group-hover:text-[#ececed] shrink-0">
+        <kbd className="ml-auto inline-flex items-center gap-0.5 text-[9px] font-mono px-1 py-0.2 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-neutral-400 group-hover:text-[#ececed] shrink-0">
           <Command className="w-2.5 h-2.5" />K
         </kbd>
       </button>
 
       {/* Popover / Combobox Dropdown */}
       {isOpen && (
-        <div className="fixed sm:absolute top-16 sm:top-full left-2 sm:left-0 right-2 sm:right-auto mt-2 sm:w-[460px] md:w-[520px] bg-[#161619] border border-[rgba(236,236,237,0.12)] rounded-2xl shadow-2xl shadow-black/80 z-50 overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[580px] animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed sm:absolute top-16 sm:top-full left-2 sm:left-0 right-2 sm:right-auto mt-2 sm:w-[460px] md:w-[520px] bg-[#171719] border border-[rgba(236,236,237,0.12)] rounded-2xl shadow-2xl shadow-black/80 z-50 overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[580px] animate-in fade-in zoom-in-95 duration-150">
           {/* Search Header Input */}
-          <div className="p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#141417] flex items-center gap-2.5">
-            <Search className="w-4 h-4 text-[#00ffa3] shrink-0" />
+          <div className="p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#151517] flex items-center gap-2.5">
+            <Search className="w-4 h-4 text-[#a8c7fa] shrink-0" />
             <input
               ref={searchInputRef}
               type="text"
@@ -353,7 +353,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           </div>
 
           {/* Category Filter Chips */}
-          <div className="p-2.5 sm:p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#0c0c0e]/60 flex flex-wrap items-center gap-1.5 text-xs">
+          <div className="p-2.5 sm:p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#101012]/60 flex flex-wrap items-center gap-1.5 text-xs">
             {(
               [
                 { id: 'ALL', label: `All (${symbols.length})` },
@@ -380,8 +380,8 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                   }}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center justify-center ${
                     active
-                      ? 'bg-[#00ffa3] text-[#0c0c0e] font-bold shadow-sm'
-                      : 'bg-[#1d1d21] text-neutral-300 hover:text-white hover:bg-[#25252a] border border-[rgba(236,236,237,0.08)]'
+                      ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm'
+                      : 'bg-[#1e1e21] text-neutral-300 hover:text-white hover:bg-[#25252a] border border-[rgba(236,236,237,0.08)]'
                   }`}
                 >
                   {cat.label}
@@ -392,9 +392,9 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
 
           {/* Quick-Pick Popular Symbols (when no search query) */}
           {!searchQuery.trim() && selectedCategory === 'ALL' && (
-            <div className="px-3 py-2 border-b border-[rgba(236,236,237,0.06)] bg-[#0c0c0e]/30">
+            <div className="px-3 py-2 border-b border-[rgba(236,236,237,0.06)] bg-[#101012]/30">
               <div className="text-[10px] uppercase font-bold text-neutral-400 mb-1.5 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-[#00ffa3]" />
+                <Sparkles className="w-3 h-3 text-[#a8c7fa]" />
                 <span>Popular & Benchmark Equities:</span>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -409,14 +409,14 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       onClick={() => selectSymbol(sym.id)}
                       className={`px-2 py-0.5 rounded-md text-[11px] font-mono transition-all flex items-center gap-1 ${
                         isCurrent
-                          ? 'bg-[#00ffa3]/20 text-[#00ffa3] font-bold border border-[#00ffa3]/40'
-                          : 'bg-[#1d1d21] text-neutral-300 hover:text-white hover:bg-[#25252a] border border-[rgba(236,236,237,0.08)]'
+                          ? 'bg-[#a8c7fa]/20 text-[#a8c7fa] font-bold border border-[#a8c7fa]/40'
+                          : 'bg-[#1e1e21] text-neutral-300 hover:text-white hover:bg-[#25252a] border border-[rgba(236,236,237,0.08)]'
                       }`}
                     >
                       <span>{sym.ticker}</span>
                       {showReferencePrices && <span
                         className={`text-[9px] ${
-                          sym.changePercent >= 0 ? 'text-[#00ffa3]' : 'text-rose-400'
+                          sym.changePercent >= 0 ? 'text-[#a8c7fa]' : 'text-rose-400'
                         }`}
                       >
                         {sym.changePercent >= 0 ? '+' : ''}{sym.changePercent}%
@@ -460,10 +460,10 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                     onMouseEnter={() => setHighlightedIndex(index)}
                     className={`p-2.5 rounded-xl cursor-pointer transition-all flex items-center justify-between gap-3 ${
                       isSelected
-                        ? 'bg-[#00ffa3]/15 border border-[#00ffa3]/30 text-white'
+                        ? 'bg-[#a8c7fa]/15 border border-[#a8c7fa]/30 text-white'
                         : isHighlighted
-                        ? 'bg-[#1d1d21] text-white'
-                        : 'hover:bg-[#1d1d21]/60 text-neutral-300'
+                        ? 'bg-[#1e1e21] text-white'
+                        : 'hover:bg-[#1e1e21]/60 text-neutral-300'
                     }`}
                   >
                     {/* Left: Ticker & Name */}
@@ -478,7 +478,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                               ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
                               : sym.exchange === 'BSE'
                               ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
-                              : 'bg-[#00ffa3]/10 text-[#00ffa3] border-[#00ffa3]/30'
+                              : 'bg-[#a8c7fa]/10 text-[#a8c7fa] border-[#a8c7fa]/30'
                           }`}
                         >
                           {symIsIndex ? 'INDEX' : sym.exchange}
@@ -500,7 +500,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                         </div>
                         <div
                           className={`text-[10px] font-mono font-bold ${
-                            sym.changePercent >= 0 ? 'text-[#00ffa3]' : 'text-rose-400'
+                            sym.changePercent >= 0 ? 'text-[#a8c7fa]' : 'text-rose-400'
                           }`}
                         >
                           {sym.changePercent >= 0 ? '+' : ''}{sym.changePercent}%
@@ -508,7 +508,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       </div>}
 
                       {isSelected && (
-                        <div className="w-5 h-5 rounded-full bg-[#00ffa3] text-[#0c0c0e] flex items-center justify-center shrink-0">
+                        <div className="w-5 h-5 rounded-full bg-[#a8c7fa] text-[#101012] flex items-center justify-center shrink-0">
                           <Check className="w-3.5 h-3.5 stroke-[3]" />
                         </div>
                       )}
@@ -526,13 +526,13 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           </div>
 
           {/* Footer Guide */}
-          <div className="px-3 py-2 border-t border-[rgba(236,236,237,0.08)] bg-[#141417] flex items-center justify-between text-[10px] text-neutral-400">
+          <div className="px-3 py-2 border-t border-[rgba(236,236,237,0.08)] bg-[#151517] flex items-center justify-between text-[10px] text-neutral-400">
             <div className="flex items-center gap-3">
-              <span>Use <kbd className="px-1 py-0.5 rounded bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">↑</kbd> <kbd className="px-1 py-0.5 rounded bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">↓</kbd> to navigate</span>
-              <span><kbd className="px-1 py-0.5 rounded bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Enter</kbd> to select</span>
-              <span><kbd className="px-1 py-0.5 rounded bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Esc</kbd> to close</span>
+              <span>Use <kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">↑</kbd> <kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">↓</kbd> to navigate</span>
+              <span><kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Enter</kbd> to select</span>
+              <span><kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Esc</kbd> to close</span>
             </div>
-            <span className="text-[#00ffa3] font-mono font-bold">{symbols.length.toLocaleString()} instruments available</span>
+            <span className="text-[#a8c7fa] font-mono font-bold">{symbols.length.toLocaleString()} instruments available</span>
           </div>
         </div>
       )}

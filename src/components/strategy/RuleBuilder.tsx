@@ -74,7 +74,7 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
         <div className="flex items-center gap-2">
           <span
             className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
-              type === 'entry' ? 'bg-[#00ffa3]/10 text-[#00ffa3] border border-[#00ffa3]/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+              type === 'entry' ? 'bg-[#a8c7fa]/10 text-[#a8c7fa] border border-[#a8c7fa]/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
             }`}
           >
             {type.toUpperCase()} CRITERIA ({rules.length})
@@ -95,7 +95,7 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
       </div>
 
       {rules.length === 0 ? (
-        <div className="p-4 border border-dashed border-[rgba(236,236,237,0.1)] rounded-xl bg-[#141417] text-center text-xs text-neutral-400 font-mono">
+        <div className="p-4 border border-dashed border-[rgba(236,236,237,0.1)] rounded-xl bg-[#151517] text-center text-xs text-neutral-400 font-mono">
           {type === 'entry'
             ? 'No entry rules defined. Strategy will not enter trades.'
             : 'No exit rules defined. Exits will occur purely on Stop Loss, Take Profit, or Trailing Stop.'}
@@ -108,11 +108,11 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
             return (
               <div
                 key={rule.id || idx}
-                className={`p-3 bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] rounded-xl flex flex-wrap lg:flex-nowrap items-center gap-2.5 hover:border-[rgba(236,236,237,0.18)] transition-all text-xs ${
-                  type === 'exit' ? 'border-l-2 border-l-[#ff4d4d]' : 'border-l-2 border-l-[#00ffa3]'
+                className={`p-3 bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] rounded-xl flex flex-wrap lg:flex-nowrap items-center gap-2.5 hover:border-[rgba(236,236,237,0.18)] transition-all text-xs ${
+                  type === 'exit' ? 'border-l-2 border-l-[#ff4d4d]' : 'border-l-2 border-l-[#a8c7fa]'
                 }`}
               >
-                <span className="w-5 h-5 rounded bg-[#0c0c0e] text-neutral-400 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
+                <span className="w-5 h-5 rounded bg-[#101012] text-neutral-400 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
                   {idx + 1}
                 </span>
 
@@ -121,7 +121,7 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
                   <select
                     value={rule.leftIndicator}
                     onChange={e => handleUpdateRule(idx, { leftIndicator: e.target.value })}
-                    className="w-full bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 text-[#ececed] font-mono focus:border-[#00ffa3] focus:outline-none"
+                    className="w-full bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 text-[#ececed] font-mono focus:border-[#a8c7fa] focus:outline-none"
                   >
                     {availableOperands.map(op => (
                       <option key={op.value} value={op.value}>
@@ -136,8 +136,8 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
                   <select
                     value={rule.operator}
                     onChange={e => handleUpdateRule(idx, { operator: e.target.value as RuleOperator })}
-                    className={`w-full bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 font-mono font-bold focus:border-[#00ffa3] focus:outline-none ${
-                      type === 'exit' ? 'text-rose-400' : 'text-[#00ffa3]'
+                    className={`w-full bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 font-mono font-bold focus:border-[#a8c7fa] focus:outline-none ${
+                      type === 'exit' ? 'text-rose-400' : 'text-[#a8c7fa]'
                     }`}
                   >
                     <option value="gt">&gt; (is greater than)</option>
@@ -156,7 +156,7 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
                     <select
                       value={rule.rightIndicator || availableOperands[0].value}
                       onChange={e => handleUpdateRule(idx, { rightIndicator: e.target.value, rightValue: undefined })}
-                      className="w-full bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 text-[#00ffa3] font-mono font-medium focus:border-[#00ffa3] focus:outline-none"
+                      className="w-full bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 text-[#a8c7fa] font-mono font-medium focus:border-[#a8c7fa] focus:outline-none"
                     >
                       {availableOperands.map(op => (
                         <option key={op.value} value={op.value}>
@@ -172,7 +172,7 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
                       onChange={e =>
                         handleUpdateRule(idx, { rightValue: parseFloat(e.target.value) || 0, rightIndicator: undefined })
                       }
-                      className="w-full bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 text-amber-300 font-mono font-medium focus:border-[#00ffa3] focus:outline-none"
+                      className="w-full bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded-lg px-2.5 py-1.5 text-amber-300 font-mono font-medium focus:border-[#a8c7fa] focus:outline-none"
                       placeholder="e.g. 30"
                     />
                   )}
@@ -190,7 +190,7 @@ export const RuleBuilder: React.FC<RuleBuilderProps> = ({ type, rules, indicator
                         });
                       }
                     }}
-                    className="p-1.5 rounded-lg bg-[#0c0c0e] text-neutral-400 hover:text-[#ececed] hover:bg-[#161619] border border-[rgba(236,236,237,0.08)] shrink-0 transition-colors"
+                    className="p-1.5 rounded-lg bg-[#101012] text-neutral-400 hover:text-[#ececed] hover:bg-[#171719] border border-[rgba(236,236,237,0.08)] shrink-0 transition-colors"
                     title={isRightIndicator ? 'Switch to Constant Number Value' : 'Switch to Indicator/Price Field'}
                   >
                     <GitCompare className="w-3.5 h-3.5" />

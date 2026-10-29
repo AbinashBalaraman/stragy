@@ -25,7 +25,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
 
   if (!suite) {
     return (
-      <div className="p-8 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl text-center text-neutral-400 text-xs">
+      <div className="p-8 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl text-center text-neutral-400 text-xs">
         No robustness data available.
       </div>
     );
@@ -44,23 +44,23 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
   }));
 
   return (
-    <div className="p-4 sm:p-6 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
+    <div className="p-4 sm:p-6 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
       {/* Tab Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(236,236,237,0.08)] pb-3.5">
         <div className="flex items-center gap-2.5">
-          <ShieldCheck className="w-5 h-5 text-[#00ffa3]" />
+          <ShieldCheck className="w-5 h-5 text-[#a8c7fa]" />
           <div>
             <h3 className="font-syne font-bold text-sm text-[#ececed]">Institutional Robustness & Overfitting Suite</h3>
             <p className="text-[11px] text-[rgba(236,236,237,0.5)]">Monte Carlo (500 Runs), 70/30 OOS Validation & Parameter Sensitivity</p>
           </div>
         </div>
 
-        <div className="flex items-center bg-[#1d1d21] p-1 rounded-xl border border-[rgba(236,236,237,0.08)]">
+        <div className="flex items-center bg-[#1e1e21] p-1 rounded-xl border border-[rgba(236,236,237,0.08)]">
           <button
             type="button"
             onClick={() => setActiveTab('monteCarlo')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === 'monteCarlo' ? 'bg-[#00ffa3] text-[#0c0c0e] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'monteCarlo' ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Dice5 className="w-3.5 h-3.5" />
@@ -70,7 +70,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
             type="button"
             onClick={() => setActiveTab('trainTest')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === 'trainTest' ? 'bg-[#00ffa3] text-[#0c0c0e] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'trainTest' ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <SplitSquareVertical className="w-3.5 h-3.5" />
@@ -80,7 +80,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
             type="button"
             onClick={() => setActiveTab('sensitivity')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === 'sensitivity' ? 'bg-[#00ffa3] text-[#0c0c0e] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'sensitivity' ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Grid3X3 className="w-3.5 h-3.5" />
@@ -94,29 +94,29 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
       {activeTab === 'monteCarlo' && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
+            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
               <span className="text-neutral-400 block mb-1">P10 Conservative Equity</span>
               <span className="text-rose-400 font-mono font-bold text-sm">
                 {formatCurrency(monteCarlo.p10TerminalEquity)}
               </span>
             </div>
-            <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
+            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
               <span className="text-neutral-400 block mb-1">P50 Median Equity</span>
-              <span className="text-[#00ffa3] font-mono font-bold text-sm">
+              <span className="text-[#a8c7fa] font-mono font-bold text-sm">
                 {formatCurrency(monteCarlo.p50TerminalEquity)}
               </span>
             </div>
-            <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
+            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
               <span className="text-neutral-400 block mb-1">P90 Optimistic Equity</span>
-              <span className="text-[#00ffa3] font-mono font-bold text-sm">
+              <span className="text-[#a8c7fa] font-mono font-bold text-sm">
                 {formatCurrency(monteCarlo.p90TerminalEquity)}
               </span>
             </div>
-            <div className="p-3 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
+            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
               <span className="text-neutral-400 block mb-1">Prob of Drawdown ≥ 15%</span>
               <span
                 className={`font-mono font-bold text-sm ${
-                  (monteCarlo.probDrawdownOver15 ?? 0) > 30 ? 'text-rose-400' : 'text-[#00ffa3]'
+                  (monteCarlo.probDrawdownOver15 ?? 0) > 30 ? 'text-rose-400' : 'text-[#a8c7fa]'
                 }`}
               >
                 {formatNumber(monteCarlo.probDrawdownOver15, 1, '%')}
@@ -132,7 +132,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                 <YAxis stroke="#6b7280" fontSize={10} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#141417',
+                    backgroundColor: '#151517',
                     borderColor: 'rgba(236, 236, 237, 0.12)',
                     borderRadius: '0.75rem',
                     fontSize: '0.75rem',
@@ -141,7 +141,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                   formatter={(val: any) => [`₹${Number(val).toLocaleString('en-IN')}`]}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                <Line type="monotone" dataKey="p90" stroke="#00ffa3" strokeWidth={1.5} dot={false} name="90th Percentile" />
+                <Line type="monotone" dataKey="p90" stroke="#a8c7fa" strokeWidth={1.5} dot={false} name="90th Percentile" />
                 <Line type="monotone" dataKey="p50" stroke="#ececed" strokeWidth={2} dot={false} name="50th Percentile (Median)" />
                 <Line type="monotone" dataKey="p10" stroke="#ff4d4d" strokeWidth={1.5} dot={false} name="10th Percentile, not worst case" />
               </LineChart>
@@ -153,13 +153,13 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
       {/* Tab 2: 70/30 Train/Test Split */}
       {activeTab === 'trainTest' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between p-3.5 bg-[#141417] rounded-xl border border-[rgba(236,236,237,0.08)]">
+          <div className="flex items-center justify-between p-3.5 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
             <div className="flex items-center gap-2">
               <span className="text-xs text-neutral-300 font-semibold">Overfitting Classification:</span>
               <span
                 className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${
                   trainTestSplit.overfittingRisk === 'LOW'
-                    ? 'bg-[#00ffa3]/10 text-[#00ffa3] border-[#00ffa3]/30'
+                    ? 'bg-[#a8c7fa]/10 text-[#a8c7fa] border-[#a8c7fa]/30'
                     : trainTestSplit.overfittingRisk === 'MODERATE'
                     ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                     : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
@@ -173,9 +173,9 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* In-Sample (70%) */}
-            <div className="p-4 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+            <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
               <div className="flex items-center justify-between border-b border-[rgba(236,236,237,0.08)] pb-2">
-                <span className="text-xs font-bold text-[#00ffa3] uppercase tracking-wider">
+                <span className="text-xs font-bold text-[#a8c7fa] uppercase tracking-wider">
                   In-Sample (Train 70%)
                 </span>
                 <span className="text-xs text-neutral-400">{trainTestSplit.trainMetrics.tradesCount} Trades</span>
@@ -201,9 +201,9 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
             </div>
 
             {/* Out-of-Sample (30%) */}
-            <div className="p-4 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+            <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
               <div className="flex items-center justify-between border-b border-[rgba(236,236,237,0.08)] pb-2">
-                <span className="text-xs font-bold text-[#00ffa3] uppercase tracking-wider">
+                <span className="text-xs font-bold text-[#a8c7fa] uppercase tracking-wider">
                   Out-of-Sample (Test 30%)
                 </span>
                 <span className="text-xs text-neutral-400">{trainTestSplit.testMetrics.tradesCount} Trades</span>
@@ -236,7 +236,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
         <div className="space-y-3">
           <div className="flex items-center justify-between text-xs text-neutral-400">
             <span>2D Grid: {sensitivityHeatmap.param1Name} (Rows) vs {sensitivityHeatmap.param2Name} (Columns)</span>
-            <span className="text-[#00ffa3] font-semibold">Metric: Net return (%)</span>
+            <span className="text-[#a8c7fa] font-semibold">Metric: Net return (%)</span>
           </div>
 
           <div className="overflow-x-auto">
@@ -261,13 +261,13 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                         const val = cell.metricValue;
                         const bgColor =
                           (val ?? -Infinity) >= 1.5
-                            ? 'bg-[#00ffa3]/30 text-[#00ffa3]'
+                            ? 'bg-[#a8c7fa]/30 text-[#a8c7fa]'
                             : (val ?? -Infinity) >= 1.0
-                            ? 'bg-[#00ffa3]/15 text-[#00ffa3]'
+                            ? 'bg-[#a8c7fa]/15 text-[#a8c7fa]'
                             : (val ?? -Infinity) >= 0.5
-                            ? 'bg-[#00ffa3]/10 text-neutral-200'
+                            ? 'bg-[#a8c7fa]/10 text-neutral-200'
                             : (val ?? -Infinity) >= 0
-                            ? 'bg-[#1d1d21] text-neutral-300'
+                            ? 'bg-[#1e1e21] text-neutral-300'
                             : 'bg-rose-500/20 text-rose-300';
 
                         return (

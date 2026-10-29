@@ -20,9 +20,9 @@ export const FinanceTooltip: React.FC<FinanceTooltipProps> = ({ content, term, c
         </span>
       )}
       {visible && (
-        <div id={tooltipId} role="tooltip" className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-2.5 bg-[#161619] border border-[rgba(236,236,237,0.12)]/80 rounded-lg shadow-xl text-xs text-neutral-200 z-50 pointer-events-none backdrop-blur-md">
+        <div id={tooltipId} role="tooltip" className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-2.5 bg-[#171719] border border-[rgba(236,236,237,0.12)]/80 rounded-lg shadow-xl text-xs text-neutral-200 z-50 pointer-events-none backdrop-blur-md">
           {content}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#1d1d21]" />
+          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#1e1e21]" />
         </div>
       )}
     </div>

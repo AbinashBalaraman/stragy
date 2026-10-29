@@ -77,7 +77,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
   const disabled = busy || stale || !library;
   const entries = library?.entries.filter(entry => Boolean(entry.deletedAt) === trash) ?? [];
   return (
-    <section aria-labelledby="my-strategies-title" className="bg-[#161619]/90 border border-neutral-800 rounded-2xl p-5 space-y-4">
+    <section aria-labelledby="my-strategies-title" className="bg-[#171719]/90 border border-neutral-800 rounded-2xl p-5 space-y-4">
       <h2 id="my-strategies-title" className="text-lg font-bold text-white">My Strategies</h2>
       <p className="text-xs text-neutral-400">Saved only in this browser. Save is explicit, not automatic. Up to 50 strategies including trash, 20 immutable revisions each, 200 revisions total and 1 MiB. Nothing is automatically removed.</p>
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
@@ -139,7 +139,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
     <div className="max-w-5xl mx-auto p-4 sm:p-6 space-y-5 pb-20">
       <MyStrategies onLoadStrategy={onLoadStrategy} currentStrategy={currentStrategy} />
       {/* Header */}
-      <div className="bg-[#161619]/90 border border-[rgba(236,236,237,0.08)] rounded-2xl p-5 shadow-sm space-y-3">
+      <div className="bg-[#171719]/90 border border-[rgba(236,236,237,0.08)] rounded-2xl p-5 shadow-sm space-y-3">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
             <BookOpen className="w-4 h-4" />
@@ -161,7 +161,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
               className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
                 selectedCategory === cat
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                  : 'bg-[#0c0c0e] text-neutral-400 hover:text-white border border-[rgba(236,236,237,0.08)]'
+                  : 'bg-[#101012] text-neutral-400 hover:text-white border border-[rgba(236,236,237,0.08)]'
               }`}
             >
               {cat}
@@ -178,7 +178,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
           return (
             <div
               key={tmpl.id}
-              className="p-5 bg-[#161619]/90 border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-purple-500/50 transition-all flex flex-col justify-between space-y-4 shadow-sm"
+              className="p-5 bg-[#171719]/90 border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-purple-500/50 transition-all flex flex-col justify-between space-y-4 shadow-sm"
             >
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -195,7 +195,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
                   <p className="text-xs text-neutral-300 mt-1 leading-relaxed">{tmpl.description}</p>
                 </div>
 
-                <div className="p-3 bg-[#0c0c0e]/80 border border-[rgba(236,236,237,0.08)]/80 rounded-xl text-xs space-y-1.5 text-neutral-400">
+                <div className="p-3 bg-[#101012]/80 border border-[rgba(236,236,237,0.08)]/80 rounded-xl text-xs space-y-1.5 text-neutral-400">
                   <div>
                     <strong className="text-neutral-300">Suitability: </strong>
                     <span>{tmpl.suitability}</span>

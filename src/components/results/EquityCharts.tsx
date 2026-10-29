@@ -38,12 +38,12 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
   return (
     <div className={`grid gap-5 ${layoutMode === 'grid' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
       {/* 1. Equity Curve vs Benchmark */}
-      <div className="p-4 sm:p-6 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
+      <div className="p-4 sm:p-6 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[rgba(236,236,237,0.08)] pb-3.5">
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-syne font-bold text-sm sm:text-base text-[#ececed]">Portfolio Equity vs Benchmark</h3>
-              <span className="text-[10px] sm:text-xs font-mono font-semibold px-2 py-0.5 rounded bg-[rgba(0,255,163,0.1)] text-[#00ffa3] border border-[rgba(0,255,163,0.25)]">
+              <span className="text-[10px] sm:text-xs font-mono font-semibold px-2 py-0.5 rounded bg-[rgba(168,199,250,0.1)] text-[#a8c7fa] border border-[rgba(168,199,250,0.25)]">
                 {totalStrategyReturn} Strategy
               </span>
             </div>
@@ -53,7 +53,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
           </div>
 
           <div className="flex items-center gap-2 text-[11px] text-[rgba(236,236,237,0.5)] shrink-0">
-            <span className="flex items-center gap-1 font-mono text-[#00ffa3]">
+            <span className="flex items-center gap-1 font-mono text-[#a8c7fa]">
               <TrendingUp className="w-3 h-3" /> Strategy
             </span>
             <span className="text-neutral-600">•</span>
@@ -82,7 +82,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: '#141417',
+                  backgroundColor: '#151517',
                   borderColor: 'rgba(236, 236, 237, 0.12)',
                   borderRadius: '0.75rem',
                   fontSize: '0.75rem',
@@ -98,7 +98,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
               <Line
                 type="monotone"
                 dataKey="equity"
-                stroke="#00ffa3"
+                stroke="#a8c7fa"
                 strokeWidth={2.2}
                 dot={false}
                 name="Strategy Equity"
@@ -118,7 +118,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
       </div>
 
       {/* 2. Underwater Drawdown Curve */}
-      <div className="p-4 sm:p-6 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
+      <div className="p-4 sm:p-6 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[rgba(236,236,237,0.08)] pb-3.5">
           <div>
             <div className="flex items-center gap-2">
@@ -163,7 +163,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: '#141417',
+                  backgroundColor: '#151517',
                   borderColor: 'rgba(236, 236, 237, 0.12)',
                   borderRadius: '0.75rem',
                   fontSize: '0.75rem',

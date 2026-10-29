@@ -290,7 +290,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       </div>}
       {!isStrategyView && isLoadingTrends && <p role="status" className="text-xs text-neutral-400">Loading market snapshot...</p>}
       {/* Top Header Card */}
-      <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
+      <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
@@ -302,7 +302,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                   Research snapshot · not live
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1d1d21] text-neutral-300 border border-[rgba(236,236,237,0.12)] font-mono flex items-center gap-1">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1e1e21] text-neutral-300 border border-[rgba(236,236,237,0.12)] font-mono flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-amber-400" />
                   <span>Session: {dataCutoff || 'Cutoff unavailable'}</span>
                 </span>
@@ -322,7 +322,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 retryActiveView();
               }}
               disabled={activePending}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1d1d21] hover:bg-[#27272a] text-white font-semibold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] shadow-sm active:scale-95 transition-all disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e1e21] hover:bg-[#27272a] text-white font-semibold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] shadow-sm active:scale-95 transition-all disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${activePending ? 'animate-spin text-amber-400' : ''}`} />
               <span>{activePending ? 'Loading snapshot...' : 'Reload snapshot'}</span>
@@ -331,7 +331,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </div>
 
         {/* Global Universe & Trading Session Date Filter Bar */}
-        <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+        <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
           {/* Row 1: Universe Selection */}
           <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
             <div className="flex items-center gap-1.5 text-neutral-300 font-semibold">
@@ -346,7 +346,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             <select
               value={selectedUniverse}
               onChange={(e) => handleUniverseChange(e.target.value as MarketUniverseType)}
-              className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-500 font-medium"
+              className="bg-[#171719] border border-[rgba(236,236,237,0.12)] text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-500 font-medium"
             >
               <optgroup label="Broad & Exchanges">
                 <option value="ALL">🌐 All Markets (NSE + BSE)</option>
@@ -379,8 +379,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   onClick={() => handleUniverseChange(u.id)}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
                     isActive
-                      ? 'bg-amber-500 text-[#0c0c0e] shadow-sm font-bold scale-[1.02]'
-                      : 'bg-[#161619] text-neutral-400 hover:text-white hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)]'
+                      ? 'bg-amber-500 text-[#101012] shadow-sm font-bold scale-[1.02]'
+                      : 'bg-[#171719] text-neutral-400 hover:text-white hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)]'
                   }`}
                   title={u.description}
                 >
@@ -412,7 +412,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <select
                 value={selectedDate}
                 onChange={(e) => handleDateChange(e.target.value)}
-                className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-cyan-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 font-medium max-w-[200px] truncate"
+                className="bg-[#171719] border border-[rgba(236,236,237,0.12)] text-cyan-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 font-medium max-w-[200px] truncate"
               >
                 <option value="">Latest available cutoff</option>
                 {coveredTradingDates.map((item) => (
@@ -423,7 +423,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               </select>
 
               {/* Direct HTML5 Date Picker Input */}
-              <div className="flex items-center gap-1.5 bg-[#161619] border border-[rgba(236,236,237,0.12)] rounded-lg px-2 py-1">
+              <div className="flex items-center gap-1.5 bg-[#171719] border border-[rgba(236,236,237,0.12)] rounded-lg px-2 py-1">
                 <span className="text-[10px] text-neutral-400 font-medium hidden sm:inline">Custom Date:</span>
                 <input
                   type="date"
@@ -439,7 +439,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               {selectedDate && selectedDate !== coveredTradingDates[0]?.date && (
                 <button
                   onClick={() => handleDateChange('')}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-300 hover:bg-amber-500 hover:text-[#0c0c0e] border border-amber-500/30 text-xs font-bold transition-all"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-300 hover:bg-amber-500 hover:text-[#101012] border border-amber-500/30 text-xs font-bold transition-all"
                   title="Reset to latest available data cutoff"
                 >
                   <RefreshCw className="w-3 h-3" />
@@ -459,8 +459,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                     onClick={() => handleDateChange(item.isLatest ? '' : item.date)}
                     className={`px-2 py-0.5 rounded-md font-mono transition-all whitespace-nowrap ${
                       isSelected
-                        ? 'bg-cyan-500 text-[#0c0c0e] font-bold shadow-sm'
-                        : 'bg-[#161619] text-neutral-400 hover:text-neutral-200 border border-[rgba(236,236,237,0.08)]'
+                        ? 'bg-cyan-500 text-[#101012] font-bold shadow-sm'
+                        : 'bg-[#171719] text-neutral-400 hover:text-neutral-200 border border-[rgba(236,236,237,0.08)]'
                     }`}
                   >
                     {item.date.slice(5)} {item.isLatest ? '(Latest)' : ''}
@@ -472,11 +472,11 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 bg-[#141417] p-1 rounded-xl border border-[rgba(236,236,237,0.08)] text-xs overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1.5 bg-[#151517] p-1 rounded-xl border border-[rgba(236,236,237,0.08)] text-xs overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('movers')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'movers' ? 'bg-amber-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'movers' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Flame className="w-3.5 h-3.5" />
@@ -486,7 +486,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('volume_52w')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'volume_52w' ? 'bg-amber-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'volume_52w' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Zap className="w-3.5 h-3.5" />
@@ -496,7 +496,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('derivatives_oi')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'derivatives_oi' ? 'bg-amber-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'derivatives_oi' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Gauge className="w-3.5 h-3.5" />
@@ -506,7 +506,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('option_chain')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'option_chain' ? 'bg-cyan-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'option_chain' ? 'bg-cyan-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
@@ -516,7 +516,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('volume_profile')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'volume_profile' ? 'bg-purple-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'volume_profile' ? 'bg-purple-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
@@ -526,7 +526,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('gtt_bracket')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'gtt_bracket' ? 'bg-amber-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'gtt_bracket' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Calculator className="w-3.5 h-3.5" />
@@ -536,7 +536,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('basis_spreads')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'basis_spreads' ? 'bg-emerald-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'basis_spreads' ? 'bg-emerald-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <TrendingUpDown className="w-3.5 h-3.5" />
@@ -546,7 +546,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('breadth_sectors')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'breadth_sectors' ? 'bg-amber-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'breadth_sectors' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <BarChart2 className="w-3.5 h-3.5" />
@@ -556,7 +556,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('trends')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'trends' ? 'bg-amber-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'trends' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <Compass className="w-3.5 h-3.5" />
@@ -566,7 +566,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <button
             onClick={() => setActiveTab('strategy_matches')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'strategy_matches' ? 'bg-amber-500 text-[#0c0c0e] shadow-sm' : 'text-neutral-400 hover:text-white'
+              activeTab === 'strategy_matches' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -579,7 +579,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       {activeTab === 'movers' && (
         <div className="space-y-4">
           {/* Universe Header Banner for Gainers & Losers */}
-          <div className="bg-[#161619]/80 border border-[rgba(236,236,237,0.08)] rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="bg-[#171719]/80 border border-[rgba(236,236,237,0.08)] rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
                 {currentUniverseConfig.icon}
@@ -589,13 +589,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <h3 className="text-sm font-extrabold text-white">
                     Top Gainers & Losers Ranking — {currentUniverseConfig.label}
                   </h3>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#141417] border border-[rgba(236,236,237,0.08)] text-amber-400 font-mono">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#151517] border border-[rgba(236,236,237,0.08)] text-amber-400 font-mono">
                     {movers ? `${movers.totalFilteredCount} Assets Evaluated` : 'Evaluation pending or unavailable'}
                   </span>
                   <span className={`text-[10px] px-2 py-0.5 rounded border font-mono flex items-center gap-1 ${
                     movers?.isHistorical
                       ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300 font-bold'
-                      : 'bg-[#141417] border-[rgba(236,236,237,0.08)] text-neutral-300'
+                      : 'bg-[#151517] border-[rgba(236,236,237,0.08)] text-neutral-300'
                   }`}>
                     <Calendar className="w-2.5 h-2.5 text-cyan-400" />
                     <span>{movers?.isHistorical ? `Historical Session: ${movers?.formattedDate || movers?.asOfDate}` : `Session: ${movers?.formattedDate || movers?.asOfDate || 'Cutoff unavailable'}`}</span>
@@ -623,8 +623,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   onClick={() => handleUniverseChange(btn.id as MarketUniverseType)}
                   className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
                     selectedUniverse === btn.id
-                      ? 'bg-amber-500 text-[#0c0c0e] font-bold shadow-sm'
-                      : 'bg-[#141417] text-neutral-400 hover:text-white border border-[rgba(236,236,237,0.08)]'
+                      ? 'bg-amber-500 text-[#101012] font-bold shadow-sm'
+                      : 'bg-[#151517] text-neutral-400 hover:text-white border border-[rgba(236,236,237,0.08)]'
                   }`}
                 >
                   {btn.label}
@@ -635,7 +635,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Top Gainers Column */}
-            <div className="bg-[#161619] border border-emerald-500/30 rounded-2xl p-4 space-y-3 shadow-sm">
+            <div className="bg-[#171719] border border-emerald-500/30 rounded-2xl p-4 space-y-3 shadow-sm">
               <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
@@ -647,7 +647,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#141417] border border-emerald-500/30 text-emerald-400 font-mono font-bold">
+                  <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#151517] border border-emerald-500/30 text-emerald-400 font-mono font-bold">
                     <Calendar className="w-3 h-3 text-emerald-400" />
                     <span>{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
                   </span>
@@ -663,7 +663,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   movers.topGainers.map((stock, i) => (
                     <div
                       key={`gainer_${stock.id}_${stock.ticker}_${i}`}
-                      className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] hover:border-emerald-500/40 rounded-xl flex items-center justify-between gap-3 transition-all"
+                      className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] hover:border-emerald-500/40 rounded-xl flex items-center justify-between gap-3 transition-all"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         <span className="text-xs font-mono font-bold text-neutral-500 w-4">{i + 1}</span>
@@ -680,13 +680,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                               {stock.exchange || 'NSE'}
                             </span>
 
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#1d1d21] text-neutral-300">
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#1e1e21] text-neutral-300">
                               {stock.sector}
                             </span>
                             
                             {/* Trade Date Badge */}
                             {(stock.formattedDate || stock.date) && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#161619] border border-[rgba(236,236,237,0.08)] text-emerald-400/90 font-mono flex items-center gap-0.5">
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#171719] border border-[rgba(236,236,237,0.08)] text-emerald-400/90 font-mono flex items-center gap-0.5">
                                 <Calendar className="w-2.5 h-2.5 text-emerald-500" />
                                 <span>{stock.formattedDate || stock.date}</span>
                               </span>
@@ -709,7 +709,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
                         <button
                           onClick={() => launchBacktest(stock.id, stock.date)}
-                          className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-[#0c0c0e] text-[11px] font-bold border border-emerald-500/30 transition-all flex items-center gap-1"
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-[#101012] text-[11px] font-bold border border-emerald-500/30 transition-all flex items-center gap-1"
                           title="Backtest active strategy on this gainer"
                         >
                           <span>Backtest</span>
@@ -723,7 +723,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </div>
 
             {/* Top Losers Column */}
-            <div className="bg-[#161619] border border-rose-500/30 rounded-2xl p-4 space-y-3 shadow-sm">
+            <div className="bg-[#171719] border border-rose-500/30 rounded-2xl p-4 space-y-3 shadow-sm">
               <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
@@ -735,7 +735,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#141417] border border-rose-500/30 text-rose-400 font-mono font-bold">
+                  <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#151517] border border-rose-500/30 text-rose-400 font-mono font-bold">
                     <Calendar className="w-3 h-3 text-rose-400" />
                     <span>{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
                   </span>
@@ -751,7 +751,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   movers.topLosers.map((stock, i) => (
                     <div
                       key={`loser_${stock.id}_${stock.ticker}_${i}`}
-                      className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] hover:border-rose-500/40 rounded-xl flex items-center justify-between gap-3 transition-all"
+                      className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] hover:border-rose-500/40 rounded-xl flex items-center justify-between gap-3 transition-all"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         <span className="text-xs font-mono font-bold text-neutral-500 w-4">{i + 1}</span>
@@ -768,13 +768,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                               {stock.exchange || 'NSE'}
                             </span>
 
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#1d1d21] text-neutral-300">
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#1e1e21] text-neutral-300">
                               {stock.sector}
                             </span>
 
                             {/* Trade Date Badge */}
                             {(stock.formattedDate || stock.date) && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#161619] border border-[rgba(236,236,237,0.08)] text-rose-400/90 font-mono flex items-center gap-0.5">
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#171719] border border-[rgba(236,236,237,0.08)] text-rose-400/90 font-mono flex items-center gap-0.5">
                                 <Calendar className="w-2.5 h-2.5 text-rose-500" />
                                 <span>{stock.formattedDate || stock.date}</span>
                               </span>
@@ -797,7 +797,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
                         <button
                           onClick={() => launchBacktest(stock.id, stock.date)}
-                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-[#0c0c0e] text-[11px] font-bold border border-rose-500/30 transition-all flex items-center gap-1"
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-[#101012] text-[11px] font-bold border border-rose-500/30 transition-all flex items-center gap-1"
                           title="Backtest active strategy on this dip candidate"
                         >
                           <span>Backtest</span>
@@ -817,7 +817,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       {activeTab === 'volume_52w' && (
         <div className="space-y-4">
           {/* Volume Shockers Section */}
-          <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-3">
+          <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
@@ -839,7 +839,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               {movers?.volumeShockers.map(s => (
                 <div
                   key={`vol_${s.id}_${s.ticker}`}
-                  className="p-3.5 bg-[#141417] border border-[rgba(236,236,237,0.08)] hover:border-amber-500/40 rounded-xl space-y-2.5 transition-all"
+                  className="p-3.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] hover:border-amber-500/40 rounded-xl space-y-2.5 transition-all"
                 >
                   <div className="flex items-start justify-between">
                     <div>
@@ -854,7 +854,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="p-2 bg-[#161619]/80 rounded-lg border border-[rgba(236,236,237,0.08)]/60 flex items-center justify-between text-xs font-mono">
+                  <div className="p-2 bg-[#171719]/80 rounded-lg border border-[rgba(236,236,237,0.08)]/60 flex items-center justify-between text-xs font-mono">
                     <div>
                       <span className="text-neutral-500 block text-[9px]">Volume Surge</span>
                       <span className="font-extrabold text-amber-400">{s.volumeRatio}x of 20D Avg</span>
@@ -867,7 +867,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
                   <button
                     onClick={() => launchBacktest(s.id, s.date)}
-                    className="w-full py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#0c0c0e] text-xs font-bold border border-amber-500/30 transition-all flex items-center justify-center gap-1"
+                    className="w-full py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#101012] text-xs font-bold border border-amber-500/30 transition-all flex items-center justify-center gap-1"
                   >
                     <span>Backtest {s.ticker}</span>
                     <ArrowRight className="w-3 h-3" />
@@ -879,7 +879,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
           {/* 52-Week High/Low Radar */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3">
+            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
@@ -894,7 +894,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
               <div className="space-y-2">
                 {movers?.nearFiftyTwoWeekHigh.map(s => (
-                  <div key={`high52_${s.id}_${s.ticker}`} className="p-2.5 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl flex items-center justify-between">
+                  <div key={`high52_${s.id}_${s.ticker}`} className="p-2.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span className="font-extrabold text-xs text-white">{s.ticker}</span>
@@ -908,7 +908,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       </span>
                       <button
                         onClick={() => launchBacktest(s.id, s.date)}
-                        className="p-1 rounded bg-[#1d1d21] hover:bg-[#27272a] text-white"
+                        className="p-1 rounded bg-[#1e1e21] hover:bg-[#27272a] text-white"
                         title="Backtest"
                       >
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -919,7 +919,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               </div>
             </div>
 
-            <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3">
+            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
@@ -934,7 +934,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
               <div className="space-y-2">
                 {movers?.nearFiftyTwoWeekLow.map(s => (
-                  <div key={`low52_${s.id}_${s.ticker}`} className="p-2.5 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl flex items-center justify-between">
+                  <div key={`low52_${s.id}_${s.ticker}`} className="p-2.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span className="font-extrabold text-xs text-white">{s.ticker}</span>
@@ -948,7 +948,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       </span>
                       <button
                         onClick={() => launchBacktest(s.id, s.date)}
-                        className="p-1 rounded bg-[#1d1d21] hover:bg-[#27272a] text-white"
+                        className="p-1 rounded bg-[#1e1e21] hover:bg-[#27272a] text-white"
                         title="Backtest"
                       >
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -968,7 +968,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {/* Long Build Up */}
-            <div className="bg-[#161619] border border-emerald-500/30 rounded-2xl p-3.5 space-y-2">
+            <div className="bg-[#171719] border border-emerald-500/30 rounded-2xl p-3.5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
                   <TrendingUp className="w-3.5 h-3.5" /> Long Build-Up
@@ -981,7 +981,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <div
                     key={`long_buildup_${s.id}_${s.ticker}`}
                     onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-emerald-500/40 cursor-pointer flex justify-between text-xs"
+                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-emerald-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
                     <span className="text-emerald-400 font-mono font-semibold">+{s.changePercent}% (OI +{s.oiChangePercent}%)</span>
@@ -991,7 +991,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </div>
 
             {/* Short Covering */}
-            <div className="bg-[#161619] border border-cyan-500/30 rounded-2xl p-3.5 space-y-2">
+            <div className="bg-[#171719] border border-cyan-500/30 rounded-2xl p-3.5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-cyan-400 flex items-center gap-1">
                   <Zap className="w-3.5 h-3.5" /> Short Covering
@@ -1004,7 +1004,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <div
                     key={`short_covering_${s.id}_${s.ticker}`}
                     onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-cyan-500/40 cursor-pointer flex justify-between text-xs"
+                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-cyan-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
                     <span className="text-cyan-400 font-mono font-semibold">+{s.changePercent}% (OI {s.oiChangePercent}%)</span>
@@ -1014,7 +1014,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </div>
 
             {/* Short Build Up */}
-            <div className="bg-[#161619] border border-rose-500/30 rounded-2xl p-3.5 space-y-2">
+            <div className="bg-[#171719] border border-rose-500/30 rounded-2xl p-3.5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-rose-400 flex items-center gap-1">
                   <TrendingDown className="w-3.5 h-3.5" /> Short Build-Up
@@ -1027,7 +1027,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <div
                     key={`short_buildup_${s.id}_${s.ticker}`}
                     onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-rose-500/40 cursor-pointer flex justify-between text-xs"
+                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-rose-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
                     <span className="text-rose-400 font-mono font-semibold">{s.changePercent}% (OI +{s.oiChangePercent}%)</span>
@@ -1037,7 +1037,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </div>
 
             {/* Long Unwinding */}
-            <div className="bg-[#161619] border border-amber-500/30 rounded-2xl p-3.5 space-y-2">
+            <div className="bg-[#171719] border border-amber-500/30 rounded-2xl p-3.5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
                   <TrendingUpDown className="w-3.5 h-3.5" /> Long Unwinding
@@ -1050,7 +1050,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <div
                     key={`long_unwind_${s.id}_${s.ticker}`}
                     onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#141417] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-amber-500/40 cursor-pointer flex justify-between text-xs"
+                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-amber-500/40 cursor-pointer flex justify-between text-xs"
                   >
                     <span className="font-bold text-white">{s.ticker}</span>
                     <span className="text-amber-400 font-mono font-semibold">{s.changePercent}% (OI {s.oiChangePercent}%)</span>
@@ -1087,7 +1087,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         <div className="space-y-4">
           {/* Breadth Overview */}
           {movers && (
-            <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-3">
+            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-white">NSE Market Breadth (Advances vs Declines)</h3>
                 <span className="text-xs font-mono font-bold text-neutral-300">
@@ -1096,10 +1096,10 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               </div>
 
               {/* Progress Bar */}
-              <div className="w-full h-4 bg-[#141417] rounded-full overflow-hidden flex border border-[rgba(236,236,237,0.08)]">
+              <div className="w-full h-4 bg-[#151517] rounded-full overflow-hidden flex border border-[rgba(236,236,237,0.08)]">
                 <div
                   style={{ width: `${movers.marketBreadth.bullishPercent}%` }}
-                  className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 flex items-center justify-center text-[10px] font-bold text-[#0c0c0e]"
+                  className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 flex items-center justify-center text-[10px] font-bold text-[#101012]"
                 >
                   {movers.marketBreadth.advances} Advancing
                 </div>
@@ -1118,7 +1118,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             {movers?.sectorHeatmap.map(sec => (
               <div
                 key={sec.sector}
-                className="p-4 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-3 hover:border-[rgba(236,236,237,0.12)] transition-all"
+                className="p-4 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-3 hover:border-[rgba(236,236,237,0.12)] transition-all"
               >
                 <div className="flex items-start justify-between">
                   <div>
@@ -1155,7 +1155,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 Showing <strong className="text-white">{filteredTrends.length}</strong> active {currentUniverseConfig.shortLabel} constituents
               </span>
               {filteredTrends.length > TREND_ITEMS_PER_PAGE && (
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-[#1d1d21] text-amber-300 font-mono">
+                <span className="text-[11px] px-2 py-0.5 rounded-md bg-[#1e1e21] text-amber-300 font-mono">
                   Page {currentPageSafe} of {totalTrendPages} ({paginatedTrends.length} shown)
                 </span>
               )}
@@ -1173,7 +1173,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
                     trendFilter === f
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : 'bg-[#141417] text-neutral-400 border border-[rgba(236,236,237,0.08)] hover:text-white'
+                      : 'bg-[#151517] text-neutral-400 border border-[rgba(236,236,237,0.08)] hover:text-white'
                   }`}
                 >
                   {f === 'ALL' && 'All Regimes'}
@@ -1197,7 +1197,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 setTrendPage(1);
               }}
               placeholder={`Search across ${trends.length > 0 ? trends.length : '2,000+'} stocks (e.g. RELIANCE, TCS, TATAMOTORS, HDFCBANK, ZOMATO, or sector)...`}
-              className="w-full pl-9 pr-24 py-2 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/30"
+              className="w-full pl-9 pr-24 py-2 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/30"
             />
             {trendSearchQuery && (
               <button
@@ -1205,7 +1205,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   setTrendSearchQuery('');
                   setTrendPage(1);
                 }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-neutral-400 hover:text-white bg-[#1d1d21] px-2 py-0.5 rounded-md"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-neutral-400 hover:text-white bg-[#1e1e21] px-2 py-0.5 rounded-md"
               >
                 Clear
               </button>
@@ -1213,12 +1213,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           </div>
 
           {isLoadingTrends ? (
-            <div className="p-16 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#161619]/30 text-neutral-400 space-y-3">
+            <div className="p-16 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-400 space-y-3">
               <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
               <p className="text-xs">Loading available price data and evaluating trends; coverage may be partial.</p>
             </div>
           ) : filteredTrends.length === 0 ? (
-            <div className="p-12 text-center border border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#161619]/30 text-neutral-400 space-y-2">
+            <div className="p-12 text-center border border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-400 space-y-2">
               <Search className="w-6 h-6 text-neutral-500 mx-auto" />
               <p className="text-sm font-semibold text-neutral-300">{marketEvaluated > 0 ? `No matching stocks in the evaluated subset for "${trendSearchQuery}"` : 'Trends unavailable: no evaluated price coverage.'}</p>
               <p className="text-xs text-neutral-500">{marketEvaluated > 0 ? 'Try searching for a different symbol or clear your filter' : 'Reload the snapshot to retry unavailable data.'}</p>
@@ -1229,7 +1229,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 {paginatedTrends.map(t => (
                   <div
                     key={`trend_${t.id}_${t.ticker}`}
-                    className="p-4 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-amber-500/40 transition-all space-y-3 shadow-sm"
+                    className="p-4 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-amber-500/40 transition-all space-y-3 shadow-sm"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
@@ -1242,11 +1242,11 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                           }`}>
                             {t.exchange || 'NSE'}
                           </span>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#1d1d21] text-neutral-300 font-medium">
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#1e1e21] text-neutral-300 font-medium">
                             {t.sector}
                           </span>
                           {(t.formattedDate || t.date) && (
-                            <span className="text-[10px] px-2 py-0.5 rounded bg-[#141417] border border-[rgba(236,236,237,0.08)] text-neutral-400 font-mono flex items-center gap-1">
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-[#151517] border border-[rgba(236,236,237,0.08)] text-neutral-400 font-mono flex items-center gap-1">
                               <Calendar className="w-2.5 h-2.5 text-neutral-500" />
                               {t.formattedDate || t.date}
                             </span>
@@ -1270,7 +1270,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between p-2.5 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl text-[11px]">
+                    <div className="flex items-center justify-between p-2.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl text-[11px]">
                       <div className="flex items-center gap-1.5">
                         <span
                           className={`w-2 h-2 rounded-full ${
@@ -1290,7 +1290,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-4 gap-2 text-center text-[10px] font-mono p-2 bg-[#141417]/40 rounded-xl border border-[rgba(236,236,237,0.08)]/60">
+                    <div className="grid grid-cols-4 gap-2 text-center text-[10px] font-mono p-2 bg-[#151517]/40 rounded-xl border border-[rgba(236,236,237,0.08)]/60">
                       <div>
                         <span className="text-neutral-500 block text-[9px]">RSI (14)</span>
                         <span className={`font-bold ${t.rsi > 65 ? 'text-emerald-400' : t.rsi < 35 ? 'text-amber-400' : 'text-neutral-300'}`}>
@@ -1313,7 +1313,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
                     <button
                       onClick={() => launchBacktest(t.id, t.date)}
-                      className="w-full py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#0c0c0e] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
+                      className="w-full py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#101012] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
                     >
                       <span>⚡ Backtest Active Strategy on {t.ticker}</span>
                       <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
@@ -1324,12 +1324,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
               {/* Pagination Controls */}
               {totalTrendPages > 1 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#161619]/80 border border-[rgba(236,236,237,0.08)] rounded-xl text-xs text-neutral-400">
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#171719]/80 border border-[rgba(236,236,237,0.08)] rounded-xl text-xs text-neutral-400">
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setTrendPage(p => Math.max(1, p - 1))}
                       disabled={currentPageSafe <= 1}
-                      className="px-3 py-1.5 rounded-lg bg-[#1d1d21] hover:bg-[#27272a] disabled:opacity-40 disabled:pointer-events-none text-white font-medium flex items-center gap-1 transition-all"
+                      className="px-3 py-1.5 rounded-lg bg-[#1e1e21] hover:bg-[#27272a] disabled:opacity-40 disabled:pointer-events-none text-white font-medium flex items-center gap-1 transition-all"
                     >
                       <ChevronLeft className="w-3.5 h-3.5" />
                       <span>Previous</span>
@@ -1337,7 +1337,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                     <button
                       onClick={() => setTrendPage(p => Math.min(totalTrendPages, p + 1))}
                       disabled={currentPageSafe >= totalTrendPages}
-                      className="px-3 py-1.5 rounded-lg bg-[#1d1d21] hover:bg-[#27272a] disabled:opacity-40 disabled:pointer-events-none text-white font-medium flex items-center gap-1 transition-all"
+                      className="px-3 py-1.5 rounded-lg bg-[#1e1e21] hover:bg-[#27272a] disabled:opacity-40 disabled:pointer-events-none text-white font-medium flex items-center gap-1 transition-all"
                     >
                       <span>Next</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -1372,7 +1372,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           )}
 
           {isScanning ? (
-            <div className="p-16 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#161619]/30 text-neutral-400 space-y-3">
+            <div className="p-16 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-400 space-y-3">
               <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
               <p className="text-xs">Evaluating technical rules against universe...</p>
             </div>
@@ -1381,13 +1381,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               {scanResult.matches.map((m, idx) => (
                 <div
                   key={`scan_${m.symbolId}_${m.ticker}_${idx}`}
-                  className="p-4 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-amber-500/40 transition-all space-y-3 shadow-sm"
+                  className="p-4 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-amber-500/40 transition-all space-y-3 shadow-sm"
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-extrabold text-base text-white">{m.ticker}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1d1d21] text-neutral-400 font-medium">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1e1e21] text-neutral-400 font-medium">
                           {m.sector}
                         </span>
                       </div>
@@ -1402,7 +1402,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="p-2.5 bg-[#141417]/70 border border-[rgba(236,236,237,0.08)] rounded-xl space-y-1.5 text-[11px]">
+                  <div className="p-2.5 bg-[#151517]/70 border border-[rgba(236,236,237,0.08)] rounded-xl space-y-1.5 text-[11px]">
                     <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1 uppercase tracking-wider">
                       <CheckCircle2 className="w-3.5 h-3.5" /> Entry Rule Verified:
                     </span>
@@ -1418,7 +1418,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
                   <button
                     onClick={() => launchBacktest(m.symbolId, m.lastDate)}
-                    className="w-full py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#0c0c0e] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
+                    className="w-full py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#101012] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
                   >
                     <span>Load & Run Backtest on {m.ticker}</span>
                     <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
@@ -1427,12 +1427,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               ))}
             </div>
           ) : (
-            <div className="p-12 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#161619]/30 text-neutral-500 text-xs space-y-2">
+            <div className="p-12 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-500 text-xs space-y-2">
               <p>{scanError ? 'Strategy scan failed. Results are unavailable; retry the scan.' : scanResult && scanResult.succeeded > 0 && scanResult.matched === 0 ? `No matches in the ${scanResult.succeeded} evaluated symbols. This does not establish no matches across the full universe.` : 'Strategy results unavailable: no evaluated coverage was reported.'}</p>
               {!scanError && <button type="button" onClick={() => void runScan()} className="underline text-amber-400">Retry strategy scan</button>}
               <button
                 onClick={() => setActiveTab('movers')}
-                className="px-3 py-1.5 rounded-lg bg-[#1d1d21] text-amber-400 font-semibold text-xs border border-[rgba(236,236,237,0.12)] hover:bg-[#27272a]"
+                className="px-3 py-1.5 rounded-lg bg-[#1e1e21] text-amber-400 font-semibold text-xs border border-[rgba(236,236,237,0.12)] hover:bg-[#27272a]"
               >
                 Switch to Top Gainers / Losers View
               </button>

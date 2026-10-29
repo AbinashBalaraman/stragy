@@ -47,7 +47,7 @@ export interface StrategyComparisonViewProps {
 }
 
 const PALETTE = [
-  '#00ffa3', // Mint (Primary)
+  '#a8c7fa', // Mint (Primary)
   '#38bdf8', // Sky
   '#f59e0b', // Amber
   '#a855f7', // Purple
@@ -203,7 +203,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
   if (!currentResult) {
     return (
-      <div className="p-8 bg-[#161619]/90 border border-[#1d1d21] rounded-2xl text-center text-neutral-400 text-xs">
+      <div className="p-8 bg-[#171719]/90 border border-[#1e1e21] rounded-2xl text-center text-neutral-400 text-xs">
       {batchError && <p role="alert" className="text-red-400 text-xs">{batchError}</p>}
       <p className="text-xs text-neutral-400">Comparisons are immutable run snapshots. Different symbols, data windows, capital, or execution assumptions are not directly comparable.</p>
         No immutable server run loaded for comparison.
@@ -217,7 +217,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
   return (
     <div className="space-y-5">
       {/* Top Banner & Quick Sweep Toolbar */}
-      <div className="p-4 sm:p-5 bg-[#161619]/90 border border-[#1d1d21] rounded-2xl shadow-sm space-y-4">
+      <div className="p-4 sm:p-5 bg-[#171719]/90 border border-[#1e1e21] rounded-2xl shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
@@ -227,7 +227,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
               <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
                 Multi-Strategy Comparison Matrix
               </h3>
-              <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-[#1d1d21] border border-[rgba(236,236,237,0.12)] text-neutral-300">
+              <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-[#1e1e21] border border-[rgba(236,236,237,0.12)] text-neutral-300">
                 {allResults.length} Compatible / {loadedResults.length} Runs Loaded
               </span>
             </div>
@@ -241,7 +241,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
               type="button"
               onClick={handleReRunAll}
               disabled={isRunningBatch}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1d1d21] hover:bg-[rgba(236,236,237,0.12)] text-white font-semibold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] shadow-sm active:scale-95 transition-all disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e1e21] hover:bg-[rgba(236,236,237,0.12)] text-white font-semibold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] shadow-sm active:scale-95 transition-all disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRunningBatch ? 'animate-spin text-cyan-400' : ''}`} />
               <span>{isRunningBatch ? 'Simulating All...' : 'Re-Run All Variations'}</span>
@@ -250,7 +250,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
         </div>
 
         {/* Quick Multi-Sweep Action Presets */}
-        <div className="pt-2 border-t border-[#1d1d21]/80 flex flex-wrap items-center gap-2">
+        <div className="pt-2 border-t border-[#1e1e21]/80 flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold text-neutral-400 flex items-center gap-1">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
             <span>Instant Parallel Sweeps:</span>
@@ -263,7 +263,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
               selectedPreset === 'stoploss'
                 ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                : 'bg-[#0c0c0e]/80 hover:bg-[#1d1d21] text-neutral-300 border-[#1d1d21]'
+                : 'bg-[#101012]/80 hover:bg-[#1e1e21] text-neutral-300 border-[#1e1e21]'
             }`}
           >
             🛡️ Stop-Loss Sweep (1.5% - 5%)
@@ -276,7 +276,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
               selectedPreset === 'trailing'
                 ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                : 'bg-[#0c0c0e]/80 hover:bg-[#1d1d21] text-neutral-300 border-[#1d1d21]'
+                : 'bg-[#101012]/80 hover:bg-[#1e1e21] text-neutral-300 border-[#1e1e21]'
             }`}
           >
             📈 Trailing Stop Matrix (0% - 3.5%)
@@ -289,7 +289,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
               selectedPreset === 'indicators'
                 ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                : 'bg-[#0c0c0e]/80 hover:bg-[#1d1d21] text-neutral-300 border-[#1d1d21]'
+                : 'bg-[#101012]/80 hover:bg-[#1e1e21] text-neutral-300 border-[#1e1e21]'
             }`}
           >
             ⚡ Supertrend vs Golden Cross vs RSI
@@ -302,7 +302,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
               selectedPreset === 'templates'
                 ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                : 'bg-[#0c0c0e]/80 hover:bg-[#1d1d21] text-neutral-300 border-[#1d1d21]'
+                : 'bg-[#101012]/80 hover:bg-[#1e1e21] text-neutral-300 border-[#1e1e21]'
             }`}
           >
             🏛️ Institutional Archetypes
@@ -329,7 +329,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         {/* Card 1: Top Sharpe Ratio Winner */}
         {topPerformer && (
-          <div className="p-4 bg-gradient-to-br from-emerald-950/40 via-[#161619] to-[#161619] border border-emerald-500/30 rounded-2xl shadow-sm relative overflow-hidden">
+          <div className="p-4 bg-gradient-to-br from-emerald-950/40 via-[#171719] to-[#171719] border border-emerald-500/30 rounded-2xl shadow-sm relative overflow-hidden">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
                 <Award className="w-3.5 h-3.5 text-emerald-400" />
@@ -342,7 +342,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             <h4 className="font-bold text-sm text-white mt-2 truncate">
               {topPerformer.strategy?.name || 'Top Strategy'}
             </h4>
-            <div className="mt-2.5 flex items-center justify-between text-xs pt-2 border-t border-[#1d1d21]">
+            <div className="mt-2.5 flex items-center justify-between text-xs pt-2 border-t border-[#1e1e21]">
               <span className="text-neutral-400">Net Return:</span>
               <span className="font-bold font-mono text-emerald-400">
                 +{(topPerformer.metrics?.totalReturnPercent ?? 0) >= 0 ? '+' : ''}{fmtPct(topPerformer.metrics?.totalReturnPercent)} (₹{fmtInr(topPerformer.metrics?.netPnl)})
@@ -357,7 +357,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             <button
               type="button"
               onClick={() => topPerformer.strategy && onApplyStrategy?.(topPerformer.strategy)}
-              className="w-full mt-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-[#0c0c0e] font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1 active:scale-95"
+              className="w-full mt-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-[#101012] font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1 active:scale-95"
             >
               <span>Apply Winner to Workspace</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
@@ -367,7 +367,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
         {/* Card 2: Highest Return */}
         {highestReturn && (
-          <div className="p-4 bg-gradient-to-br from-cyan-950/40 via-[#161619] to-[#161619] border border-cyan-500/30 rounded-2xl shadow-sm relative overflow-hidden">
+          <div className="p-4 bg-gradient-to-br from-cyan-950/40 via-[#171719] to-[#171719] border border-cyan-500/30 rounded-2xl shadow-sm relative overflow-hidden">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
                 <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
@@ -380,7 +380,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             <h4 className="font-bold text-sm text-white mt-2 truncate">
               {highestReturn.strategy?.name || 'High Return Strategy'}
             </h4>
-            <div className="mt-2.5 flex items-center justify-between text-xs pt-2 border-t border-[#1d1d21]">
+            <div className="mt-2.5 flex items-center justify-between text-xs pt-2 border-t border-[#1e1e21]">
               <span className="text-neutral-400">Total Net P&L:</span>
               <span className="font-bold font-mono text-cyan-400">
                 ₹{fmtInr(highestReturn.metrics?.netPnl)}
@@ -395,7 +395,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             <button
               type="button"
               onClick={() => highestReturn.strategy && onApplyStrategy?.(highestReturn.strategy)}
-              className="w-full mt-3 py-1.5 bg-[#1d1d21] hover:bg-[rgba(236,236,237,0.12)] text-cyan-400 font-bold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] transition-all flex items-center justify-center gap-1 active:scale-95"
+              className="w-full mt-3 py-1.5 bg-[#1e1e21] hover:bg-[rgba(236,236,237,0.12)] text-cyan-400 font-bold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] transition-all flex items-center justify-center gap-1 active:scale-95"
             >
               <span>Load Setup</span>
               <ChevronRight className="w-3.5 h-3.5" />
@@ -405,7 +405,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
         {/* Card 3: Safest / Lowest Drawdown */}
         {lowestDrawdown && (
-          <div className="p-4 bg-gradient-to-br from-amber-950/30 via-[#161619] to-[#161619] border border-amber-500/30 rounded-2xl shadow-sm relative overflow-hidden">
+          <div className="p-4 bg-gradient-to-br from-amber-950/30 via-[#171719] to-[#171719] border border-amber-500/30 rounded-2xl shadow-sm relative overflow-hidden">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
@@ -418,7 +418,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             <h4 className="font-bold text-sm text-white mt-2 truncate">
               {lowestDrawdown.strategy?.name || 'Safe Strategy'}
             </h4>
-            <div className="mt-2.5 flex items-center justify-between text-xs pt-2 border-t border-[#1d1d21]">
+            <div className="mt-2.5 flex items-center justify-between text-xs pt-2 border-t border-[#1e1e21]">
               <span className="text-neutral-400">Calmar Ratio:</span>
               <span className="font-bold font-mono text-amber-400">
                 {fmtNum(lowestDrawdown.metrics?.calmarRatio)}
@@ -433,7 +433,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             <button
               type="button"
               onClick={() => lowestDrawdown.strategy && onApplyStrategy?.(lowestDrawdown.strategy)}
-              className="w-full mt-3 py-1.5 bg-[#1d1d21] hover:bg-[rgba(236,236,237,0.12)] text-amber-400 font-bold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] transition-all flex items-center justify-center gap-1 active:scale-95"
+              className="w-full mt-3 py-1.5 bg-[#1e1e21] hover:bg-[rgba(236,236,237,0.12)] text-amber-400 font-bold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] transition-all flex items-center justify-center gap-1 active:scale-95"
             >
               <span>Load Setup</span>
               <ChevronRight className="w-3.5 h-3.5" />
@@ -443,14 +443,14 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
       </div>
 
       {/* Multi-Equity Curve Overlay Chart */}
-      <div className="p-4 sm:p-5 bg-[#161619]/90 border border-[#1d1d21] rounded-2xl shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1d1d21]/80 pb-3">
+      <div className="p-4 sm:p-5 bg-[#171719]/90 border border-[#1e1e21] rounded-2xl shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1e1e21]/80 pb-3">
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-bold text-sm sm:text-base text-white">
                 Multi-Strategy Comparative Overlay
               </h3>
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#1d1d21] text-neutral-300">
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#1e1e21] text-neutral-300">
                 {multiEquityData.length} Trading Bars
               </span>
             </div>
@@ -460,12 +460,12 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-[#0c0c0e] p-1 rounded-xl border border-[#1d1d21] text-xs font-semibold text-neutral-400">
+            <div className="flex items-center gap-1 bg-[#101012] p-1 rounded-xl border border-[#1e1e21] text-xs font-semibold text-neutral-400">
               <button
                 type="button"
                 onClick={() => setChartMetric('equity')}
                 className={`px-2.5 py-1 rounded-lg transition-all ${
-                  chartMetric === 'equity' ? 'bg-cyan-500 text-[#0c0c0e] font-bold' : 'hover:text-neutral-200'
+                  chartMetric === 'equity' ? 'bg-cyan-500 text-[#101012] font-bold' : 'hover:text-neutral-200'
                 }`}
               >
                 Portfolio Equity
@@ -474,7 +474,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 type="button"
                 onClick={() => setChartMetric('drawdown')}
                 className={`px-2.5 py-1 rounded-lg transition-all ${
-                  chartMetric === 'drawdown' ? 'bg-cyan-500 text-[#0c0c0e] font-bold' : 'hover:text-neutral-200'
+                  chartMetric === 'drawdown' ? 'bg-cyan-500 text-[#101012] font-bold' : 'hover:text-neutral-200'
                 }`}
               >
                 Drawdown %
@@ -496,7 +496,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 type="button"
                 onClick={() => handleToggleSeries(res.backtestId)}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
-                  isVis ? 'bg-[#0c0c0e] border-[rgba(236,236,237,0.12)] text-neutral-200' : 'bg-[#0c0c0e]/40 border-[#1d1d21]/40 text-neutral-500 line-through'
+                  isVis ? 'bg-[#101012] border-[rgba(236,236,237,0.12)] text-neutral-200' : 'bg-[#101012]/40 border-[#1e1e21]/40 text-neutral-500 line-through'
                 }`}
               >
                 <span
@@ -637,8 +637,8 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
       </div>
 
       {/* Comprehensive Multi-Strategy Comparison Table */}
-      <div className="bg-[#161619]/90 border border-[#1d1d21] rounded-2xl shadow-sm overflow-hidden space-y-0">
-        <div className="p-4 border-b border-[#1d1d21] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      <div className="bg-[#171719]/90 border border-[#1e1e21] rounded-2xl shadow-sm overflow-hidden space-y-0">
+        <div className="p-4 border-b border-[#1e1e21] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h4 className="font-bold text-sm text-white">Full Quantitative Performance Matrix</h4>
             <span className="text-[11px] text-neutral-400">
@@ -654,7 +654,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-[#0c0c0e] text-neutral-400 font-semibold border-b border-[#1d1d21] text-[11px] uppercase tracking-wider select-none">
+            <thead className="bg-[#101012] text-neutral-400 font-semibold border-b border-[#1e1e21] text-[11px] uppercase tracking-wider select-none">
               <tr>
                 <th className="py-3 px-4 min-w-[200px]">Strategy Variation</th>
                 <th className="py-3 px-3 min-w-[130px]">Risk Settings</th>
@@ -712,7 +712,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 <th className="py-3 px-4 text-right">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1d1d21]/60 font-mono text-xs">
+            <tbody className="divide-y divide-[#1e1e21]/60 font-mono text-xs">
               {sortedResults.map((res, index) => {
                 if (!res || !res.strategy) return null;
                 const isWinner = topPerformer && (topPerformer.backtestId === res.backtestId);
@@ -726,7 +726,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 return (
                   <tr
                     key={res.backtestId}
-                    className={`hover:bg-[#1d1d21]/40 transition-colors ${
+                    className={`hover:bg-[#1e1e21]/40 transition-colors ${
                       isWinner ? 'bg-emerald-950/20' : isCurrentActive ? 'bg-cyan-950/20' : ''
                     }`}
                   >
@@ -760,10 +760,10 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                     {/* Risk Controls */}
                     <td className="py-3.5 px-3 font-sans text-[11px] text-neutral-300">
                       <div className="space-y-0.5">
-                        <span className="inline-block px-1.5 py-0.5 rounded bg-[#1d1d21] text-neutral-200">
+                        <span className="inline-block px-1.5 py-0.5 rounded bg-[#1e1e21] text-neutral-200">
                           SL: {res.strategy.risk?.stopLoss?.value ?? 2}%
                         </span>
-                        <span className="inline-block ml-1 px-1.5 py-0.5 rounded bg-[#1d1d21] text-neutral-200">
+                        <span className="inline-block ml-1 px-1.5 py-0.5 rounded bg-[#1e1e21] text-neutral-200">
                           TP: {res.strategy.risk?.takeProfit?.value || 14}%
                         </span>
                         {res.strategy.risk?.trailingStop && (
@@ -840,7 +840,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                         <button
                           type="button"
                           onClick={() => onApplyStrategy?.(res.strategy)}
-                          className="px-2.5 py-1 bg-cyan-500 hover:bg-cyan-400 text-[#0c0c0e] font-bold text-xs rounded-lg shadow-sm active:scale-95 transition-all flex items-center gap-1 font-sans"
+                          className="px-2.5 py-1 bg-cyan-500 hover:bg-cyan-400 text-[#101012] font-bold text-xs rounded-lg shadow-sm active:scale-95 transition-all flex items-center gap-1 font-sans"
                           title="Copy this run's strategy into the builder. This does not run a simulation."
                         >
                           <Check className="w-3 h-3" />
@@ -850,7 +850,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                           <button
                             type="button"
                             onClick={() => onSelectActiveResult?.(res)}
-                            className="p-1 text-neutral-400 hover:text-white rounded-lg hover:bg-[#1d1d21] transition-colors font-sans"
+                            className="p-1 text-neutral-400 hover:text-white rounded-lg hover:bg-[#1e1e21] transition-colors font-sans"
                             title="Inspect full trade logs and price charts for this variation"
                           >
                             <ChevronRight className="w-4 h-4" />
@@ -860,7 +860,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                           <button
                             type="button"
                             onClick={() => handleRemove(res.backtestId)}
-                            className="p-1 text-neutral-500 hover:text-rose-400 rounded-lg hover:bg-[#1d1d21] transition-colors"
+                            className="p-1 text-neutral-500 hover:text-rose-400 rounded-lg hover:bg-[#1e1e21] transition-colors"
                             title="Remove variation from matrix"
                           >
                             <Trash2 className="w-3.5 h-3.5" />

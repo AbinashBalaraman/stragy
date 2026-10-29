@@ -94,20 +94,20 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics }) => {
         return (
           <div
             key={idx}
-            className="p-4 bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-[rgba(236,236,237,0.16)] transition-all space-y-2"
+            className="p-4 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-[rgba(236,236,237,0.16)] transition-all space-y-2"
           >
             <div className="flex items-center justify-between text-xs text-[rgba(236,236,237,0.6)]">
               <span className="font-medium flex items-center gap-1">
                 {card.label}
                 <FinanceTooltip content={card.tooltip} />
               </span>
-              <Icon className={`w-3.5 h-3.5 ${card.isPositive ? 'text-[#00ffa3]' : 'text-neutral-500'}`} />
+              <Icon className={`w-3.5 h-3.5 ${card.isPositive ? 'text-[#a8c7fa]' : 'text-neutral-500'}`} />
             </div>
 
             <div>
               <div
                 className={`text-lg sm:text-2xl font-extrabold font-mono tracking-tight ${
-                  card.isPositive ? 'text-[#00ffa3]' : 'text-[#ececed]'
+                  card.isPositive ? 'text-[#a8c7fa]' : 'text-[#ececed]'
                 }`}
               >
                 {card.value}

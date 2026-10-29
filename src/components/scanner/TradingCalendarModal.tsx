@@ -274,10 +274,10 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
   const firstDayIndex = getFirstDayOfMonth(viewYear, viewMonth);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#141417] backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-[#161619] border border-[rgba(236,236,237,0.12)]/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#151517] backdrop-blur-md animate-in fade-in duration-200">
+      <div className="bg-[#171719] border border-[rgba(236,236,237,0.12)]/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="px-4 sm:px-6 py-4 border-b border-[rgba(236,236,237,0.08)] flex items-center justify-between bg-[#141417]">
+        <div className="px-4 sm:px-6 py-4 border-b border-[rgba(236,236,237,0.08)] flex items-center justify-between bg-[#151517]">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
               <CalendarIcon className="w-5 h-5" />
@@ -296,7 +296,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-[#1d1d21] transition-all"
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-[#1e1e21] transition-all"
             title="Close calendar"
           >
             <X className="w-5 h-5" />
@@ -321,8 +321,8 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 disabled={!latestTradingDate}
                 className={`px-2.5 py-1.5 rounded-lg border text-left font-medium transition-all flex items-center justify-between ${
                   tempSelectedDate === latestTradingDate
-                    ? 'bg-amber-500 text-[#0c0c0e] font-bold border-amber-400 shadow-sm'
-                    : 'bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border-[rgba(236,236,237,0.08)]'
+                    ? 'bg-amber-500 text-[#101012] font-bold border-amber-400 shadow-sm'
+                    : 'bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border-[rgba(236,236,237,0.08)]'
                 }`}
               >
                 <span>Latest session</span>
@@ -333,7 +333,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 type="button"
                 onClick={() => handlePresetSelect(1)}
                 disabled={!availableDates[1]}
-                className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
+                className="px-2.5 py-1.5 rounded-lg bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>1 Session Ago</span>
                 <span className="text-[10px] text-cyan-400 font-mono">{availableDates[1]?.date.slice(5) || 'Unavailable'}</span>
@@ -343,7 +343,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 type="button"
                 onClick={() => handlePresetSelect(5)}
                 disabled={!availableDates[5]}
-                className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
+                className="px-2.5 py-1.5 rounded-lg bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>5 Sessions Ago</span>
                 <span className="text-[10px] text-cyan-400 font-mono">{availableDates[5]?.date.slice(5) || 'Unavailable'}</span>
@@ -353,7 +353,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 type="button"
                 onClick={() => handlePresetSelect(10)}
                 disabled={!availableDates[10]}
-                className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
+                className="px-2.5 py-1.5 rounded-lg bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>10 Sessions Ago</span>
                 <span className="text-[10px] text-cyan-400 font-mono">{availableDates[10]?.date.slice(5) || 'Unavailable'}</span>
@@ -363,7 +363,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 type="button"
                 onClick={() => handlePresetSelect(21)}
                 disabled={!availableDates[21]}
-                className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
+                className="px-2.5 py-1.5 rounded-lg bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>21 Sessions Ago</span>
                 <span className="text-[10px] text-cyan-400 font-mono">{availableDates[21]?.date.slice(5) || 'Unavailable'}</span>
@@ -373,7 +373,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 type="button"
                 onClick={() => handlePresetSelect(63)}
                 disabled={!availableDates[63]}
-                className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
+                className="px-2.5 py-1.5 rounded-lg bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>63 Sessions Ago</span>
                 <span className="text-[10px] text-cyan-400 font-mono">{availableDates[63]?.date.slice(5) || 'Unavailable'}</span>
@@ -383,7 +383,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 type="button"
                 onClick={() => handlePresetSelect(125)}
                 disabled={!availableDates[125]}
-                className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
+                className="px-2.5 py-1.5 rounded-lg bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>125 Sessions Ago</span>
                 <span className="text-[10px] text-cyan-400 font-mono">{availableDates[125]?.date.slice(5) || 'Unavailable'}</span>
@@ -393,7 +393,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 type="button"
                 onClick={() => handlePresetSelect('1Y')}
                 disabled={!oldestTradingDate}
-                className="px-2.5 py-1.5 rounded-lg bg-[#141417] text-neutral-300 hover:bg-[#1d1d21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
+                className="px-2.5 py-1.5 rounded-lg bg-[#151517] text-neutral-300 hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-left font-medium transition-all flex items-center justify-between"
               >
                 <span>Oldest Session</span>
                 <span className="text-[10px] text-cyan-400 font-mono">{oldestTradingDate.slice(5) || 'Unavailable'}</span>
@@ -402,7 +402,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
           </div>
 
           {/* Calendar Grid Box */}
-          <div className="bg-[#141417]/90 border border-[rgba(236,236,237,0.08)] rounded-xl p-4 space-y-3">
+          <div className="bg-[#151517]/90 border border-[rgba(236,236,237,0.08)] rounded-xl p-4 space-y-3">
             {/* Month & Year Navigation Header */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -410,7 +410,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                   type="button"
                   onClick={handlePrevMonth}
                   disabled={!latestTradingDate || !canGoPrev}
-                  className="p-1.5 rounded-lg bg-[#161619] text-neutral-300 hover:text-white hover:bg-[#1d1d21] disabled:opacity-30 disabled:cursor-not-allowed border border-[rgba(236,236,237,0.08)] transition-all"
+                  className="p-1.5 rounded-lg bg-[#171719] text-neutral-300 hover:text-white hover:bg-[#1e1e21] disabled:opacity-30 disabled:cursor-not-allowed border border-[rgba(236,236,237,0.08)] transition-all"
                   title="Previous Month"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -419,7 +419,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                   <select
                     value={viewMonth}
                     onChange={(e) => setViewMonth(parseInt(e.target.value, 10))}
-                    className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer"
+                    className="bg-[#171719] border border-[rgba(236,236,237,0.12)] text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer"
                   >
                     {MONTH_NAMES.map((name, idx) => {
                       const isDisabled = !latestTradingDate || (viewYear === maxBounds.year && idx > maxBounds.month) || (viewYear === minBounds.year && idx < minBounds.month);
@@ -434,7 +434,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                   <select
                     value={viewYear}
                     onChange={(e) => setViewYear(parseInt(e.target.value, 10))}
-                    className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer font-mono"
+                    className="bg-[#171719] border border-[rgba(236,236,237,0.12)] text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer font-mono"
                   >
                     {Array.from({length:maxBounds.year-minBounds.year+1},(_,i)=>maxBounds.year-i).map(year=><option key={year} value={year}>{year}</option>)}
                   </select>
@@ -443,7 +443,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                   type="button"
                   onClick={handleNextMonth}
                   disabled={!latestTradingDate || !canGoNext}
-                  className="p-1.5 rounded-lg bg-[#161619] text-neutral-300 hover:text-white hover:bg-[#1d1d21] disabled:opacity-30 disabled:cursor-not-allowed border border-[rgba(236,236,237,0.08)] transition-all"
+                  className="p-1.5 rounded-lg bg-[#171719] text-neutral-300 hover:text-white hover:bg-[#1e1e21] disabled:opacity-30 disabled:cursor-not-allowed border border-[rgba(236,236,237,0.08)] transition-all"
                   title="Next Month"
                 >
                   <ChevronRight className="w-4 h-4" />
@@ -468,7 +468,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                       }
                     }
                   }}
-                  className="bg-[#161619] border border-[rgba(236,236,237,0.12)] text-cyan-300 text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-cyan-500 font-mono cursor-pointer"
+                  className="bg-[#171719] border border-[rgba(236,236,237,0.12)] text-cyan-300 text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-cyan-500 font-mono cursor-pointer"
                 />
               </div>
             </div>
@@ -519,14 +519,14 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                     }`}
                     className={`h-9 rounded-lg text-xs font-semibold flex flex-col items-center justify-center relative transition-all ${
                       isSelected
-                        ? 'bg-cyan-500 text-[#0c0c0e] font-black ring-2 ring-cyan-400 ring-offset-2 ring-offset-[#0c0c0e] shadow-md scale-[1.03]'
+                        ? 'bg-cyan-500 text-[#101012] font-black ring-2 ring-cyan-400 ring-offset-2 ring-offset-[#101012] shadow-md scale-[1.03]'
                         : isLatest
                         ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
                         : isTradingDay
-                        ? 'bg-[#161619] text-neutral-200 hover:bg-[#1d1d21] hover:text-white border border-[rgba(236,236,237,0.08)] hover:border-cyan-500/40'
+                        ? 'bg-[#171719] text-neutral-200 hover:bg-[#1e1e21] hover:text-white border border-[rgba(236,236,237,0.08)] hover:border-cyan-500/40'
                         : isWeekend
-                        ? 'bg-[#141417] text-neutral-500 border border-[#161619] opacity-60 hover:opacity-100 hover:bg-[#161619]'
-                        : 'bg-[#141417] text-neutral-500 opacity-40'
+                        ? 'bg-[#151517] text-neutral-500 border border-[#171719] opacity-60 hover:opacity-100 hover:bg-[#171719]'
+                        : 'bg-[#151517] text-neutral-500 opacity-40'
                     } ${isFuture ? 'opacity-20 cursor-not-allowed' : 'cursor-pointer'}`}
                   >
                     <span>{dayNum}</span>
@@ -571,7 +571,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
           )}
 
           {/* Selected Session Information Card */}
-          <div className="p-3.5 rounded-xl bg-[#141417] border border-cyan-500/30 space-y-2">
+          <div className="p-3.5 rounded-xl bg-[#151517] border border-cyan-500/30 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
@@ -607,12 +607,12 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="px-4 sm:px-6 py-3.5 border-t border-[rgba(236,236,237,0.08)] bg-[#141417] flex items-center justify-between gap-3 flex-wrap">
+        <div className="px-4 sm:px-6 py-3.5 border-t border-[rgba(236,236,237,0.08)] bg-[#151517] flex items-center justify-between gap-3 flex-wrap">
           <button
             type="button"
             onClick={handleResetToLatest}
             disabled={!latestTradingDate}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#161619] hover:bg-[#1d1d21] text-neutral-300 hover:text-white border border-[rgba(236,236,237,0.12)] text-xs font-semibold transition-all"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#171719] hover:bg-[#1e1e21] text-neutral-300 hover:text-white border border-[rgba(236,236,237,0.12)] text-xs font-semibold transition-all"
           >
             <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
             <span>Reset to Latest available session</span>
@@ -622,7 +622,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-[#161619] hover:bg-[#1d1d21] text-neutral-400 hover:text-white text-xs font-semibold transition-all"
+              className="px-4 py-2 rounded-xl bg-[#171719] hover:bg-[#1e1e21] text-neutral-400 hover:text-white text-xs font-semibold transition-all"
             >
               Cancel
             </button>
@@ -631,7 +631,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
               type="button"
               onClick={handleApply}
               disabled={!tradingDateSet.has(tempSelectedDate || latestTradingDate)}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-[#0c0c0e] font-bold text-xs shadow-lg shadow-cyan-500/20 transition-all scale-[1.02] active:scale-[0.98]"
+              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-[#101012] font-bold text-xs shadow-lg shadow-cyan-500/20 transition-all scale-[1.02] active:scale-[0.98]"
             >
               <span>Apply & Fetch Data for {selectedSessionInfo.date}</span>
               <ArrowRight className="w-4 h-4" />

@@ -32,11 +32,11 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
 
   return (
-    <header className="h-16 w-full max-w-full border-b border-[rgba(236,236,237,0.08)] bg-[#0c0c0e] px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40 gap-3 select-none">
+    <header className="h-16 w-full max-w-full border-b border-[rgba(236,236,237,0.08)] bg-[#101012] px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40 gap-3 select-none">
       {/* Left: Brand Mark & Symbol Selector */}
       <div className="flex items-center gap-3 shrink-0">
         <div className="flex items-center gap-2.5 shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-[#00ffa3] flex items-center justify-center text-[#0c0c0e] shadow-sm shadow-[#00ffa3]/30 shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-[#a8c7fa] flex items-center justify-center text-[#101012] shadow-sm shadow-[#a8c7fa]/30 shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
             </svg>
@@ -59,18 +59,18 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Center: Institutional Rounded-XL Segmented Navigation Tabs */}
-      <nav className="hidden sm:flex items-center bg-[#141417] p-1.5 rounded-xl gap-1 border border-[rgba(236,236,237,0.08)] shrink-0 mx-auto">
+      <nav className="hidden sm:flex items-center bg-[#151517] p-1.5 rounded-xl gap-1 border border-[rgba(236,236,237,0.08)] shrink-0 mx-auto">
         <button
           id="nav-builder-tab"
           onClick={() => setActiveTab('builder')}
           className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
             activeTab === 'builder'
-              ? 'bg-[#1d1d21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
+              ? 'bg-[#1e1e21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed] hover:bg-white/[0.02]'
           }`}
           title="Strategy Builder"
         >
-          <Sparkles className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'builder' ? 'text-[#00ffa3]' : 'text-neutral-500'}`} />
+          <Sparkles className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'builder' ? 'text-[#a8c7fa]' : 'text-neutral-500'}`} />
           <span>Builder</span>
         </button>
 
@@ -79,12 +79,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={() => setActiveTab('results')}
           className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
             activeTab === 'results'
-              ? 'bg-[#1d1d21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
+              ? 'bg-[#1e1e21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed] hover:bg-white/[0.02]'
           }`}
           title="Backtest Analytics"
         >
-          <Layers className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'results' ? 'text-[#00ffa3]' : 'text-neutral-500'}`} />
+          <Layers className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'results' ? 'text-[#a8c7fa]' : 'text-neutral-500'}`} />
           <span>Analytics</span>
         </button>
 
@@ -93,12 +93,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={() => setActiveTab('scanner')}
           className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
             activeTab === 'scanner'
-              ? 'bg-[#1d1d21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
+              ? 'bg-[#1e1e21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed] hover:bg-white/[0.02]'
           }`}
           title="Market Scanner"
         >
-          <Radio className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'scanner' ? 'text-[#00ffa3]' : 'text-neutral-500'}`} />
+          <Radio className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'scanner' ? 'text-[#a8c7fa]' : 'text-neutral-500'}`} />
           <span>Scanner</span>
         </button>
 
@@ -107,12 +107,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={() => setActiveTab('library')}
           className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
             activeTab === 'library'
-              ? 'bg-[#1d1d21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
+              ? 'bg-[#1e1e21] text-[#ececed] shadow-sm border border-[rgba(236,236,237,0.05)]'
               : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed] hover:bg-white/[0.02]'
           }`}
           title="Strategy Library"
         >
-          <BookOpen className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'library' ? 'text-[#00ffa3]' : 'text-neutral-500'}`} />
+          <BookOpen className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'library' ? 'text-[#a8c7fa]' : 'text-neutral-500'}`} />
           <span>Library</span>
         </button>
       </nav>
@@ -125,8 +125,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={onToggleCopilot}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${
             isCopilotOpen
-              ? 'bg-[#00ffa3]/15 text-[#00ffa3] border-[#00ffa3]/30 shadow-sm'
-              : 'bg-[#141417] text-neutral-400 border-[rgba(236,236,237,0.08)] hover:text-[#ececed] hover:bg-[#1d1d21]'
+              ? 'bg-[#a8c7fa]/15 text-[#a8c7fa] border-[#a8c7fa]/30 shadow-sm'
+              : 'bg-[#151517] text-neutral-400 border-[rgba(236,236,237,0.08)] hover:text-[#ececed] hover:bg-[#1e1e21]'
           }`}
           title={isCopilotOpen ? 'Hide AI Chatbot Sidebar' : 'Show AI Chatbot Sidebar'}
         >
@@ -143,9 +143,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           className="btn-primary-mint !rounded-xl shrink-0"
         >
           {isLoading ? (
-            <div className="w-3.5 h-3.5 border-2 border-[#0c0c0e] border-t-transparent rounded-full animate-spin" />
+            <div className="w-3.5 h-3.5 border-2 border-[#101012] border-t-transparent rounded-full animate-spin" />
           ) : (
-            <Play className="w-3.5 h-3.5 fill-[#0c0c0e] shrink-0" />
+            <Play className="w-3.5 h-3.5 fill-[#101012] shrink-0" />
           )}
           <span className="font-bold tracking-tight">RUN BACKTEST</span>
         </button>

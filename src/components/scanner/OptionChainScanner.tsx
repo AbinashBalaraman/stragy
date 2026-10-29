@@ -21,7 +21,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
       {data && <p className="text-xs text-neutral-400">{data.provenance.source} · Model as-of {data.provenance.asOf}. {data.provenance.assumptions.join('; ')}</p>}
       {/* Selector & Key Metrics Header */}
-      <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
+      <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
@@ -46,7 +46,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
               aria-label="Model symbol"
               value={selectedTicker}
               onChange={e => { invalidate(); setSelectedTicker(e.target.value); }}
-              className="bg-[#141417] border border-[rgba(236,236,237,0.12)] text-white text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-cyan-500"
+              className="bg-[#151517] border border-[rgba(236,236,237,0.12)] text-white text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-cyan-500"
             >
               {fnoSymbols.map(s => (
                 <option key={s.ticker} value={s.ticker}>
@@ -58,7 +58,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
             <button
               onClick={refresh}
               disabled={isLoading}
-              className="p-2 rounded-xl bg-[#1d1d21] hover:bg-[#27272a] border border-[rgba(236,236,237,0.12)] text-neutral-300 hover:text-white transition-all disabled:opacity-50"
+              className="p-2 rounded-xl bg-[#1e1e21] hover:bg-[#27272a] border border-[rgba(236,236,237,0.12)] text-neutral-300 hover:text-white transition-all disabled:opacity-50"
               aria-label="Refresh demo option chain" title="Refresh demo option chain"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
@@ -69,42 +69,42 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
         {/* Overview Metric Ribbon */}
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 border-t border-[rgba(236,236,237,0.08)]">
-            <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
+            <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
               <span className="text-[10px] text-neutral-400 uppercase font-semibold">Demo Underlying Price</span>
               <div className="text-base font-extrabold text-white font-mono mt-0.5">
                 ₹{data.spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
 
-            <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
+            <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
               <span className="text-[10px] text-neutral-400 uppercase font-semibold">ATM Strike</span>
               <div className="text-base font-extrabold text-cyan-400 font-mono mt-0.5">
                 {data.atmStrike}
               </div>
             </div>
 
-            <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
+            <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
               <span className="text-[10px] text-neutral-400 uppercase font-semibold">PCR (Put-Call Ratio)</span>
               <div className={`text-base font-extrabold font-mono mt-0.5 ${data.pcr >= 1.0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {data.pcr} <span className="text-[10px] font-normal text-neutral-400">({data.pcr >= 1 ? 'Bullish Bias' : 'Bearish / Neutral'})</span>
               </div>
             </div>
 
-            <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
+            <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
               <span className="text-[10px] text-neutral-400 uppercase font-semibold">Max Pain Strike</span>
               <div className="text-base font-extrabold text-amber-400 font-mono mt-0.5">
                 {data.maxPainStrike}
               </div>
             </div>
 
-            <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
+            <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
               <span className="text-[10px] text-neutral-400 uppercase font-semibold">ATM Implied Vol (IV)</span>
               <div className="text-base font-extrabold text-purple-400 font-mono mt-0.5">
                 {data.atmIV}%
               </div>
             </div>
 
-            <div className="p-3 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl">
+            <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
               <span className="text-[10px] text-neutral-400 uppercase font-semibold">Fictional Expiry</span>
               <div className="text-xs font-bold text-neutral-200 mt-1">
                 {data.expiry}
@@ -116,8 +116,8 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
 
       {/* Option Chain Table */}
       {data && (
-        <div className="bg-[#161619] border border-[rgba(236,236,237,0.08)] rounded-2xl overflow-hidden shadow-sm">
-          <div className="p-3.5 border-b border-[rgba(236,236,237,0.08)] flex flex-wrap items-center justify-between gap-2 bg-[#141417]">
+        <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl overflow-hidden shadow-sm">
+          <div className="p-3.5 border-b border-[rgba(236,236,237,0.08)] flex flex-wrap items-center justify-between gap-2 bg-[#151517]">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
               <span className="text-xs font-bold text-white uppercase tracking-wider">CALLS (CE)</span>
@@ -134,7 +134,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
           <div className="overflow-x-auto">
             <table className="w-full text-[11px] text-left border-collapse">
               <thead>
-                <tr className="bg-[#141417] text-neutral-400 font-semibold border-b border-[rgba(236,236,237,0.08)]">
+                <tr className="bg-[#151517] text-neutral-400 font-semibold border-b border-[rgba(236,236,237,0.08)]">
                   {/* CALLS */}
                   <th className="py-2.5 px-2 text-right">Call OI</th>
                   <th className="py-2.5 px-2 text-right">IV %</th>
@@ -144,7 +144,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
                   <th className="py-2.5 px-2 text-right text-emerald-400">Call LTP</th>
                   
                   {/* STRIKE */}
-                  <th className="py-2.5 px-3 text-center bg-[#161619] font-bold text-amber-300">STRIKE</th>
+                  <th className="py-2.5 px-3 text-center bg-[#171719] font-bold text-amber-300">STRIKE</th>
                   
                   {/* PUTS */}
                   <th className="py-2.5 px-2 text-left text-rose-400">Put LTP</th>
@@ -155,7 +155,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
                   <th className="py-2.5 px-2 text-left">Put OI</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1d1d21]/60 font-mono">
+              <tbody className="divide-y divide-[#1e1e21]/60 font-mono">
                 {data.strikes.map(s => {
                   const isAtm = s.isAtm;
                   const isCallItm = s.strikePrice < data.spotPrice;
@@ -167,7 +167,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
                       className={`transition-colors ${
                         isAtm
                           ? 'bg-amber-500/10 font-bold border-y border-amber-500/40'
-                          : 'hover:bg-[#1d1d21]/40'
+                          : 'hover:bg-[#1e1e21]/40'
                       }`}
                     >
                       {/* CALL DATA */}
@@ -183,7 +183,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
                       </td>
 
                       {/* STRIKE */}
-                      <td className={`py-2 px-3 text-center font-extrabold ${isAtm ? 'bg-amber-500 text-[#0c0c0e]' : 'bg-[#161619] text-white'}`}>
+                      <td className={`py-2 px-3 text-center font-extrabold ${isAtm ? 'bg-amber-500 text-[#101012]' : 'bg-[#171719] text-white'}`}>
                         {s.strikePrice} {isAtm && <span className="text-[9px] block font-mono">ATM</span>}
                       </td>
 

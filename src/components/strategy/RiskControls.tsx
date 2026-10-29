@@ -58,7 +58,7 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {/* 1. Stop Loss */}
-      <div className="p-4 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+      <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-[#ff4d4d]" />
@@ -68,7 +68,7 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
           <select
             value={risk.stopLoss.type}
             onChange={e => handleStopLossChange(risk.stopLoss.value, e.target.value as any)}
-            className="bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] text-xs rounded px-2 py-0.5 text-neutral-300 font-mono focus:border-[#00ffa3] focus:outline-none"
+            className="bg-[#101012] border border-[rgba(236,236,237,0.08)] text-xs rounded px-2 py-0.5 text-neutral-300 font-mono focus:border-[#a8c7fa] focus:outline-none"
           >
             <option value="percent">Percentage (%)</option>
             <option value="atr">ATR Multiplier (x)</option>
@@ -92,23 +92,23 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
             step={0.1}
             value={risk.stopLoss.value}
             onChange={e => handleStopLossChange(parseFloat(e.target.value))}
-            className="flex-1 accent-[#ff4d4d] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+            className="flex-1 accent-[#ff4d4d] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
           />
           <input
             type="number"
             step="0.1"
             value={risk.stopLoss.value}
             onChange={e => handleStopLossChange(parseFloat(e.target.value) || 1)}
-            className="w-16 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#ff4d4d] focus:outline-none"
+            className="w-16 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#ff4d4d] focus:outline-none"
           />
         </div>
       </div>
 
       {/* 2. Take Profit */}
-      <div className="p-4 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+      <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Target className="w-4 h-4 text-[#00ffa3]" />
+            <Target className="w-4 h-4 text-[#a8c7fa]" />
             <span className="text-xs font-mono font-bold text-[#ececed] uppercase tracking-wider">TAKE PROFIT</span>
             <FinanceTooltip content="Target profit percentage or risk-reward ratio at which to lock in gains." />
           </div>
@@ -117,7 +117,7 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
               type="checkbox"
               checked={risk.takeProfit !== null}
               onChange={e => handleTakeProfitChange(e.target.checked ? 6.0 : null)}
-              className="accent-[#00ffa3] rounded"
+              className="accent-[#a8c7fa] rounded"
             />
             <span className="text-xs font-mono text-neutral-400">ENABLE</span>
           </label>
@@ -127,7 +127,7 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
           <>
             <div className="flex items-center justify-between text-xs font-mono">
               <span className="text-neutral-400">PROFIT TARGET</span>
-              <span className="text-[#00ffa3] font-bold">{risk.takeProfit.value}%</span>
+              <span className="text-[#a8c7fa] font-bold">{risk.takeProfit.value}%</span>
             </div>
             <div className="flex items-center gap-3">
               <input
@@ -137,14 +137,14 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
                 step="0.5"
                 value={risk.takeProfit.value}
                 onChange={e => handleTakeProfitChange(parseFloat(e.target.value))}
-                className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+                className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
               />
               <input
                 type="number"
                 step="0.5"
                 value={risk.takeProfit.value}
                 onChange={e => handleTakeProfitChange(parseFloat(e.target.value) || 2)}
-                className="w-16 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                className="w-16 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
               />
             </div>
           </>
@@ -154,10 +154,10 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
       </div>
 
       {/* 3. Trailing Stop */}
-      <div className="p-4 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+      <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Navigation className="w-4 h-4 text-[#00ffa3]" />
+            <Navigation className="w-4 h-4 text-[#a8c7fa]" />
             <span className="text-xs font-mono font-bold text-[#ececed] uppercase tracking-wider">TRAILING STOP</span>
             <FinanceTooltip content="Dynamic stop level that follows price upwards to lock in unrealized profits." />
           </div>
@@ -166,7 +166,7 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
               type="checkbox"
               checked={risk.trailingStop !== null}
               onChange={e => handleTrailingStopChange(e.target.checked ? 1.5 : null)}
-              className="accent-[#00ffa3] rounded"
+              className="accent-[#a8c7fa] rounded"
             />
             <span className="text-xs font-mono text-neutral-400">ENABLE</span>
           </label>
@@ -176,7 +176,7 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
           <>
             <div className="flex items-center justify-between text-xs font-mono">
               <span className="text-neutral-400">TRAIL DISTANCE</span>
-              <span className="text-[#00ffa3] font-bold">{risk.trailingStop.value}%</span>
+              <span className="text-[#a8c7fa] font-bold">{risk.trailingStop.value}%</span>
             </div>
             <div className="flex items-center gap-3">
               <input
@@ -186,14 +186,14 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
                 step="0.1"
                 value={risk.trailingStop.value}
                 onChange={e => handleTrailingStopChange(parseFloat(e.target.value))}
-                className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+                className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
               />
               <input
                 type="number"
                 step="0.1"
                 value={risk.trailingStop.value}
                 onChange={e => handleTrailingStopChange(parseFloat(e.target.value) || 1)}
-                className="w-16 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+                className="w-16 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
               />
             </div>
           </>
@@ -203,14 +203,14 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
       </div>
 
       {/* 4. Position Sizing & Max Drawdown Circuit Breaker */}
-      <div className="p-4 bg-[#141417] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+      <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <PieChart className="w-4 h-4 text-[#00ffa3]" />
+            <PieChart className="w-4 h-4 text-[#a8c7fa]" />
             <span className="text-xs font-mono font-bold text-[#ececed] uppercase tracking-wider">POSITION ALLOCATION</span>
             <FinanceTooltip content="Fraction of total account equity allocated per single trade." />
           </div>
-          <span className="font-mono text-[#00ffa3] font-bold text-xs">
+          <span className="font-mono text-[#a8c7fa] font-bold text-xs">
             {((risk.positionSizing.fraction || 0.1) * 100).toFixed(0)}% CAPITAL
           </span>
         </div>
@@ -223,14 +223,14 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
             step="0.05"
             value={risk.positionSizing.fraction || 0.1}
             onChange={e => handlePositionSizingChange(parseFloat(e.target.value))}
-            className="flex-1 accent-[#00ffa3] cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+            className="flex-1 accent-[#a8c7fa] cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
           />
           <input
             type="number"
             step="5"
             value={((risk.positionSizing.fraction || 0.1) * 100).toFixed(0)}
             onChange={e => handlePositionSizingChange((parseFloat(e.target.value) || 10) / 100)}
-            className="w-16 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#00ffa3] focus:outline-none"
+            className="w-16 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-[#a8c7fa] focus:outline-none"
           />
         </div>
 
@@ -255,13 +255,13 @@ export const RiskControls: React.FC<RiskControlsProps> = ({ risk, onChange }) =>
               step="1"
               value={risk.maxDrawdownCutoff || 15}
               onChange={e => handleMaxDrawdownChange(parseFloat(e.target.value))}
-              className="flex-1 accent-amber-500 cursor-pointer h-1.5 bg-[#1d1d21] rounded-lg"
+              className="flex-1 accent-amber-500 cursor-pointer h-1.5 bg-[#1e1e21] rounded-lg"
             />
             <input
               type="number"
               value={risk.maxDrawdownCutoff || 15}
               onChange={e => handleMaxDrawdownChange(parseFloat(e.target.value) || 15)}
-              className="w-16 bg-[#0c0c0e] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-amber-500 focus:outline-none"
+              className="w-16 bg-[#101012] border border-[rgba(236,236,237,0.08)] rounded px-2 py-1 text-xs text-right font-mono text-[#ececed] focus:border-amber-500 focus:outline-none"
             />
           </div>
         </div>
