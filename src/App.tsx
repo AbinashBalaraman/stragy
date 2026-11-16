@@ -15,6 +15,7 @@ import { ResultsDashboard } from './components/results/ResultsDashboard';
 import { MarketScannerView } from './components/scanner/MarketScannerView';
 import { StrategyLibraryView } from './components/library/StrategyLibraryView';
 import { ProviderSettings } from './components/settings/ProviderSettings';
+import { SideSheet } from './components/common/SideSheet';
 import type { MarketUniverseType } from './components/scanner/MarketScannerView';
 import { readPreferences, rememberPreference } from './client/preferences';
 import { FEATURE_PREFILL_EVENT, parseFeaturePrefill, publishFeaturePrefill } from './client/featureHandoff';
@@ -45,6 +46,8 @@ export default function App() {
   const [preferences, setPreferences] = useState<UserPreferences>(() => readPreferences());
   const [testerPrefill, setTesterPrefill] = useState<TesterPrefill | null>(null);
   const [scannerPrefill, setScannerPrefill] = useState<ScannerPrefill | null>(null);
+  /** Result inspected in the side sheet; null keeps the sheet closed. */
+  const [detailsResult, setDetailsResult] = useState<BacktestResponse | null>(null);
   const owner = useRef(new RequestOwner());
   const controller = useRef<AbortController | null>(null);
 
@@ -353,10 +356,9 @@ export default function App() {
           onOpenDetails={result => {
             invalidateRun();
             setBacktestResult(result);
-            // The details view now shows the exact run retained by the chat,
-            // not the current builder draft.
+            // The sheet shows the exact run retained by the chat, not the draft.
             setRunDraftSignature(null);
-            setActiveView('results');
+            setDetailsResult(result);
           }}
           onSaveStrategy={saveStrategyToLibrary}
           onCancelResearch={invalidateRun}
@@ -432,6 +434,39 @@ export default function App() {
           <ProviderSettings />
         </div>
       )}
+
+      <SideSheet
+        open={detailsResult !== null}
+        onClose={() => setDetailsResult(null)}
+        title="Backtest result"
+        onOpenFullPage={() => {
+          if (detailsResult) {
+            setBacktestResult(detailsResult);
+            setActiveView('results');
+          }
+          setDetailsResult(null);
+        }}
+      >
+        <ResultsDashboard
+          result={detailsResult}
+          comparisonResults={comparisonResults}
+          onReRun={handleReSimulate}
+          onApplyStrategy={handleLoadStrategy}
+          onUpdateComparisonList={setComparisonResults}
+          onSelectActiveResult={result => {
+            invalidateRun();
+            setBacktestResult(result);
+            setRunDraftSignature(null);
+            setDetailsResult(result);
+          }}
+          isLoading={isLoading}
+          draftName={strategy.name}
+          onOpenTester={() => {
+            setDetailsResult(null);
+            setActiveView('builder');
+          }}
+        />
+      </SideSheet>
     </AppShell>
   );
 }

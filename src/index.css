@@ -14,6 +14,54 @@
   --font-syne: 'Syne', sans-serif;
   --font-inter: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
+
+  /* ---- Chat UI design system (research/chat-ui-research.md §2.1) ---- */
+  /* canvas & surfaces */
+  --surface-1: #171719;      /* the only card background */
+  --surface-2: #1c1c20;      /* inset blocks, table head, disclosure */
+  --surface-3: #24262c;      /* user bubble, code */
+  --surface-hover: #202024;
+
+  /* lines */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14); /* focus/hover, not decoration */
+
+  /* text (all AA on --surface-1) */
+  --text-1: #ececec;         /* 15.6:1 */
+  --text-2: #b9b9c0;         /*  9.4:1 */
+  --text-3: #9a9aa3;         /*  6.5:1, replaces neutral-500 for 11px labels */
+  --text-disabled: #6b6b73;  /* only on disabled controls */
+
+  /* accent & data */
+  --accent-ink: #101012;
+  --up: #6ee7b7;
+  --down: #fca5a5;
+  --warn: #fcd34d;
+  --danger: #f87171;
+
+  /* geometry */
+  --r-card: 14px;
+  --r-inner: 10px;
+  --r-btn: 8px;
+  --r-pill: 999px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+
+  /* type */
+  --fs-prose: 15px; --lh-prose: 24px;
+  --fs-meta: 12px;  --lh-meta: 16px;
+  --fs-label: 11px; --lh-label: 16px;
+  --fs-title: 16px; --lh-title: 24px;
+  --fs-stat: 20px;  --lh-stat: 28px;
+  --fs-table: 13px; --lh-table: 20px;
+
+  /* layout */
+  --chat-column: 832px;
+  --chat-prose: 640px;
+  --chat-gutter: 24px;
+
+  /* motion */
+  --dur-1: 120ms; --dur-2: 180ms;
+  --ease: cubic-bezier(.2, .7, .2, 1);
 }
 
 html,
@@ -194,5 +242,66 @@ body {
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Chat UI primitives: token utilities only. No existing class changes look. */
+  .st-prose {
+    font-size: var(--fs-prose);
+    line-height: var(--lh-prose);
+    max-width: var(--chat-prose);
+  }
+  .st-meta {
+    font-size: var(--fs-meta);
+    line-height: var(--lh-meta);
+  }
+  .st-label {
+    font-size: var(--fs-label);
+    line-height: var(--lh-label);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .st-title {
+    font-size: var(--fs-title);
+    line-height: var(--lh-title);
+  }
+  .st-table-text {
+    font-size: var(--fs-table);
+    line-height: var(--lh-table);
+  }
+  .st-stat {
+    font-size: var(--fs-stat);
+    line-height: var(--lh-stat);
+    font-variant-numeric: tabular-nums;
+  }
+  .st-tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  .st-card-surface {
+    background: var(--surface-1);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    overflow: hidden;
+    box-shadow: none;
+  }
+  .st-scroll-x {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .st-fade-right {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  }
+}
+
+/* P2-4: honour reduced motion globally (research/chat-ui-research.md §2.7). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

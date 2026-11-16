@@ -186,10 +186,12 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
         <button type="button" onClick={() => navigate('chat')} className="text-sm font-semibold tracking-tight text-neutral-100">
           Stragy
         </button>
-        <span className="ml-auto text-[11px] text-neutral-500">{viewLabel[activeView]}</span>
-        <button type="button" onClick={newChat} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-white/5">
-          New chat
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {activeView !== 'chat' && <span className="text-[11px] text-[var(--text-3)]">{viewLabel[activeView]}</span>}
+          <button type="button" onClick={newChat} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-white/5">
+            New chat
+          </button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
