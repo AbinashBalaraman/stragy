@@ -22,6 +22,7 @@ import { parseBacktestResult } from '../shared/contracts/research';
 import { SimulationInputError } from './backtest/engine';
 import type { BacktestResponse, StrategyAST } from '../shared/strategy/types';
 import { researchChat } from './ai/researchChat';
+import { resolveFeatureSetup } from './ai/featureSetup';
 import { analyzeChart, ChartImageError, parseChartImageDataUrl } from './ai/chartVision';
 import { resolveObservedUniverse } from './data/observedUniverse';
 import { getProvidersResponse, upsertProvider, deleteProvider, setChain, resetProviders, listProviderModels, testProvider, ProviderError, initializeProviderRegistry } from './ai/providerRegistry';
@@ -250,6 +251,7 @@ export async function createApp(deps: AppDependencies = {}) {
   app.post('/api/ai/optimize', (_req, _res, next) => next(new ApiFailure(503, 'OPTIMIZER_WORKER_REQUIRED', 'Legacy optimization is disabled. Review a draft proposal and run bounded research explicitly.')));
   app.post('/api/v2/ai/proposals', wrap(async (req, res) => { const p = parse(z.object({ prompt: z.string().min(1).max(4000), currentStrategy: z.unknown().optional(), originatingRevision: z.union([z.number().int().nonnegative(), z.string().max(100)]).optional(), allowLocalFallback: z.boolean().default(false), history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(4000) })).max(20).optional() }), req.body); const input = { ...p, currentStrategy: p.currentStrategy ? executable(p.currentStrategy) : undefined }; const result = await createProposal(input); res.status(result.ok ? 200 : 422).json(result); }));
   app.post('/api/v2/research-chat', wrap(async (req, res) => res.json(await researchChat(req.body))));
+  app.post('/api/v2/feature-setup', wrap(async (req, res) => res.json(resolveFeatureSetup(req.body))));
 
   const providerRoute = (handler: (req: Request, res: Response) => Promise<void> | void) => wrap(async (req, res) => {
     try { await handler(req, res); }

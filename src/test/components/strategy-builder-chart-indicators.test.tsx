@@ -22,6 +22,7 @@ afterEach(cleanup);
 describe('new chart indicator types in the builder', () => {
   it('renders chart-generated indicators and their registry parameters without crashing', () => {
     render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
     expect(screen.getByText(/RSI_TRENDLINE, unit: oscillator/)).toBeTruthy();
     expect(screen.getByText(/PCT_ABOVE_LOW, unit: percent/)).toBeTruthy();
     expect((screen.getByLabelText('rsi_tl minSpan') as HTMLInputElement).value).toBe('30');

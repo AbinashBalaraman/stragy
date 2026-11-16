@@ -74,7 +74,7 @@ describe('AI provider config isolation', () => {
   it('bounds timeout and tokens from env', () => {
     const c = resolveAIConfig({ AI_PROVIDER: 'openai', OPENAI_API_KEY: SECRET_B, AI_TIMEOUT_MS: '9999999', AI_MAX_OUTPUT_TOKENS: '99999999' });
     expect(c.timeoutMs).toBeLessThanOrEqual(60_000);
-    expect(c.maxOutputTokens).toBeLessThanOrEqual(4_000);
+    expect(c.maxOutputTokens).toBeLessThanOrEqual(12_000);
   });
 });
 

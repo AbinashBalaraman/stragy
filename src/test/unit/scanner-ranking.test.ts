@@ -83,4 +83,20 @@ describe('scanner near-match ranking', () => {
     expect(result.matches).toHaveLength(0);
     expect(result.nearMatches).toHaveLength(0);
   });
+
+  it('reports a missing right-hand series value as null instead of an unparsable NaN', () => {
+    vi.stubEnv('DATA_MODE', 'demo');
+    const missing: StrategyAST = {
+      ...strategy,
+      rules: {
+        ...strategy.rules,
+        entry: [...strategy.rules.entry, { id: 'c4', leftIndicator: 'close', operator: 'gt', rightIndicator: 'absent_line' }],
+      },
+    };
+    const result = scanUniverse(missing, 'nifty50', 35);
+    const rule = result.nearMatches.flatMap(match => match.unmatchedRules ?? []).find(entry => entry.rule.includes('absent_line'));
+    expect(rule).toMatchObject({ actualRight: null, currentActualRight: null });
+    const parsed = parseScanResult(result);
+    expect(parsed.nearMatches?.some(match => (match.unmatchedRules ?? []).some(entry => entry.actualRight === null))).toBe(true);
+  });
 });

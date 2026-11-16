@@ -146,7 +146,7 @@ const UNMATCHED_VERBS: Record<string, string> = {
 };
 
 /** Plain-language reason a near-match is missing one screen condition. */
-export function describeUnmatchedRule(rule: RuleNode, indicators: IndicatorConfig[], currentLeft?: number, currentRight?: number): string {
+export function describeUnmatchedRule(rule: RuleNode, indicators: IndicatorConfig[], currentLeft?: number | null, currentRight?: number | null): string {
   const left = getIndicatorLabel(rule.leftIndicator, indicators);
   const right = rule.rightIndicator
     ? getIndicatorLabel(rule.rightIndicator, indicators)
@@ -155,7 +155,9 @@ export function describeUnmatchedRule(rule: RuleNode, indicators: IndicatorConfi
       : '';
   const verb = UNMATCHED_VERBS[rule.operator] ?? 'does not yet satisfy';
   const lookback = rule.lookback ? ` within the preceding ${rule.lookback.bars} completed bars` : '';
-  const current = typeof currentLeft === 'number' && Number.isFinite(currentLeft) ? ` (now ${ruleValue(currentLeft)})` : '';
+  const current = currentLeft === null
+    ? ' (current value unavailable)'
+    : typeof currentLeft === 'number' && Number.isFinite(currentLeft) ? ` (now ${ruleValue(currentLeft)})` : '';
   void currentRight;
   return `${left} ${verb} ${right} yet${lookback}${current}.`;
 }

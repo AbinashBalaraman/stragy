@@ -6,11 +6,9 @@ import {
   TrendingUp,
   TrendingDown,
   Layers,
-  Sparkles,
   Check,
   Building2,
   SlidersHorizontal,
-  Command
 } from 'lucide-react';
 import { SymbolMeta } from '../../shared/strategy/types';
 import { useLiveQuotes, formatLivePrice, formatLiveChange, liveQuoteTimeTitle, type LiveQuote } from '../../client/liveQuotes';
@@ -281,75 +279,44 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         id="btn-symbol-pill-trigger"
         type="button"
         onClick={() => setIsOpen(prev => !prev)}
-        className="group flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 rounded-xl bg-[#151517] hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] hover:border-[#a8c7fa]/50 shadow-sm transition-all text-left focus:outline-none focus:border-[#a8c7fa] select-none shrink-0"
+        aria-label={`Instrument ${currentSymbol.ticker}. Open instrument search.`}
+        className="group flex shrink-0 select-none items-center gap-2 rounded-lg border border-white/12 bg-[#171719] px-2.5 py-1.5 text-left transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04] focus:border-[#a8c7fa]/60 focus:outline-none"
         title={showReferencePrices
           ? 'Search demo instruments. Reference prices are illustrative, not live.'
           : currentQuote
             ? 'Live Angel One LTP; daily research bars remain delayed, not live.'
             : 'Select an instrument. Live LTP appears when Angel One quotes are connected.'}
       >
-        {/* Ticker & Exchange Badge */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="font-extrabold text-xs sm:text-sm text-[#ececed] tracking-tight group-hover:text-[#a8c7fa] transition-colors font-mono">
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className="font-mono text-xs font-semibold tracking-tight text-neutral-100 transition-colors group-hover:text-[#cfe0ff]">
             {currentSymbol.ticker}
           </span>
-          <span
-            className={`text-[8px] sm:text-[9px] uppercase font-mono font-bold px-1.5 py-0.2 rounded border shrink-0 ${
-              isIndex
-                ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
-                : currentSymbol.exchange === 'BSE'
-                ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
-                : 'bg-[#a8c7fa]/10 text-[#a8c7fa] border-[#a8c7fa]/30'
-            }`}
-          >
+          <span className="shrink-0 rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] uppercase text-neutral-400">
             {isIndex ? 'INDEX' : currentSymbol.exchange}
           </span>
-        </div>
+        </span>
 
-        {/* Live Angel quotes only in real mode; demo catalog references never claim to be live. */}
-        {showReferencePrices && <div className="hidden md:flex items-center gap-1.5 shrink-0">
-          <span className="text-xs font-mono font-semibold text-[#ececed]">
-            ₹{currentSymbol.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+        {/* Live Angel quotes in real mode; demo references are labelled as such. */}
+        {showReferencePrices ? (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <span className="font-mono text-xs text-neutral-200">₹{currentSymbol.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+            <span className={'flex items-center gap-0.5 font-mono text-[10px] ' + (currentSymbol.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
+              {currentSymbol.changePercent >= 0 ? <TrendingUp className="h-2.5 w-2.5" aria-hidden="true" /> : <TrendingDown className="h-2.5 w-2.5" aria-hidden="true" />}
+              {currentSymbol.changePercent >= 0 ? '+' : ''}{currentSymbol.changePercent}%
+            </span>
           </span>
+        ) : currentQuote ? (
+          <QuotePrice quote={currentQuote} className="flex shrink-0 text-xs" />
+        ) : (
+          <span className="shrink-0 font-mono text-[11px] text-neutral-500" title="Live Angel One LTP is loading. Daily research bars remain delayed.">LTP …</span>
+        )}
 
-          <span
-            className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ${
-              currentSymbol.changePercent >= 0
-                ? 'bg-emerald-500/15 text-[#a8c7fa] border border-[#a8c7fa]/30'
-                : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-            }`}
-          >
-            {currentSymbol.changePercent >= 0 ? (
-              <TrendingUp className="w-2.5 h-2.5" />
-            ) : (
-              <TrendingDown className="w-2.5 h-2.5" />
-            )}
-            <span>{currentSymbol.changePercent >= 0 ? '+' : ''}{currentSymbol.changePercent}%</span>
-          </span>
-        </div>}
-        {!showReferencePrices && currentQuote && <QuotePrice quote={currentQuote} className="flex shrink-0 text-[11px] sm:text-xs" />}
-
-        <Search className="w-3 h-3 text-neutral-400 group-hover:text-[#a8c7fa] transition-colors shrink-0 ml-0.5" />
-      </button>
-
-      {/* Desktop Dedicated Quick Search Input Trigger */}
-      <button
-        id="btn-symbol-quicksearch-trigger"
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className="hidden 2xl:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#151517] hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] hover:border-neutral-700 text-neutral-400 hover:text-[#ececed] transition-all text-xs font-medium focus:outline-none group shrink-0 w-36"
-        title="Search any stock, index, or sector (Press ⌘K or /)"
-      >
-        <Search className="w-3.5 h-3.5 text-neutral-400 group-hover:text-[#a8c7fa] transition-colors shrink-0" />
-        <span className="truncate text-neutral-400 group-hover:text-[#ececed]">Search stock...</span>
-        <kbd className="ml-auto inline-flex items-center gap-0.5 text-[9px] font-mono px-1 py-0.2 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] text-neutral-400 group-hover:text-[#ececed] shrink-0">
-          <Command className="w-2.5 h-2.5" />K
-        </kbd>
+        <Search className="h-3 w-3 shrink-0 text-neutral-500 transition-colors group-hover:text-neutral-300" aria-hidden="true" />
       </button>
 
       {/* Popover / Combobox Dropdown */}
       {isOpen && (
-        <div className="fixed sm:absolute top-16 sm:top-full left-2 sm:left-0 right-2 sm:right-auto mt-2 sm:w-[460px] md:w-[520px] bg-[#171719] border border-[rgba(236,236,237,0.12)] rounded-2xl shadow-2xl shadow-black/80 z-50 overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[580px] animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed left-2 right-2 top-16 z-50 mt-2 flex max-h-[85vh] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#171719] shadow-2xl shadow-black/70 sm:absolute sm:left-0 sm:right-auto sm:top-full sm:max-h-[580px] sm:w-[460px] md:w-[500px]">
           {/* Search Header Input */}
           <div className="p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#151517] flex items-center gap-2.5">
             <Search className="w-4 h-4 text-[#a8c7fa] shrink-0" />
@@ -425,11 +392,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                     setSelectedCategory(cat.id);
                     setHighlightedIndex(0);
                   }}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center justify-center ${
-                    active
-                      ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm'
-                      : 'bg-[#1e1e21] text-neutral-300 hover:text-white hover:bg-[#25252a] border border-[rgba(236,236,237,0.08)]'
-                  }`}
+                  className={'flex items-center justify-center whitespace-nowrap rounded-md border px-2 py-1 text-[11px] transition-colors ' + (active ? 'border-[#a8c7fa]/40 bg-white/[0.06] text-neutral-100' : 'border-white/10 text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
                 >
                   {cat.label}
                 </button>
@@ -440,10 +403,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           {/* Quick-Pick Popular Symbols (when no search query) */}
           {!searchQuery.trim() && selectedCategory === 'ALL' && (
             <div className="px-3 py-2 border-b border-[rgba(236,236,237,0.06)] bg-[#101012]/30">
-              <div className="text-[10px] uppercase font-bold text-neutral-400 mb-1.5 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-[#a8c7fa]" />
-                <span>Popular & Benchmark Equities:</span>
-              </div>
+              <div className="mb-1.5 text-[10px] uppercase tracking-[0.14em] text-neutral-500">Popular</div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {POPULAR_TICKERS.map(ticker => {
                   const sym = symbols.find(s => s.ticker === ticker);
@@ -454,18 +414,10 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       key={`pop_${sym.id}`}
                       type="button"
                       onClick={() => selectSymbol(sym.id)}
-                      className={`px-2 py-0.5 rounded-md text-[11px] font-mono transition-all flex items-center gap-1 ${
-                        isCurrent
-                          ? 'bg-[#a8c7fa]/20 text-[#a8c7fa] font-bold border border-[#a8c7fa]/40'
-                          : 'bg-[#1e1e21] text-neutral-300 hover:text-white hover:bg-[#25252a] border border-[rgba(236,236,237,0.08)]'
-                      }`}
+                      className={'flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors ' + (isCurrent ? 'border-[#a8c7fa]/40 bg-white/[0.06] text-neutral-100' : 'border-white/10 text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
                     >
                       <span>{sym.ticker}</span>
-                      {showReferencePrices && <span
-                        className={`text-[9px] ${
-                          sym.changePercent >= 0 ? 'text-[#a8c7fa]' : 'text-rose-400'
-                        }`}
-                      >
+                      {showReferencePrices && <span className={'text-[9px] ' + (sym.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
                         {sym.changePercent >= 0 ? '+' : ''}{sym.changePercent}%
                       </span>}
                     </button>
@@ -506,29 +458,15 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                     data-highlighted={isHighlighted ? 'true' : 'false'}
                     onClick={() => selectSymbol(sym.id)}
                     onMouseEnter={() => setHighlightedIndex(index)}
-                    className={`p-2.5 rounded-xl cursor-pointer transition-all flex items-center justify-between gap-3 ${
-                      isSelected
-                        ? 'bg-[#a8c7fa]/15 border border-[#a8c7fa]/30 text-white'
-                        : isHighlighted
-                        ? 'bg-[#1e1e21] text-white'
-                        : 'hover:bg-[#1e1e21]/60 text-neutral-300'
-                    }`}
+                    className={'flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-2.5 py-2 transition-colors ' + (isSelected ? 'border-[#a8c7fa]/40 bg-white/[0.06] text-neutral-100' : isHighlighted ? 'border-transparent bg-white/[0.04] text-neutral-100' : 'border-transparent text-neutral-300 hover:bg-white/[0.03]')}
                   >
                     {/* Left: Ticker & Name */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-extrabold text-xs sm:text-sm text-white font-mono">
+                        <span className="font-mono text-xs font-semibold text-neutral-100 sm:text-sm">
                           {sym.ticker}
                         </span>
-                        <span
-                          className={`text-[9px] uppercase font-mono font-bold px-1.5 py-0.2 rounded border ${
-                            symIsIndex
-                              ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
-                              : sym.exchange === 'BSE'
-                              ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
-                              : 'bg-[#a8c7fa]/10 text-[#a8c7fa] border-[#a8c7fa]/30'
-                          }`}
-                        >
+                        <span className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] uppercase text-neutral-400">
                           {symIsIndex ? 'INDEX' : sym.exchange}
                         </span>
                         <span className="text-[10px] text-neutral-400 font-medium truncate max-w-[130px] sm:max-w-[180px]">
@@ -570,7 +508,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       ))}
 
                       {isSelected && (
-                        <div className="w-5 h-5 rounded-full bg-[#a8c7fa] text-[#101012] flex items-center justify-center shrink-0">
+                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#a8c7fa]/40 text-[#cfe0ff]">
                           <Check className="w-3.5 h-3.5 stroke-[3]" />
                         </div>
                       )}
@@ -594,7 +532,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
               <span><kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Enter</kbd> to select</span>
               <span><kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Esc</kbd> to close</span>
             </div>
-            <span className="text-[#a8c7fa] font-mono font-bold">{symbols.length.toLocaleString()} instruments available</span>
+            <span className="font-mono text-neutral-400">{symbols.length.toLocaleString()} instruments available</span>
           </div>
         </div>
       )}

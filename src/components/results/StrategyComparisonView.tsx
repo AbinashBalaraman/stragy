@@ -274,7 +274,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
               </span>
             </div>
             <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.58)]">
-              Rank matched runs on {symbolName} ({symbolTicker}) with the same window, capital, fees and execution policy. Each run stays immutable.
+              Rank runs of {symbolName} ({symbolTicker}) that share the same dates, capital and costs. Each run is kept as its own result.
             </p>
           </div>
 
@@ -313,14 +313,14 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
       <details className="group rounded-xl border border-amber-500/25 bg-amber-500/[0.04] px-3.5 py-2.5 text-xs">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[rgba(236,236,237,0.7)] [&::-webkit-details-marker]:hidden">
           <span>
-            Only runs with matching symbol, dataset, window, timeframe, currency, capital, fees and execution assumptions are ranked.
+            Run a sweep above to add a matching variation.
             {compatibility.excluded.length > 0 ? ` ${compatibility.excluded.length} ${compatibility.excluded.length === 1 ? 'run is' : 'runs are'} excluded.` : ''}
-            {!canRank ? ' Add a second matching run to enable ranking.' : ''}
+            {!canRank ? ' Two matching runs are needed before ranking starts.' : ' Only runs with the same symbol, dates, capital and costs are ranked.'}
           </span>
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-amber-300 transition-transform group-open:rotate-90" />
         </summary>
         <div className="mt-2 space-y-2 leading-relaxed text-[rgba(236,236,237,0.6)]">
-          <p>Run IDs are immutable; strategy names are not identities. A different symbol, window, capital, fee schedule or execution policy is not directly comparable.</p>
+          <p>Each run is kept as its own result; a strategy name alone does not identify a run. A different symbol, dates, capital or cost model is not directly comparable.</p>
           {compatibility.baselineIssues.length > 0 && <p role="alert" className="text-rose-300">Baseline context is unverified: {compatibility.baselineIssues.join(', ')}. Ranking is disabled.</p>}
           {compatibility.excluded.length > 0 && (
             <ul className="space-y-2">

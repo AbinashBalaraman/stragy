@@ -40,6 +40,12 @@ export interface LiveQuoteStatus {
   connected: boolean;
   provider: 'angel' | null;
   fetchedAt: string | null;
+  /**
+   * True only while the very first quote check is in flight. Once any result
+   * arrives (success or failure) the footer keeps its settled label; later polls
+   * never flip it back to a checking state.
+   */
+  loading: boolean;
 }
 
 const quoteSchema = z.object({
@@ -197,6 +203,8 @@ export function useLiveQuoteStatus(enabled = true): LiveQuoteStatus {
     connected: state.connected && state.quotes.some(quote => quote.source === 'ANGEL_SMARTAPI'),
     provider: state.connected ? 'angel' : null,
     fetchedAt: state.fetchedAt,
+    // Unknown, not "not live": the first request has not produced any result yet.
+    loading: state.loading && state.fetchedAt === null && state.reason === null,
   };
 }
 

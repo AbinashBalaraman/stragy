@@ -9,8 +9,42 @@ let statusCheckedAt = 0;
 let initPromise: Promise<void> | null = null;
 let testPool: Pool | null = null;
 
-function sslFor(connectionString: string) {
-  return /sslmode=require/i.test(connectionString) ? { rejectUnauthorized: false } : undefined;
+interface ConnectionOptions {
+  connectionString: string;
+  ssl?: { rejectUnauthorized: boolean; minVersion?: 'TLSv1.2' } | false;
+}
+
+/**
+ * Make TLS explicit instead of relying on pg's deprecated sslmode aliases.
+ * `require`/`verify-ca` are treated as full certificate + hostname verification;
+ * the sslmode query parameter is removed so pg-connection-string stops warning.
+ */
+export function connectionOptions(connectionString: string): ConnectionOptions {
+  try {
+    const url = new URL(connectionString);
+    const mode = url.searchParams.get('sslmode');
+    if (!mode) return { connectionString };
+    url.searchParams.delete('sslmode');
+    const cleaned = url.toString();
+    if (mode === 'disable') return { connectionString: cleaned, ssl: false };
+    if (mode === 'no-verify') return { connectionString: cleaned, ssl: { rejectUnauthorized: false } };
+    return { connectionString: cleaned, ssl: { rejectUnauthorized: true, minVersion: 'TLSv1.2' } };
+  } catch {
+    return { connectionString };
+  }
+}
+
+/** Idle-client errors must never become an unhandled EventEmitter 'error' crash. */
+function loggedPool(options: ConstructorParameters<typeof Pool>[0]): Pool {
+  const created = new Pool(options);
+  created.on('error', error => {
+    status = 'unavailable';
+    console.warn(JSON.stringify({
+      event: 'db_idle_client_error',
+      message: (error instanceof Error ? error.message : String(error)).replace(/(postgres(?:ql)?:\/\/)[^\s]+/gi, '$1[redacted]'),
+    }));
+  });
+  return created;
 }
 
 export function databaseConfigured(env: Record<string, string | undefined> = process.env): boolean {
@@ -20,7 +54,7 @@ export function databaseConfigured(env: Record<string, string | undefined> = pro
 export function getPool(env: Record<string, string | undefined> = process.env): Pool | null {
   if (testPool) return testPool;
   if (!env.DATABASE_URL) return null;
-  if (!pool) pool = new Pool({ connectionString: env.DATABASE_URL, max: 5, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000, ssl: sslFor(env.DATABASE_URL) });
+  if (!pool) pool = loggedPool({ ...connectionOptions(env.DATABASE_URL), max: 5, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 });
   return pool;
 }
 
@@ -29,7 +63,7 @@ export function getMigrationPool(env: Record<string, string | undefined> = proce
   if (testPool) return testPool;
   const url = env.DATABASE_URL_UNPOOLED ?? env.DATABASE_URL;
   if (!url) return null;
-  if (!migrationPool) migrationPool = new Pool({ connectionString: url, max: 2, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000, ssl: sslFor(url) });
+  if (!migrationPool) migrationPool = loggedPool({ ...connectionOptions(url), max: 2, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 });
   return migrationPool;
 }
 

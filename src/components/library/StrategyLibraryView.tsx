@@ -104,13 +104,17 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
     <section aria-labelledby="my-strategies-title" className="min-w-0 space-y-4 rounded-2xl border border-neutral-800 bg-[#171719]/90 p-4 sm:p-5">
       <h2 id="my-strategies-title" className="text-lg font-semibold text-white">My strategies</h2>
       <p className="text-xs leading-relaxed text-neutral-400">
-        Saved only in this browser. Save is explicit, not automatic. Up to 50 strategies including trash, 20 immutable revisions each, 200 revisions total and 1 MiB. Nothing is automatically removed.
+        Saved in this browser only. Saving is explicit; nothing is removed automatically.
       </p>
+      <details className="text-[11px] leading-5 text-neutral-500">
+        <summary className="cursor-pointer hover:text-neutral-300">Storage limits</summary>
+        <p className="mt-1">Up to 50 strategies including trash, 20 immutable revisions each, 200 revisions in total, 1 MiB.</p>
+      </details>
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
       {library?.corrupt && <p role="alert" className="text-sm text-amber-300">Stored library is invalid and has not been overwritten. An explicit save starts a fresh library only after preserving the original bytes. Existing recovery backup conflicts will block the save.</p>}
 
-      <form className="flex flex-wrap gap-2" onSubmit={event => {
+      <form className="flex flex-col gap-2 sm:flex-row sm:flex-wrap" onSubmit={event => {
         event.preventDefault();
         if (currentStrategy) void commit({ type: 'saveAs', strategy: currentStrategy, name: name.trim() || currentStrategy.name }, 'Strategy saved as a new copy.');
       }}>
@@ -120,7 +124,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
           value={name}
           onChange={event => setName(event.target.value)}
           placeholder={currentStrategy?.name ?? 'Open a strategy in the builder first'}
-          className={controlClass + ' min-w-0 flex-1 bg-neutral-950'}
+          className={controlClass + ' min-w-0 w-full bg-neutral-950 sm:flex-1'}
           disabled={disabled || !currentStrategy}
         />
         <button type="submit" className={controlClass} disabled={disabled || !currentStrategy}>Save current strategy as new</button>
@@ -158,8 +162,8 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
             </label>
 
             {renameId === entry.id && (
-              <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); void commit({ type: 'rename', id: entry.id, name: renameName }, 'Strategy renamed; previous revision retained.'); }}>
-                <input aria-label="New strategy name" required maxLength={80} value={renameName} onChange={event => setRenameName(event.target.value)} className={controlClass + ' min-w-0 flex-1 bg-neutral-950'} />
+              <form className="flex flex-col gap-2 sm:flex-row sm:flex-wrap" onSubmit={event => { event.preventDefault(); void commit({ type: 'rename', id: entry.id, name: renameName }, 'Strategy renamed; previous revision retained.'); }}>
+                <input aria-label="New strategy name" required maxLength={80} value={renameName} onChange={event => setRenameName(event.target.value)} className={controlClass + ' min-w-0 w-full bg-neutral-950 sm:flex-1'} />
                 <button type="submit" disabled={disabled || !renameName.trim()} className={controlClass}>Confirm rename</button>
                 <button type="button" onClick={() => setRenameId(null)} className={controlClass}>Cancel rename</button>
               </form>
@@ -212,7 +216,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
           <div>
             <h2 className="text-lg font-semibold tracking-tight text-white">Template strategies ({STRATEGY_TEMPLATES.length})</h2>
             <p className="mt-0.5 text-xs leading-relaxed text-neutral-400">
-              Validated examples with illustrative, unverified cash-fee assumptions. Performance is not pre-certified.
+              Validated examples with illustrative, unverified cash-fee assumptions. Win rates are not pre-certified; each run uses an immutable data snapshot.
             </p>
           </div>
         </div>
@@ -244,7 +248,6 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
                   <span className="rounded border border-[#a8c7fa]/25 bg-[#a8c7fa]/10 px-2 py-0.5 text-[11px] font-medium text-[#a8c7fa]">
                     {template.category}
                   </span>
-                  <span className="font-mono text-[11px] font-semibold text-[#a8c7fa]">{template.expectedWinRate}</span>
                 </div>
 
                 <div>
@@ -268,7 +271,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
                 onClick={() => onLoadStrategy(parseStrategy(JSON.parse(JSON.stringify(template.strategy))))}
                 className="group flex w-full items-center justify-center gap-2 rounded-xl border border-[#a8c7fa]/35 bg-[#a8c7fa]/10 py-2.5 text-xs font-medium text-[#a8c7fa] transition-colors hover:bg-[#a8c7fa] hover:text-[#101012]"
               >
-                <span>Load Template into Builder</span>
+                <span>Open template in Strategy tester</span>
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
               </button>
             </div>

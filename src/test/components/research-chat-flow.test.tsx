@@ -9,9 +9,12 @@ import type { BacktestResponse, StrategyAST } from '../../shared/strategy/types'
 import { researchChat } from '../../server/ai/researchChat';
 import { requestResearchChat } from '../../client/researchChat';
 import { requestScan } from '../../client/api';
+import { requestFeatureSetup } from '../../client/featureSetup';
+import { resolveFeatureSetup } from '../../server/ai/featureSetup';
 import { validateStrategy } from '../../shared/strategy/schema';
 vi.mock('../../client/researchChat',()=>({requestResearchChat:vi.fn()}));
 vi.mock('../../client/api',()=>({requestScan:vi.fn()}));
+vi.mock('../../client/featureSetup',()=>({requestFeatureSetup:vi.fn()}));
 let dom:JSDOM;
 const zero=()=>({mode:'real' as const,universe:'NIFTY_50',scanned:50,matched:0,scannedAt:'2026-10-15T12:00:00Z',dataSource:'PROVENANCE_PER_SYMBOL',matches:[],requested:50,attempted:50,succeeded:50,unavailable:0,failed:0,offset:0,limit:100,errors:[],sourceCoverage:{YAHOO_PUBLIC_CHART:50},warnings:[]});
 const reliantSymbol={id:7,ticker:'RELIANCE',name:'Reliance Industries',exchange:'NSE' as const,sector:'Energy',currentPrice:2900,changePercent:0.5};
@@ -122,3 +125,20 @@ it('does not carry a validated result or review into a restored conversation',as
   expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();
   expect(screen.queryByLabelText('Research screen')).toBeNull();
 });
+
+it('fills the strategy tester from a rule sentence and never runs or applies it',async()=>{
+  vi.mocked(requestFeatureSetup).mockImplementation(async input => resolveFeatureSetup(input,{now:new Date('2026-11-16T12:00:00.000Z')}));
+  const run=vi.fn();
+  render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);
+  sendText('Backtest RSI below 30 buy, above 70 sell on Reliance');
+  const review=await screen.findByRole('article',{name:'Backtest review'});
+  expect(requestFeatureSetup).toHaveBeenCalledTimes(1);
+  expect(within(review).getByText(/Backtest RELIANCE/)).toBeTruthy();
+  expect(within(review).getByText(/RSI \(14\) is less than 30/)).toBeTruthy();
+  expect(within(review).getByText(/RSI \(14\) is greater than 70/)).toBeTruthy();
+  expect(within(review).getByText(/3.5% below the entry price/)).toBeTruthy();
+  expect(within(review).getAllByText(/2023-11-17 to 2026-11-16/).length).toBeGreaterThan(0);
+  expect(run).not.toHaveBeenCalled();
+  expect(JSON.parse(localStorage.getItem('stragy_user_preferences_v1')!)).toMatchObject({lastTicker:'RELIANCE',riskPercent:3.5});
+});
+

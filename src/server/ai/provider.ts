@@ -77,10 +77,14 @@ export const AI_LIMITS = {
   minTimeoutMs: 1_000,
   maxTimeoutMs: 60_000,
   defaultOutputTokens: 1_500,
-  /** Reasoning vision models need headroom before they emit the JSON answer. */
-  defaultVisionOutputTokens: 3_000,
+  /**
+   * Reasoning vision models (e.g. HY4 Flash) can spend 6k+ completion tokens on
+   * hidden reasoning before emitting a ~300-token JSON answer. 3k truncated the
+   * answer to nothing, so the vision budget needs headroom for both.
+   */
+  defaultVisionOutputTokens: 8_000,
   minOutputTokens: 64,
-  maxOutputTokens: 4_000,
+  maxOutputTokens: 12_000,
   maxRequestBodyBytes: 64 * 1024,
   /** Chart images are base64-inflated; this is the route-level cap for one vision request. */
   maxVisionRequestBodyBytes: 8 * 1024 * 1024,

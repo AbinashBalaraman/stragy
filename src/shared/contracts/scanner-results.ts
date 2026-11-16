@@ -47,7 +47,13 @@ export const MarketSnapshotResultSchema = z.object({
   if (Object.values(value.sourceCoverage).reduce((sum, n) => sum + n, 0) !== value.coverage.succeeded)
     ctx.addIssue({ code: 'custom', message: 'Market source coverage does not reconcile' });
 });
-const scanRule = z.object({ rule: z.string(), ruleIndex: count.optional(), actualLeft: finite, actualRight: finite, matchedIndex: count.optional(), matchedDate: date.optional(), currentActualLeft: finite.optional(), currentActualRight: finite.optional() });
+/**
+ * A diagnostic value is null when the referenced series genuinely has no value
+ * at that bar (for example an RSI trendline with no anchored peaks yet). Null is
+ * honest "unknown", never a fabricated number.
+ */
+const scanValue = finite.nullable();
+const scanRule = z.object({ rule: z.string(), ruleIndex: count.optional(), actualLeft: scanValue, actualRight: scanValue, matchedIndex: count.optional(), matchedDate: date.optional(), currentActualLeft: scanValue.optional(), currentActualRight: scanValue.optional() });
 const scanMatch = z.object({
   symbolId: count.positive(), ticker: z.string(), name: z.string(), sector: z.string(), lastDate: date,
   lastClose: finite.positive(), changePercent: finite,

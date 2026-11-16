@@ -12,4 +12,13 @@ export interface BacktestReview {
   originSnapshot: string;
   /** Canonical reviewed strategy content, frozen at review preparation. */
   strategySignature: string;
+  /** Explicit tester inputs filled by the copilot, when the review came from a prefill. */
+  runOptions?: {
+    start?: string;
+    end?: string;
+    asOf?: string;
+    initialCapital?: number;
+    seed?: number;
+    robustness?: boolean;
+  };
 }

@@ -15,7 +15,6 @@ import { ResultsDashboard } from './components/results/ResultsDashboard';
 import { MarketScannerView } from './components/scanner/MarketScannerView';
 import { StrategyLibraryView } from './components/library/StrategyLibraryView';
 import { ProviderSettings } from './components/settings/ProviderSettings';
-import { SymbolSearchSelector } from './components/layout/SymbolSearchSelector';
 
 export default function App() {
   const [activeView, setActiveView] = useState<AppView>('chat');
@@ -31,7 +30,6 @@ export default function App() {
   const savedRevision = useRef<WorkspaceRevision>(initialWorkspace.revision);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const saveGeneration = useRef(0);
-  const currentSymbolId = strategy.universe.symbolId;
   const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(null);
   const [runDraftSignature, setRunDraftSignature] = useState<string | null>(null);
   const [previousStrategy, setPreviousStrategy] = useState<StrategyAST | null>(null);
@@ -160,8 +158,8 @@ export default function App() {
     }
   };
 
-  const handleRunBacktest = async () => {
-    try { await runSnapshot(strategy); } catch { /* Visible error is owned above. */ }
+  const handleRunBacktest = async (options: RunRequestOptions = {}) => {
+    try { await runSnapshot(strategy, true, options); } catch { /* Visible error is owned above. */ }
   };
 
   /** Re-run the displayed immutable result and its stored request window, not the draft. */
@@ -310,20 +308,15 @@ export default function App() {
 
       {activeView === 'builder' && (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-4 pt-4 text-xs text-neutral-400 sm:px-6">
-            <span>Instrument</span>
-            <SymbolSearchSelector
-              symbols={symbols}
-              showReferencePrices={dataMode === 'demo'}
-              currentSymbolId={currentSymbolId}
-              onSymbolChange={handleSymbolChange}
-            />
-          </div>
           <StrategyBuilder
             strategy={strategy}
             onChange={changeStrategy}
             onRunBacktest={handleRunBacktest}
             isLoading={isLoading}
+            symbols={symbols}
+            onSymbolChange={handleSymbolChange}
+            showReferencePrices={dataMode === 'demo'}
+            onDescribeInChat={() => { setRunError(''); setActiveView('chat'); }}
           />
         </div>
       )}
@@ -342,6 +335,8 @@ export default function App() {
               setRunDraftSignature(null);
             }}
             isLoading={isLoading}
+            draftName={strategy.name}
+            onOpenTester={() => setActiveView('builder')}
           />
         </div>
       )}

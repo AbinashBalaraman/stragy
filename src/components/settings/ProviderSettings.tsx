@@ -590,7 +590,14 @@ export const ProviderSettings: React.FC = () => {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-neutral-100">{provider.label}</span>
                       {provider.builtin && <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-neutral-400">Built-in</span>}
-                      <span title={provider.keySource === 'env' ? 'Server environment' : undefined} className={provider.keySource === 'none' ? 'text-[11px] text-neutral-500' : 'text-[11px] text-[#a8c7fa]'}>{keyStatus(provider)}</span>
+                      <span
+                        title={provider.keySource === 'env'
+                          ? 'Key read from the server environment'
+                          : provider.keySource === 'stored'
+                            ? 'Key saved in this deployment. It is write-only and never displayed.'
+                            : 'No key in the server environment and none saved. Test calls and AI requests to this provider fail until a key is added.'}
+                        className={provider.keySource === 'none' ? 'text-[11px] text-neutral-500' : 'text-[11px] text-[#a8c7fa]'}
+                      >{keyStatus(provider)}</span>
                     </div>
                     <p className="mt-1 truncate font-mono text-[11px] text-neutral-500">{provider.baseUrl}</p>
                     {provider.extraHeaderNames.length > 0 && <p className="mt-1 text-[10px] text-neutral-500">Headers: {provider.extraHeaderNames.join(', ')} (values hidden)</p>}
@@ -612,6 +619,9 @@ export const ProviderSettings: React.FC = () => {
           })}
           {!loading && providers.length === 0 && <li className="p-4 text-xs text-neutral-400">No providers are configured.</li>}
         </ul>
+        <p className="text-[11px] leading-5 text-neutral-500">
+          “No key” means no key in the server environment and none saved here; test calls and AI requests for that provider fail until one is added.
+        </p>
       </Section>
 
       {selectedProvider && (

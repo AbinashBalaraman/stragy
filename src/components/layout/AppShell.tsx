@@ -9,7 +9,7 @@ interface Props {
   onNewChat: () => void;
   dataMode: 'real' | 'demo' | 'unknown';
   /** Only set `connected` after an actual Angel One quote has arrived. */
-  liveQuotes?: { connected: boolean; provider: 'angel' | null };
+  liveQuotes?: { connected: boolean; provider: 'angel' | null; loading?: boolean };
   children: React.ReactNode;
   footer?: React.ReactNode;
 }
@@ -76,7 +76,7 @@ const NavItems: React.FC<{
           type="button"
           onClick={() => onNavigate('settings')}
           aria-current={activeView === 'settings' ? 'page' : undefined}
-          className={itemClass(activeView === 'settings')}
+          className={'w-full ' + itemClass(activeView === 'settings')}
         >
           <KeyRound className="h-4 w-4 shrink-0" aria-hidden="true" />
           AI providers
@@ -151,6 +151,9 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
       : 'text-neutral-500';
 
   const live = dataMode === 'real' && liveQuotes?.connected === true;
+  // Before the first quote result we know nothing about the broker: do not claim
+  // "delayed, not live", which reads as a settled statement about the data.
+  const checkingQuotes = dataMode === 'real' && liveQuotes?.loading === true && !live;
   const liveProvider = liveQuotes?.provider === 'angel' ? 'Angel One' : 'broker';
   const statusFooter = live ? (
     <div className="space-y-0.5">
@@ -160,6 +163,8 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
       </p>
       <p className="text-[10px] leading-4 text-neutral-400">Research bars remain delayed, not live</p>
     </div>
+  ) : checkingQuotes ? (
+    <p role="status" className="text-[11px] leading-4 text-neutral-400">Checking quotes…</p>
   ) : (
     <p className={`text-[11px] leading-4 ${modeTone}`}>{dataModeCopy[dataMode]}</p>
   );

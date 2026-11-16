@@ -82,7 +82,7 @@ describe('results re-simulation ownership', () => {
   it('keeps the empty state pointed at the current draft', () => {
     const onReRun = vi.fn();
     render(<ResultsDashboard result={null} onReRun={onReRun} isLoading={false} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Run Backtest Now' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run the current strategy' }));
     expect(onReRun).toHaveBeenCalledTimes(1);
     expect(onReRun.mock.calls[0]).toEqual([]);
   });

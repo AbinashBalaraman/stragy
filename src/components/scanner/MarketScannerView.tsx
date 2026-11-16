@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StrategyAST, StockTrendData, MarketMoversData } from '../../shared/strategy/types';
+import { plainRule } from '../../client/plainRules';
 import { requestMarketSnapshot, requestScan } from '../../client/api';
 import { useLiveQuotes, formatLivePrice, formatLiveChange, liveQuoteTime, liveQuoteTimeTitle, type LiveQuote } from '../../client/liveQuotes';
 import { actualDataCutoff, scannerContextKey, ScannerRequestOwner } from './scannerRequestContext';
@@ -29,6 +30,7 @@ import {
   Info,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   TrendingUpDown,
   Compass,
   FileCode2,
@@ -56,6 +58,7 @@ function priceDataLabel(data: unknown): string {
 
 const SOURCE_LABELS: Record<string, string> = {
   YAHOO_PUBLIC_CHART: 'Yahoo public chart',
+  PROVENANCE_PER_SYMBOL: 'per-symbol provenance',
   ANGEL_SMARTAPI: 'Angel One SmartAPI',
   DEMO_MODEL: 'Demo model',
   DETERMINISTIC_DEMO_V1: 'Deterministic demo model',
@@ -69,11 +72,28 @@ function sourceSummary(coverage?: Record<string, number>): string {
   return (entries.length === 1 ? 'Source: ' : 'Sources: ') + labels.join(', ');
 }
 
+/** "2026-11-16" -> "16 Nov"; never an ambiguous MM-DD. */
+function shortDay(iso: string | null | undefined): string {
+  if (!iso) return 'the latest session';
+  const date = new Date(iso + 'T00:00:00Z');
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' })
+    : iso;
+}
+
 const istClock = (value: string | null | undefined): string | null => {
   if (!value) return null;
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return null;
   return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+};
+
+/** Row-level quote meta: the full line when it adds numbers, a time-only tag when it repeats the EOD close. */
+/** A row only repeats the live overlay when it differs from the EOD close the row already shows. */
+const QuoteMeta: React.FC<{ quote: LiveQuote; eodClose?: number; className?: string }> = ({ quote, eodClose, className = '' }) => {
+  const sameAsClose = typeof eodClose === 'number' && Math.abs(quote.ltp - eodClose) < 0.005;
+  if (sameAsClose) return null;
+  return <LiveQuoteLine quote={quote} eodClose={eodClose} className={className} />;
 };
 
 const LiveQuoteLine: React.FC<{ quote: LiveQuote; eodClose?: number; className?: string }> = ({ quote, eodClose, className = '' }) => {
@@ -194,6 +214,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>('NIFTY_50');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
+  const [moreTabsOpen, setMoreTabsOpen] = useState(false);
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
   const [trendFilter, setTrendFilter] = useState<'ALL' | 'BULLISH' | 'OVERSOLD' | 'BREAKOUT' | 'GOLDEN_CROSS'>('ALL');
   const [trendSearchQuery, setTrendSearchQuery] = useState('');
@@ -277,7 +298,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       setPriceLabel(priceDataLabel(data));
       setCoverageLabel(data.coverage ? `Coverage: ${data.coverage.succeeded} of ${data.coverage.requested} symbols` : 'Coverage not reported; current membership, not full exchange coverage');
       setCoverageDetail(data.coverage ? `${data.coverage.succeeded} of ${data.coverage.requested} symbols evaluated; ${data.coverage.unavailable} unavailable.` : 'Coverage was not reported.');
-      if (data.errors.length) setMarketError('Some market data is unavailable for this context. ' + JSON.stringify(data.errors));
+      if (data.errors.length) setMarketError(`${data.errors.length} symbol${data.errors.length === 1 ? '' : 's'} could not be priced for this context. Rankings use the symbols that were evaluated; the rest are unavailable, not zero.`);
       if (data.movers?.availableTradingSessions?.length) setAvailableTradingDates(data.movers.availableTradingSessions);
     } catch (e) {
       if (marketOwner.current.owns(ticket, currentContext.current)) setMarketError(e instanceof Error ? e.message : 'Market data unavailable');
@@ -367,6 +388,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     ...(movers?.topLosers ?? []).slice(0, 5).map(stock => stock.id),
   ];
   const trendQuoteIds = paginatedTrends.slice(0, 10).map(trend => trend.id);
+  const hasLiveOverlay = activeTab === 'movers' || activeTab === 'trends';
   const liveQuoteIds = activeTab === 'movers' ? moverQuoteIds : activeTab === 'trends' ? trendQuoteIds : [];
   const liveQuotes = useLiveQuotes(Array.from(new Set(liveQuoteIds)).slice(0, 10), {
     enabled: !isStrategyView && (activeTab === 'movers' || activeTab === 'trends'),
@@ -384,85 +406,77 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
   return (
     <div className="w-full max-w-6xl mx-auto p-3 sm:p-5 space-y-4 pb-24">
-      {dataEvidence && (
-      <div role="status" className="rounded-xl border border-amber-400/20 bg-amber-400/[0.04] p-3 space-y-1 text-xs">
-        <p className="line-clamp-2 text-amber-100/90">
-          {priceLabel} · {coverageLabel} · {sourceSummary(dataEvidence?.sourceCoverage)}
-        </p>
-        <details className="text-[11px] text-neutral-400">
-          <summary className="cursor-pointer text-amber-200/80">Details</summary>
-          <div className="mt-2 space-y-1">
-            <p>EOD ranking: {rankingSession}. Live LTPs, where shown, are separate Angel One quotes.</p>
-            <p>Derivatives/OI/PCR and related model fields are model-only, not observed derivatives or live quotes. Universe membership is unverified unless explicitly reported; current membership may introduce survivorship bias.</p>
-            <p>Coverage detail: {coverageDetail} {sourceSummary(dataEvidence?.sourceCoverage)}.</p>
-            {dataEvidence?.observationDates && <p>Observed sessions: {dataEvidence.observationDates.earliest} to {dataEvidence.observationDates.latest}; stale datasets: {dataEvidence.observationDates.staleSymbols}.</p>}
-            {dataEvidence?.membership && <p>Membership source: {dataEvidence.membership.source}; retrieved {scannerDateTime(dataEvidence.membership.observedAt)}; {dataEvidence.membership.freshness}.</p>}
-          </div>
-        </details>
-      </div>
-      )}
-      {scannerError && <div role="alert" className="text-xs text-red-400">{scannerError}</div>}
-      {activeError && <div role="alert" className="text-xs text-red-400 space-x-2">
+      {scannerError && <div role="alert" className="rounded-xl border border-rose-400/25 bg-rose-400/[0.04] px-3 py-2 text-xs text-rose-200">{scannerError}</div>}
+      {activeError && <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-400/25 bg-rose-400/[0.04] px-3 py-2 text-xs text-rose-200">
         <span>{isStrategyView ? 'Strategy scan unavailable: ' : 'Market snapshot unavailable: '}{activeError}</span>
-        <button type="button" onClick={retryActiveView} disabled={activePending} className="underline">Retry {isStrategyView ? 'strategy scan' : 'market snapshot'}</button>
+        <button type="button" onClick={retryActiveView} disabled={activePending} className="underline underline-offset-2 hover:text-rose-100">Retry {isStrategyView ? 'strategy scan' : 'market snapshot'}</button>
       </div>}
-      {/* Top Header Card */}
-      <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-              <Radio className="w-5 h-5 animate-pulse" />
-            </div>
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2 flex-wrap">
-                <span>Market scanner</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                  EOD research snapshot
-                </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1e1e21] text-neutral-300 border border-[rgba(236,236,237,0.12)] font-mono flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-amber-400" />
-                  <span>Session: {initialLoading ? 'loading…' : dataCutoff || 'Cutoff unavailable'}</span>
-                </span>
-                {liveQuotes.connected && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 font-mono flex items-center gap-1">
-                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                    Live LTP · Angel One
-                  </span>
-                )}
-              </h2>
-              <p className="text-xs text-neutral-400">
-                End-of-day ranking with live Angel One LTPs where available. Model-only derivatives are labelled separately.
-              </p>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                retryActiveView();
-              }}
-              disabled={activePending}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e1e21] hover:bg-[#27272a] text-white font-semibold text-xs rounded-xl border border-[rgba(236,236,237,0.12)] shadow-sm active:scale-95 transition-all disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${activePending ? 'animate-spin text-amber-400' : ''}`} />
-              <span>{activePending ? 'Loading snapshot...' : 'Reload snapshot'}</span>
-            </button>
+      {/* One quiet provenance line; everything else lives under Data details. */}
+      <section aria-label="Market scanner header" className="space-y-4 rounded-2xl border border-white/10 bg-[#141416] p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold tracking-tight text-neutral-100">Market scanner</h2>
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
+              <span className="text-neutral-200">{currentUniverseConfig.shortLabel}</span>
+              <span aria-hidden="true">·</span>
+              <span>{initialLoading ? 'end-of-day loading…' : 'end-of-day ' + (movers?.formattedDate || movers?.asOfDate || dataCutoff || 'session unavailable')}</span>
+              {hasLiveOverlay && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  {liveQuotes.connected ? (
+                    <span className="flex items-center gap-1.5 text-emerald-300/90">
+                      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      live prices from Angel One
+                    </span>
+                  ) : (
+                    <span className="text-neutral-500">live prices unavailable</span>
+                  )}
+                </>
+              )}
+            </p>
+            {dataEvidence && (
+              <details className="mt-2 text-[11px] leading-5 text-neutral-500">
+                <summary className="cursor-pointer hover:text-neutral-300">Data details</summary>
+                <div className="mt-1.5 max-w-3xl space-y-1 text-neutral-400">
+                  <p>{priceLabel} · {coverageLabel} · {sourceSummary(dataEvidence?.sourceCoverage)}</p>
+                  <p>Session: {dataCutoff || 'Cutoff unavailable'}</p>
+                  <p>Ranks use the {rankingSession} end-of-day session; live LTPs are a separate Angel One overlay.</p>
+                  <p>Universe: {currentUniverseConfig.label}</p>
+                  <p>{currentUniverseConfig.description}</p>
+                  <p>Derivatives/OI/PCR and related model fields are model-only, not observed derivatives or live quotes. Universe membership is unverified unless explicitly reported; current membership may introduce survivorship bias.</p>
+                  <p>Coverage detail: {coverageDetail} {sourceSummary(dataEvidence?.sourceCoverage)}.</p>
+                  {dataEvidence?.observationDates && <p>Observed sessions: {dataEvidence.observationDates.earliest} to {dataEvidence.observationDates.latest}; stale datasets: {dataEvidence.observationDates.staleSymbols}.</p>}
+                  {dataEvidence?.membership && <p>Membership source: {dataEvidence.membership.source}; retrieved {scannerDateTime(dataEvidence.membership.observedAt)}; {dataEvidence.membership.freshness}.</p>}
+                </div>
+              </details>
+            )}
           </div>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              retryActiveView();
+            }}
+            disabled={activePending}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04] disabled:opacity-50"
+          >
+            <RefreshCw className={'h-3.5 w-3.5 ' + (activePending ? 'animate-spin' : '')} aria-hidden="true" />
+            {activePending ? 'Loading snapshot...' : 'Reload snapshot'}
+          </button>
         </div>
 
         {/* One universe picker and one session picker. */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl text-xs">
-          <label className="flex items-center gap-2 min-w-0">
-            <Filter aria-hidden="true" className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-            <span className="shrink-0 text-neutral-400">Universe</span>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <label className="flex min-w-0 items-center gap-2 text-xs text-neutral-400">
+            <Filter className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="shrink-0">Universe</span>
             <select
               aria-label="Market universe"
               value={selectedUniverse}
               onChange={(e) => handleUniverseChange(e.target.value as MarketUniverseType)}
-              className="min-w-0 flex-1 rounded-lg border border-[rgba(236,236,237,0.12)] bg-[#171719] px-2.5 py-1.5 font-medium text-white focus:outline-none focus:border-amber-500"
+              className="min-w-0 flex-1 rounded-lg border border-white/12 bg-[#101012] px-2.5 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-[#a8c7fa]/60"
             >
               <optgroup label="Broad and exchanges">
                 <option value="ALL">All markets (NSE + BSE)</option>
@@ -470,7 +484,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <option value="BSE">All BSE stocks</option>
               </optgroup>
               <optgroup label="Benchmark indices">
-                <option value="NIFTY_50">{officialMembership ? 'NIFTY 50 (official 50-member feed)' : 'NIFTY 50-labelled pool'}</option>
+                <option value="NIFTY_50">Nifty 50</option>
                 <option value="BANK_NIFTY">Bank NIFTY</option>
                 <option value="BSE_SENSEX">BSE SENSEX 30</option>
                 <option value="POPULAR_INDICES">Popular indices</option>
@@ -485,14 +499,14 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </select>
           </label>
 
-          <div className="flex min-w-0 items-center gap-2">
-            <label htmlFor="scanner-session" className="shrink-0 text-neutral-400">Session</label>
+          <div className="flex min-w-0 items-center gap-2 text-xs text-neutral-400">
+            <label htmlFor="scanner-session" className="shrink-0">Session</label>
             <select
               id="scanner-session"
               aria-label="Trading session"
               value={selectedDate}
               onChange={(e) => handleDateChange(e.target.value)}
-              className="min-w-0 flex-1 truncate rounded-lg border border-[rgba(236,236,237,0.12)] bg-[#171719] px-2.5 py-1.5 font-medium text-cyan-300 focus:outline-none focus:border-cyan-500"
+              className="min-w-0 flex-1 truncate rounded-lg border border-white/12 bg-[#101012] px-2.5 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-[#a8c7fa]/60"
             >
               <option value="">Latest available cutoff</option>
               {coveredTradingDates.map((item) => (
@@ -504,7 +518,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               onClick={() => setIsCalendarModalOpen(true)}
               aria-label="Open trading session calendar"
               title="Open trading session calendar"
-              className="shrink-0 rounded-lg border border-[rgba(236,236,237,0.12)] bg-[#171719] p-1.5 text-cyan-300 hover:bg-[#1e1e21]"
+              className="shrink-0 rounded-lg border border-white/12 bg-[#101012] p-1.5 text-neutral-300 hover:bg-white/5"
             >
               <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
@@ -512,7 +526,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleDateChange('')}
-                className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] font-bold text-amber-300 hover:bg-amber-500 hover:text-[#101012]"
+                className="shrink-0 rounded-lg border border-white/12 px-2 py-1.5 text-[10px] font-medium text-neutral-300 hover:bg-white/5"
                 title="Reset to latest available data cutoff"
               >
                 Latest
@@ -521,456 +535,236 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           </div>
         </div>
 
-        {/* Navigation Tabs */}
+        {/* Core sections first; the specialists live under More. */}
         <label className="md:hidden block">
           <span className="sr-only">Scanner section</span>
           <select
             aria-label="Scanner section"
             value={activeTab}
             onChange={event => setActiveTab(event.target.value as typeof activeTab)}
-            className="w-full rounded-xl border border-[rgba(236,236,237,0.12)] bg-[#151517] px-3 py-2 text-xs font-semibold text-neutral-100 focus:outline-none focus:border-amber-500"
+            className="w-full rounded-lg border border-white/12 bg-[#101012] px-3 py-2 text-xs text-neutral-100 focus:outline-none focus:border-[#a8c7fa]/60"
           >
             <option value="movers">Top gainers &amp; losers</option>
+            <option value="strategy_matches">Strategy matches</option>
+            <option value="trends">Technical regimes</option>
             <option value="volume_52w">Volume shockers &amp; 52W radar</option>
             <option value="derivatives_oi">Derivatives OI &amp; PCR</option>
-            <option value="option_chain">Option chain &amp; Greeks</option>
+            <option value="option_chain">Option chain &amp; Greeks (demo)</option>
             <option value="volume_profile">Volume profile &amp; VWAP</option>
             <option value="gtt_bracket">GTT bracket &amp; trailing SL</option>
-            <option value="basis_spreads">Basis &amp; calendar spreads</option>
+            <option value="basis_spreads">Basis &amp; calendar spreads (demo)</option>
             <option value="breadth_sectors">Market breadth &amp; heatmap</option>
-            <option value="trends">Technical regimes</option>
-            <option value="strategy_matches">Strategy matches</option>
           </select>
         </label>
-        <div className="hidden md:flex items-center gap-1.5 bg-[#151517] p-1 rounded-xl border border-[rgba(236,236,237,0.08)] text-xs flex-wrap">
-          <button
-            onClick={() => setActiveTab('movers')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'movers' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Flame className="w-3.5 h-3.5" />
-            <span>Top Gainers & Losers</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('volume_52w')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'volume_52w' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5" />
-            <span>Volume Shockers & 52W Radar</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('derivatives_oi')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'derivatives_oi' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Gauge className="w-3.5 h-3.5" />
-            <span>Derivatives OI & PCR</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('option_chain')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'option_chain' ? 'bg-cyan-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Option Chain & Greeks</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('volume_profile')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'volume_profile' ? 'bg-purple-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            <span>Volume Profile & VWAP</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('gtt_bracket')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'gtt_bracket' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Calculator className="w-3.5 h-3.5" />
-            <span>GTT Bracket & Trailing SL</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('basis_spreads')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'basis_spreads' ? 'bg-emerald-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <TrendingUpDown className="w-3.5 h-3.5" />
-            <span>Basis & Calendar Spreads</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('breadth_sectors')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'breadth_sectors' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <BarChart2 className="w-3.5 h-3.5" />
-            <span>Market Breadth & Heatmap</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('trends')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'trends' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Compass className="w-3.5 h-3.5" />
-            <span>Technical Regimes</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('strategy_matches')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap transition-all ${
-              activeTab === 'strategy_matches' ? 'bg-amber-500 text-[#101012] shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Strategy Matches ({isScanning ? 'pending' : scanError ? 'unavailable' : scanResult && scanResult.succeeded > 0 ? scanResult.matched : 'not evaluated'})</span>
-          </button>
+        <div className="relative hidden md:block">
+          <div className="flex flex-wrap items-center gap-1 rounded-lg border border-white/8 bg-[#101012] p-1 text-xs">
+            {([
+              ['movers', 'Top Gainers & Losers', false],
+              ['strategy_matches', 'Strategy matches', false],
+              ['trends', 'Technical Regimes', false],
+              ['volume_52w', 'Volume shockers', false],
+            ] as const).map(([tab, label, demo]) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                aria-current={activeTab === tab ? 'page' : undefined}
+                className={'whitespace-nowrap rounded-md px-3 py-1.5 text-xs transition-colors ' + (activeTab === tab ? 'bg-white/[0.08] font-medium text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
+              >
+                {label}{demo && <span className="ml-1.5 rounded border border-white/10 px-1 text-[10px] text-neutral-500">demo</span>}
+              </button>
+            ))}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setMoreTabsOpen(open => !open)}
+                aria-expanded={moreTabsOpen}
+                aria-controls="scanner-more-sections"
+                className={'flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-xs transition-colors ' + (['derivatives_oi', 'option_chain', 'volume_profile', 'gtt_bracket', 'basis_spreads', 'breadth_sectors'].includes(activeTab) ? 'bg-white/[0.08] font-medium text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
+              >
+                More
+                <ChevronDown className={'h-3 w-3 transition-transform ' + (moreTabsOpen ? 'rotate-180' : '')} aria-hidden="true" />
+              </button>
+              {moreTabsOpen && (
+                <div id="scanner-more-sections" role="group" aria-label="More scanner sections" className="absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-white/12 bg-[#171719] p-1 shadow-xl shadow-black/50">
+                  {([
+                    ['derivatives_oi', 'Derivatives OI & PCR', false],
+                    ['option_chain', 'Option Chain & Greeks', true],
+                    ['volume_profile', 'Volume Profile & VWAP', false],
+                    ['gtt_bracket', 'GTT Bracket & Trailing SL', false],
+                    ['basis_spreads', 'Basis & Calendar Spreads', true],
+                    ['breadth_sectors', 'Market Breadth & Heatmap', false],
+                  ] as const).map(([tab, label, demo]) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => { setActiveTab(tab); setMoreTabsOpen(false); }}
+                      className={'flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ' + (activeTab === tab ? 'bg-white/[0.06] text-neutral-100' : 'text-neutral-300 hover:bg-white/[0.04]')}
+                    >
+                      <span>{label}</span>
+                      {demo && <span className="rounded border border-white/10 px-1 text-[10px] text-neutral-500">demo</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
       {initialLoading ? <ScannerLoadingSkeleton /> : (<>
       {/* TAB 1: TOP GAINERS & TOP LOSERS */}
       {activeTab === 'movers' && (
-        <div className="space-y-4">
-          {/* Universe Header Banner for Gainers & Losers */}
-          <div className="bg-[#171719]/80 border border-[rgba(236,236,237,0.08)] rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
-                <Layers className="w-4 h-4" aria-hidden="true" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-sm font-extrabold text-white">
-                    Top Gainers & Losers Ranking — {currentUniverseConfig.label}
-                  </h3>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#151517] border border-[rgba(236,236,237,0.08)] text-amber-400 font-mono">
-                    {movers ? `${movers.totalFilteredCount} Assets Evaluated` : 'Evaluation pending or unavailable'}
-                  </span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded border font-mono flex items-center gap-1 ${
-                    movers?.isHistorical
-                      ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300 font-bold'
-                      : 'bg-[#151517] border-[rgba(236,236,237,0.08)] text-neutral-300'
-                  }`}>
-                    <Calendar className="w-2.5 h-2.5 text-cyan-400" />
-                    <span>{movers?.isHistorical ? `Historical Session: ${movers?.formattedDate || movers?.asOfDate}` : `Session: ${movers?.formattedDate || movers?.asOfDate || 'Cutoff unavailable'}`}</span>
-                  </span>
-                </div>
-                <p className="text-[11px] text-neutral-400">{currentUniverseConfig.description}</p>
-                <p className="text-[10px] text-neutral-400">Ranking: {rankingSession} EOD. Live LTPs are a separate Angel One overlay and do not change this ranking.</p>
-              </div>
-            </div>
-          </div>
+        <section aria-label="Top gainers and losers" className="space-y-3">
+          <p className="px-1 text-[11px] leading-5 text-neutral-500">
+            {movers ? `${movers.totalFilteredCount} stocks ranked on ${shortDay(movers.asOfDate)} close` : 'Evaluation pending or unavailable.'}
+          </p>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Top Gainers Column */}
-            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3 shadow-sm">
-              <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                    <TrendingUp className="w-4 h-4" />
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {[
+              { key: 'gainer', title: 'Top Gainers', subtitle: 'Top percentage leaders', rows: movers?.topGainers, positive: true, empty: 'Gainers unavailable: no evaluated price coverage.', noRows: 'No gainers in the evaluated subset for this session; full-universe coverage is not established.' },
+              { key: 'loser', title: 'Top Losers', subtitle: 'Deepest percentage declines', rows: movers?.topLosers, positive: false, empty: 'Losers unavailable: no evaluated price coverage.', noRows: 'No losers in the evaluated subset for this session; full-universe coverage is not established.' },
+            ].map(column => (
+              <div key={column.key} className="overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
+                <div className="flex items-baseline justify-between gap-2 border-b border-white/8 px-4 py-3">
+                  <div className="min-w-0">
+                    <h4 className="text-sm font-medium text-neutral-100">{column.title} — {currentUniverseConfig.shortLabel}</h4>
+                    <p className="mt-0.5 text-[11px] text-neutral-500">{column.subtitle}</p>
                   </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Top Gainers — {currentUniverseConfig.shortLabel}</h3>
-                    <p className="text-[10px] text-neutral-400">Top upward momentum and percentage leaders in selected universe</p>
-                  </div>
+                  <span className="shrink-0 font-mono text-[11px] text-neutral-500">{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#151517] border border-emerald-500/30 text-emerald-400 font-mono font-bold">
-                    <Calendar className="w-3 h-3 text-emerald-400" />
-                    <span>{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-2.5">
-                {(!movers?.topGainers || movers.topGainers.length === 0) ? (
-                  <div className="p-8 text-center text-neutral-400 text-xs border border-dashed border-[rgba(236,236,237,0.08)] rounded-xl">
-                    {marketEvaluated > 0 ? 'No gainers in the evaluated subset for this session; full-universe coverage is not established.' : <><span>Gainers unavailable: no evaluated price coverage.</span> <button type="button" onClick={retryActiveView} className="underline text-amber-400">Retry</button></>}
+                {!column.rows || column.rows.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-xs text-neutral-400">
+                    {marketEvaluated > 0 ? column.noRows : <><span>{column.empty}</span> <button type="button" onClick={retryActiveView} className="underline hover:text-neutral-200">Retry</button></>}
                   </div>
                 ) : (
-                  movers.topGainers.map((stock, i) => (
-                    <div
-                      key={`gainer_${stock.id}_${stock.ticker}_${i}`}
-                      className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] hover:border-emerald-500/40 rounded-xl space-y-2 transition-all"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="text-xs font-mono font-bold text-neutral-500 w-4">{i + 1}</span>
-                        <div className="truncate space-y-0.5">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-extrabold text-sm text-white">{stock.ticker}</span>
-                            <span className="text-[10px] text-neutral-400">{stock.sector}</span>
+                  <ol className="divide-y divide-white/6">
+                    {column.rows.map((stock, i) => {
+                      const quote = liveQuoteFor(stock.id);
+                      return (
+                        <li key={column.key + '_' + stock.id + '_' + stock.ticker + '_' + i} className="flex items-start gap-3 px-4 py-3">
+                          <span className="w-4 shrink-0 pt-0.5 font-mono text-[11px] text-neutral-600">{i + 1}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-baseline gap-x-2">
+                              <span className="text-sm font-medium text-neutral-100">{stock.ticker}</span>
+                              <span className="truncate text-[11px] text-neutral-500">{stock.sector}</span>
+                            </div>
+                            <p className="truncate text-[11px] text-neutral-500">{stock.name}</p>
+                            {quote && <QuoteMeta quote={quote} eodClose={stock.ltp} className="mt-1" />}
                           </div>
-                          <p className="text-[11px] text-neutral-400 truncate">{stock.name}</p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-right">
-                          <div className="font-mono font-extrabold text-sm text-white">
-                            {scannerPrice(stock.ltp)}
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            <div className="font-mono text-xs text-neutral-200">{scannerPrice(stock.ltp)}</div>
+                            <div className={'font-mono text-[11px] ' + (column.positive ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(stock.changePercent)}</div>
+                            <button
+                              type="button"
+                              onClick={() => launchBacktest(stock.id, stock.date)}
+                              className="rounded-lg border border-white/12 px-2 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
+                              title={'Backtest the active strategy on ' + stock.ticker}
+                            >
+                              Backtest
+                            </button>
                           </div>
-                          <div className="text-xs font-bold text-emerald-400 flex items-center justify-end gap-0.5">
-                            <TrendingUp className="w-3 h-3" />
-                            <span>{scannerPercent(stock.changePercent)}</span>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => launchBacktest(stock.id, stock.date)}
-                          className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-[#101012] text-[11px] font-bold border border-emerald-500/30 transition-all flex items-center gap-1"
-                          title="Backtest active strategy on this gainer"
-                        >
-                          <span>Backtest</span>
-                          <ArrowRight className="w-3 h-3" />
-                        </button>
-                      </div>
-                      </div>
-                      {liveQuoteFor(stock.id) && <LiveQuoteLine quote={liveQuoteFor(stock.id)!} eodClose={stock.ltp} className="border-t border-white/6 pt-2" />}
-                    </div>
-                  ))
+                        </li>
+                      );
+                    })}
+                  </ol>
                 )}
               </div>
-            </div>
-
-            {/* Top Losers Column */}
-            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3 shadow-sm">
-              <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                    <TrendingDown className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Top Losers — {currentUniverseConfig.shortLabel}</h3>
-                    <p className="text-[10px] text-neutral-400">Deepest pullbacks, dip buy & shorting candidates in selected universe</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-[#151517] border border-rose-500/30 text-rose-400 font-mono font-bold">
-                    <Calendar className="w-3 h-3 text-rose-400" />
-                    <span>{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-2.5">
-                {(!movers?.topLosers || movers.topLosers.length === 0) ? (
-                  <div className="p-8 text-center text-neutral-400 text-xs border border-dashed border-[rgba(236,236,237,0.08)] rounded-xl">
-                    {marketEvaluated > 0 ? 'No losers in the evaluated subset for this session; full-universe coverage is not established.' : <><span>Losers unavailable: no evaluated price coverage.</span> <button type="button" onClick={retryActiveView} className="underline text-amber-400">Retry</button></>}
-                  </div>
-                ) : (
-                  movers.topLosers.map((stock, i) => (
-                    <div
-                      key={`loser_${stock.id}_${stock.ticker}_${i}`}
-                      className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] hover:border-rose-500/40 rounded-xl space-y-2 transition-all"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="text-xs font-mono font-bold text-neutral-500 w-4">{i + 1}</span>
-                        <div className="truncate space-y-0.5">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-extrabold text-sm text-white">{stock.ticker}</span>
-                            <span className="text-[10px] text-neutral-400">{stock.sector}</span>
-                          </div>
-                          <p className="text-[11px] text-neutral-400 truncate">{stock.name}</p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-right">
-                          <div className="font-mono font-extrabold text-sm text-white">
-                            {scannerPrice(stock.ltp)}
-                          </div>
-                          <div className="text-xs font-bold text-rose-400 flex items-center justify-end gap-0.5">
-                            <TrendingDown className="w-3 h-3" />
-                            <span>{scannerPercent(stock.changePercent)}</span>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => launchBacktest(stock.id, stock.date)}
-                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-[#101012] text-[11px] font-bold border border-rose-500/30 transition-all flex items-center gap-1"
-                          title="Backtest active strategy on this dip candidate"
-                        >
-                          <span>Backtest</span>
-                          <ArrowRight className="w-3 h-3" />
-                        </button>
-                      </div>
-                      </div>
-                      {liveQuoteFor(stock.id) && <LiveQuoteLine quote={liveQuoteFor(stock.id)!} eodClose={stock.ltp} className="border-t border-white/6 pt-2" />}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* TAB 2: VOLUME SHOCKERS & 52-WEEK HIGH/LOW RADAR */}
       {activeTab === 'volume_52w' && (
-        <div className="space-y-4">
-          {/* Volume Shockers Section */}
-          <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <Zap className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">Volume Shockers (Volume Surge Multiplier)</h3>
-                  <p className="text-xs text-neutral-400">
-                    Stocks with heavy institutional activity trading well above their 20-day average volume
-                  </p>
-                </div>
+        <section aria-label="Volume shockers and 52-week radar" className="space-y-3">
+          <div className="overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/8 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-medium text-neutral-100">Volume shockers</h3>
+                <p className="mt-0.5 text-[11px] text-neutral-500">Trading above 1.2× their 20-day average volume</p>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">
-                Volume Expansion &gt; 1.2x
-              </span>
+              <span className="font-mono text-[11px] text-neutral-500">{movers?.volumeShockers.length ?? 0} stocks</span>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {movers?.volumeShockers.map(s => (
-                <div
-                  key={`vol_${s.id}_${s.ticker}`}
-                  className="p-3.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] hover:border-amber-500/40 rounded-xl space-y-2.5 transition-all"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="font-extrabold text-sm text-white">{s.ticker}</span>
-                      <p className="text-[11px] text-neutral-400">{s.sector}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="font-bold text-xs text-white">{scannerPrice(s.ltp)}</span>
-                      <div className={`text-[11px] font-bold ${s.changePercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {scannerPercent(s.changePercent)}
+            {!movers?.volumeShockers.length ? (
+              <p className="px-4 py-8 text-center text-xs text-neutral-400">
+                {marketEvaluated > 0 ? 'No volume shockers in the evaluated subset.' : 'Volume shockers unavailable: no evaluated price coverage.'}
+              </p>
+            ) : (
+              <ol className="divide-y divide-white/6">
+                {movers.volumeShockers.map(s => (
+                  <li key={'vol_' + s.id + '_' + s.ticker} className="flex items-start gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-sm font-medium text-neutral-100">{s.ticker}</span>
+                        <span className="truncate text-[11px] text-neutral-500">{s.sector}</span>
                       </div>
+                      <p className="text-[11px] text-neutral-500">{scannerMultiple(s.volumeRatio)} of its 20-day average · {(s.volume / 100000).toFixed(1)} L traded</p>
                     </div>
-                  </div>
-
-                  <div className="p-2 bg-[#171719]/80 rounded-lg border border-[rgba(236,236,237,0.08)]/60 flex items-center justify-between text-xs font-mono">
-                    <div>
-                      <span className="text-neutral-500 block text-[9px]">Volume Surge</span>
-                      <span className="font-extrabold text-amber-400">{scannerMultiple(s.volumeRatio)} of 20D avg</span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-neutral-500 block text-[9px]">Today Volume</span>
-                      <span className="text-neutral-300 font-semibold">{(s.volume / 100000).toFixed(1)} Lakhs</span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => launchBacktest(s.id, s.date)}
-                    className="w-full py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#101012] text-xs font-bold border border-amber-500/30 transition-all flex items-center justify-center gap-1"
-                  >
-                    <span>Backtest {s.ticker}</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 52-Week High/Low Radar */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-                    <TrendingUp className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Near 52-Week High (Breakout Proximity)</h3>
-                    <p className="text-[10px] text-neutral-400">Within 4.5% of lifetime or yearly resistance</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {movers?.nearFiftyTwoWeekHigh.map(s => (
-                  <div key={`high52_${s.id}_${s.ticker}`} className="p-2.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-extrabold text-xs text-white">{s.ticker}</span>
-                        <span className="text-[9px] text-cyan-400 font-mono">{scannerPrice(s.ltp)}</span>
-                      </div>
-                      <span className="text-[10px] text-neutral-400">52W high: {scannerPrice(s.fiftyTwoWeekHigh)}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 font-bold border border-cyan-500/20">
-                        -{scannerNumber(s.distFrom52WHigh)}% away
-                      </span>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <div className="font-mono text-xs text-neutral-200">{scannerPrice(s.ltp)}</div>
+                      <div className={'font-mono text-[11px] ' + (s.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(s.changePercent)}</div>
                       <button
+                        type="button"
                         onClick={() => launchBacktest(s.id, s.date)}
-                        className="p-1 rounded bg-[#1e1e21] hover:bg-[#27272a] text-white"
-                        title="Backtest"
+                        className="rounded-lg border border-white/12 px-2 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
                       >
-                        <ArrowRight className="w-3.5 h-3.5" />
+                        Backtest
                       </button>
                     </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
-            </div>
-
-            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                    <TrendingDown className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Near 52-Week Low (Value Support)</h3>
-                    <p className="text-[10px] text-neutral-400">Within 4.5% of yearly major support</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {movers?.nearFiftyTwoWeekLow.map(s => (
-                  <div key={`low52_${s.id}_${s.ticker}`} className="p-2.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-extrabold text-xs text-white">{s.ticker}</span>
-                        <span className="text-[9px] text-purple-400 font-mono">{scannerPrice(s.ltp)}</span>
-                      </div>
-                      <span className="text-[10px] text-neutral-400">52W low: {scannerPrice(s.fiftyTwoWeekLow)}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 font-bold border border-purple-500/20">
-                        +{scannerNumber(s.distFrom52WLow)}% off low
-                      </span>
-                      <button
-                        onClick={() => launchBacktest(s.id, s.date)}
-                        className="p-1 rounded bg-[#1e1e21] hover:bg-[#27272a] text-white"
-                        title="Backtest"
-                      >
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+              </ol>
+            )}
           </div>
-        </div>
+
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {[
+              { key: 'high', title: 'Near 52-week high', caption: 'Within 4.5% of the yearly high', rows: movers?.nearFiftyTwoWeekHigh, low: false, empty: 'No stocks near a 52-week high in the evaluated subset.' },
+              { key: 'low', title: 'Near 52-week low', caption: 'Within 4.5% of the yearly low', rows: movers?.nearFiftyTwoWeekLow, low: true, empty: 'No stocks near a 52-week low in the evaluated subset.' },
+            ].map(panel => (
+              <div key={panel.key} className="overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
+                <div className="border-b border-white/8 px-4 py-3">
+                  <h3 className="text-sm font-medium text-neutral-100">{panel.title}</h3>
+                  <p className="mt-0.5 text-[11px] text-neutral-500">{panel.caption}</p>
+                </div>
+                {!panel.rows || panel.rows.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-xs text-neutral-400">{marketEvaluated > 0 ? panel.empty : 'Unavailable: no evaluated price coverage.'}</p>
+                ) : (
+                  <ol className="divide-y divide-white/6">
+                    {panel.rows.map(s => {
+                      const distance = panel.low ? s.distFrom52WLow : s.distFrom52WHigh;
+                      const reference = panel.low ? s.fiftyTwoWeekLow : s.fiftyTwoWeekHigh;
+                      return (
+                        <li key={panel.key + '_' + s.id + '_' + s.ticker} className="flex items-center gap-3 px-4 py-2.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-baseline gap-x-2">
+                              <span className="text-sm font-medium text-neutral-100">{s.ticker}</span>
+                              <span className="truncate text-[11px] text-neutral-500">{s.sector}</span>
+                            </div>
+                            <p className="font-mono text-[11px] text-neutral-500">
+                              {panel.low ? '52W low' : '52W high'} {scannerPrice(reference)} · {scannerNumber(distance)}% {panel.low ? 'off the low' : 'below the high'}
+                            </p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="font-mono text-xs text-neutral-200">{scannerPrice(s.ltp)}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => launchBacktest(s.id, s.date)}
+                            className="shrink-0 rounded-lg border border-white/12 px-2 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
+                          >
+                            Backtest
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {latestOnlyUnavailable && (
@@ -990,101 +784,51 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       )}
       {/* TAB 3: DERIVATIVES OPEN INTEREST & PCR SENTIMENT */}
       {activeTab === 'derivatives_oi' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Long Build Up */}
-            <div className="bg-[#171719] border border-emerald-500/30 rounded-2xl p-3.5 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
-                  <TrendingUp className="w-3.5 h-3.5" /> Long Build-Up
-                </span>
-                <span className="text-[10px] font-mono text-neutral-400">Price ▲ | OI ▲</span>
-              </div>
-              <p className="text-[10px] text-neutral-400">Aggressive institutional buying & expanding positions</p>
-              <div className="space-y-1.5 pt-1">
-                {movers?.derivativesBuildup.longBuildup.slice(0, 4).map(s => (
-                  <div
-                    key={`long_buildup_${s.id}_${s.ticker}`}
-                    onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-emerald-500/40 cursor-pointer flex justify-between text-xs"
-                  >
-                    <span className="font-bold text-white">{s.ticker}</span>
-                    <span className="text-emerald-400 font-mono font-semibold">{scannerPercent(s.changePercent)} (OI {scannerPercent(s.oiChangePercent)})</span>
-                  </div>
-                ))}
-              </div>
+        <section aria-label="Derivatives open interest" className="space-y-3">
+          <div className="rounded-xl border border-white/8 bg-[#171719] p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-medium text-neutral-100">Open interest by price action</h3>
+              <span className="text-[11px] text-neutral-500">Model-only fields; not observed derivatives</span>
             </div>
-
-            {/* Short Covering */}
-            <div className="bg-[#171719] border border-cyan-500/30 rounded-2xl p-3.5 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-cyan-400 flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5" /> Short Covering
-                </span>
-                <span className="text-[10px] font-mono text-neutral-400">Price ▲ | OI ▼</span>
-              </div>
-              <p className="text-[10px] text-neutral-400">Bears rushing to buy back & close short contracts</p>
-              <div className="space-y-1.5 pt-1">
-                {movers?.derivativesBuildup.shortCovering.slice(0, 4).map(s => (
-                  <div
-                    key={`short_covering_${s.id}_${s.ticker}`}
-                    onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-cyan-500/40 cursor-pointer flex justify-between text-xs"
-                  >
-                    <span className="font-bold text-white">{s.ticker}</span>
-                    <span className="text-cyan-400 font-mono font-semibold">{scannerPercent(s.changePercent)} (OI {scannerPercent(s.oiChangePercent)})</span>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {[
+                { key: 'long', title: 'Long build-up', reading: 'Price up · OI up', rows: movers?.derivativesBuildup.longBuildup, positive: true },
+                { key: 'cover', title: 'Short covering', reading: 'Price up · OI down', rows: movers?.derivativesBuildup.shortCovering, positive: true },
+                { key: 'short', title: 'Short build-up', reading: 'Price down · OI up', rows: movers?.derivativesBuildup.shortBuildup, positive: false },
+                { key: 'unwind', title: 'Long unwinding', reading: 'Price down · OI down', rows: movers?.derivativesBuildup.longUnwinding, positive: false },
+              ].map(group => (
+                <div key={group.key} className="rounded-lg border border-white/8 bg-[#101012]/60 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h4 className="text-xs font-medium text-neutral-200">{group.title}</h4>
+                    <span className="font-mono text-[10px] text-neutral-500">{group.reading}</span>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Short Build Up */}
-            <div className="bg-[#171719] border border-rose-500/30 rounded-2xl p-3.5 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-rose-400 flex items-center gap-1">
-                  <TrendingDown className="w-3.5 h-3.5" /> Short Build-Up
-                </span>
-                <span className="text-[10px] font-mono text-neutral-400">Price ▼ | OI ▲</span>
-              </div>
-              <p className="text-[10px] text-neutral-400">Fresh short positions created with downside momentum</p>
-              <div className="space-y-1.5 pt-1">
-                {movers?.derivativesBuildup.shortBuildup.slice(0, 4).map(s => (
-                  <div
-                    key={`short_buildup_${s.id}_${s.ticker}`}
-                    onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-rose-500/40 cursor-pointer flex justify-between text-xs"
-                  >
-                    <span className="font-bold text-white">{s.ticker}</span>
-                    <span className="text-rose-400 font-mono font-semibold">{scannerPercent(s.changePercent)} (OI {scannerPercent(s.oiChangePercent)})</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Long Unwinding */}
-            <div className="bg-[#171719] border border-amber-500/30 rounded-2xl p-3.5 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
-                  <TrendingUpDown className="w-3.5 h-3.5" /> Long Unwinding
-                </span>
-                <span className="text-[10px] font-mono text-neutral-400">Price ▼ | OI ▼</span>
-              </div>
-              <p className="text-[10px] text-neutral-400">Profit booking by bullish position holders</p>
-              <div className="space-y-1.5 pt-1">
-                {movers?.derivativesBuildup.longUnwinding.slice(0, 4).map(s => (
-                  <div
-                    key={`long_unwind_${s.id}_${s.ticker}`}
-                    onClick={() => launchBacktest(s.id, s.date)}
-                    className="p-2 bg-[#151517] rounded-lg border border-[rgba(236,236,237,0.08)] hover:border-amber-500/40 cursor-pointer flex justify-between text-xs"
-                  >
-                    <span className="font-bold text-white">{s.ticker}</span>
-                    <span className="text-amber-400 font-mono font-semibold">{scannerPercent(s.changePercent)} (OI {scannerPercent(s.oiChangePercent)})</span>
-                  </div>
-                ))}
-              </div>
+                  {!group.rows || group.rows.length === 0 ? (
+                    <p className="py-3 text-center text-[11px] text-neutral-500">No names in this group for the evaluated subset.</p>
+                  ) : (
+                    <ul className="mt-1 divide-y divide-white/6">
+                      {group.rows.slice(0, 4).map(s => (
+                        <li key={group.key + '_' + s.id + '_' + s.ticker} className="flex items-center justify-between gap-2 py-1.5 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => launchBacktest(s.id, s.date)}
+                            className="font-mono text-neutral-200 underline-offset-2 hover:text-white hover:underline"
+                            title={'Backtest the active strategy on ' + s.ticker}
+                          >
+                            {s.ticker}
+                          </button>
+                          <span className="text-right">
+                            <span className={group.positive ? 'text-emerald-300' : 'text-rose-300'}>{scannerPercent(s.changePercent)}</span>
+                            <span className="text-neutral-500"> · OI {scannerPercent(s.oiChangePercent)}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-        </div>
+        </section>
       )}
 
       {modelModeUnavailable && (
@@ -1125,100 +869,78 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
       {/* TAB 4: MARKET BREADTH & SECTOR HEATMAP */}
       {activeTab === 'breadth_sectors' && (
-        <div className="space-y-4">
-          {/* Breadth Overview */}
-          {movers && (
-            <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">NSE Market Breadth (Advances vs Declines)</h3>
-                <span className="text-xs font-mono font-bold text-neutral-300">
-                  ADR: <span className="text-cyan-400">{scannerNumber(movers.marketBreadth.advanceDeclineRatio, 2)}</span> ({scannerNumber(movers.marketBreadth.bullishPercent, 1)}% bullish)
-                </span>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="w-full h-4 bg-[#151517] rounded-full overflow-hidden flex border border-[rgba(236,236,237,0.08)]">
-                <div
-                  style={{ width: `${movers.marketBreadth.bullishPercent}%` }}
-                  className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 flex items-center justify-center text-[10px] font-bold text-[#101012]"
-                >
-                  {movers.marketBreadth.advances} Advancing
-                </div>
-                <div
-                  style={{ width: `${100 - movers.marketBreadth.bullishPercent}%` }}
-                  className="h-full bg-gradient-to-r from-rose-600 to-rose-400 flex items-center justify-center text-[10px] font-bold text-white"
-                >
-                  {movers.marketBreadth.declines} Declining
-                </div>
-              </div>
+        <section aria-label="Market breadth and sectors" className="space-y-3">
+          <div className="rounded-xl border border-white/8 bg-[#171719] p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-medium text-neutral-100">Market breadth</h3>
+              <span className="font-mono text-[11px] text-neutral-500">
+                {movers ? `${scannerNumber(movers.marketBreadth.advanceDeclineRatio, 2)} advance/decline · ${scannerNumber(movers.marketBreadth.bullishPercent, 1)}% bullish` : 'Not reported'}
+              </span>
             </div>
-          )}
-
-          {/* Sector Heatmap Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {movers?.sectorHeatmap.map(sec => (
-              <div
-                key={sec.sector}
-                className="p-4 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-3 hover:border-[rgba(236,236,237,0.12)] transition-all"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="font-bold text-sm text-white">{sec.sector}</h4>
-                    <span className="text-[11px] text-neutral-400">{sec.count} Constituents</span>
-                  </div>
-                  <div
-                    className={`text-sm font-extrabold font-mono px-2.5 py-1 rounded-lg ${
-                      sec.avgChangePercent >= 0
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                    }`}
-                  >
-                    {scannerPercent(sec.avgChangePercent)}
-                  </div>
+            {movers ? (
+              <>
+                <div className="mt-3 flex h-2 w-full overflow-hidden rounded-full bg-[#101012]" role="img" aria-label={`${movers.marketBreadth.advances} advancing, ${movers.marketBreadth.declines} declining, ${movers.marketBreadth.unchanged} unchanged`}>
+                  <div style={{ width: `${movers.marketBreadth.bullishPercent}%` }} className="h-full bg-emerald-400/80" />
+                  <div style={{ width: `${100 - movers.marketBreadth.bullishPercent}%` }} className="h-full bg-rose-400/70" />
                 </div>
-
-                <div className="flex items-center justify-between text-xs text-neutral-400 pt-2 border-t border-[rgba(236,236,237,0.08)]">
-                  <span className="text-emerald-400 font-semibold">{sec.advances} Advancing</span>
-                  <span className="text-rose-400 font-semibold">{sec.declines} Declining</span>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                  <span className="text-emerald-300">{movers.marketBreadth.advances} advancing</span>
+                  <span className="text-rose-300">{movers.marketBreadth.declines} declining</span>
+                  <span className="text-neutral-500">{movers.marketBreadth.unchanged} unchanged</span>
                 </div>
-              </div>
-            ))}
+              </>
+            ) : (
+              <p className="mt-3 text-[11px] text-neutral-500">Breadth is unavailable for this context; nothing is inferred.</p>
+            )}
           </div>
-        </div>
+
+          <div className="overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/8 px-4 py-3">
+              <h3 className="text-sm font-medium text-neutral-100">Sectors</h3>
+              <span className="font-mono text-[11px] text-neutral-500">{movers?.sectorHeatmap.length ?? 0} groups</span>
+            </div>
+            {!movers?.sectorHeatmap.length ? (
+              <p className="px-4 py-8 text-center text-xs text-neutral-400">Sector breadth unavailable: no evaluated price coverage.</p>
+            ) : (
+              <ul className="divide-y divide-white/6">
+                {movers.sectorHeatmap.map(sec => (
+                  <li key={sec.sector} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-neutral-100">{sec.sector}</p>
+                      <p className="text-[11px] text-neutral-500">{sec.count} constituents · {sec.advances} advancing · {sec.declines} declining</p>
+                    </div>
+                    <span className={'font-mono text-xs ' + (sec.avgChangePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
+                      {scannerPercent(sec.avgChangePercent)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
       )}
 
       {/* TAB 5: TECHNICAL REGIMES */}
       {activeTab === 'trends' && (
-        <div className="space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-neutral-400 px-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span>
-                Showing <strong className="text-white">{filteredTrends.length}</strong> active {currentUniverseConfig.shortLabel} constituents
-              </span>
-              {filteredTrends.length > TREND_ITEMS_PER_PAGE && (
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-[#1e1e21] text-amber-300 font-mono">
-                  Page {currentPageSafe} of {totalTrendPages} ({paginatedTrends.length} shown)
-                </span>
-              )}
-              <p className="w-full text-[10px] text-neutral-500">
-                Technical ranks use the {rankingSession} EOD session. Live LTPs are a separate Angel One overlay.
+        <section aria-label="Technical regimes" className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
+            <div>
+              <h3 className="text-sm font-semibold text-neutral-100">Technical regimes — {currentUniverseConfig.shortLabel}</h3>
+              <p className="mt-1 text-[11px] text-neutral-500">
+                Showing {filteredTrends.length} evaluated constituents. Technical ranks use the {rankingSession} EOD session. Live LTPs are a separate overlay.
               </p>
             </div>
-            
-            {/* Quick Filter Chips */}
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex flex-wrap items-center gap-1">
               {(['ALL', 'BULLISH', 'OVERSOLD', 'BREAKOUT', 'GOLDEN_CROSS'] as const).map(f => (
                 <button
                   key={f}
+                  type="button"
                   onClick={() => {
                     setTrendFilter(f);
                     setTrendPage(1);
                   }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                    trendFilter === f
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : 'bg-[#151517] text-neutral-400 border border-[rgba(236,236,237,0.08)] hover:text-white'
-                  }`}
+                  aria-pressed={trendFilter === f}
+                  className={'rounded-md border px-2 py-1 text-[11px] transition-colors ' + (trendFilter === f ? 'border-[#a8c7fa]/40 bg-white/[0.06] text-neutral-100' : 'border-white/10 text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-200')}
                 >
                   {f === 'ALL' && 'All regimes'}
                   {f === 'BULLISH' && 'Strong bullish'}
@@ -1230,9 +952,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </div>
           </div>
 
-          {/* Quick Search across 2000+ Universe */}
           <div className="relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-500" />
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" aria-hidden="true" />
             <input
               type="text"
               value={trendSearchQuery}
@@ -1240,16 +961,18 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 setTrendSearchQuery(e.target.value);
                 setTrendPage(1);
               }}
-              placeholder={`Search across ${trends.length > 0 ? trends.length : '2,000+'} stocks (e.g. RELIANCE, TCS, TATAMOTORS, HDFCBANK, ZOMATO, or sector)...`}
-              className="w-full pl-9 pr-24 py-2 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/30"
+              placeholder={`Search ${trends.length > 0 ? trends.length : 'the'} evaluated symbols (ticker, name or sector)`}
+              aria-label="Search technical regimes"
+              className="w-full rounded-lg border border-white/12 bg-[#171719] py-2 pl-9 pr-16 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-[#a8c7fa]/60 focus:outline-none"
             />
             {trendSearchQuery && (
               <button
+                type="button"
                 onClick={() => {
                   setTrendSearchQuery('');
                   setTrendPage(1);
                 }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-neutral-400 hover:text-white bg-[#1e1e21] px-2 py-0.5 rounded-md"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] text-neutral-400 hover:bg-white/5 hover:text-neutral-200"
               >
                 Clear
               </button>
@@ -1257,220 +980,191 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           </div>
 
           {isLoadingTrends ? (
-            <div className="p-16 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-400 space-y-3">
-              <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs">Loading available price data and evaluating trends; coverage may be partial.</p>
+            <div role="status" className="rounded-xl border border-white/8 bg-[#171719] px-4 py-10 text-center text-xs text-neutral-400">
+              Loading available price data and evaluating regimes; coverage may be partial.
             </div>
           ) : filteredTrends.length === 0 ? (
-            <div className="p-12 text-center border border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-400 space-y-2">
-              <Search className="w-6 h-6 text-neutral-500 mx-auto" />
-              <p className="text-sm font-semibold text-neutral-300">{marketEvaluated > 0 ? `No matching stocks in the evaluated subset for "${trendSearchQuery}"` : 'Trends unavailable: no evaluated price coverage.'}</p>
-              {marketEvaluated === 0 && <button type="button" onClick={retryActiveView} className="text-xs underline text-amber-400">Retry market snapshot</button>}
-              <p className="text-xs text-neutral-500">{marketEvaluated > 0 ? 'Try searching for a different symbol or clear your filter' : 'Reload the snapshot to retry unavailable data.'}</p>
+            <div className="rounded-xl border border-dashed border-white/12 px-4 py-10 text-center text-xs text-neutral-400">
+              <p className="text-sm text-neutral-300">{marketEvaluated > 0 ? `No matching stocks in the evaluated subset for "${trendSearchQuery}"` : 'Trends unavailable: no evaluated price coverage.'}</p>
+              {marketEvaluated === 0 ? (
+                <button type="button" onClick={retryActiveView} className="mt-2 underline hover:text-neutral-200">Retry market snapshot</button>
+              ) : (
+                <p className="mt-1 text-[11px]">Try a different ticker, or clear the filter.</p>
+              )}
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                {paginatedTrends.map(t => (
-                  <div
-                    key={`trend_${t.id}_${t.ticker}`}
-                    className="p-4 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-amber-500/40 transition-all space-y-3 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-extrabold text-base text-white">{t.ticker}</span>
-                          <span className="text-[10px] text-neutral-400">{t.sector}</span>
+              <ul className="divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
+                {paginatedTrends.map(t => {
+                  const quote = liveQuoteFor(t.id);
+                  return (
+                    <li key={'trend_' + t.id + '_' + t.ticker} className="space-y-2 px-4 py-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-baseline gap-x-2">
+                            <span className="text-sm font-medium text-neutral-100">{t.ticker}</span>
+                            <span className="text-[11px] text-neutral-500">{t.sector}</span>
+                          </div>
+                          <p className="truncate text-[11px] text-neutral-500">{t.name}</p>
+                          {quote && <QuoteMeta quote={quote} eodClose={t.ltp} className="mt-1" />}
                         </div>
-                        <p className="text-xs text-neutral-400 mt-0.5">{t.name}</p>
-                      </div>
-
-                      <div className="text-right shrink-0">
-                        <div className="font-mono font-extrabold text-base text-white">
-                          {scannerPrice(t.ltp)}
-                        </div>
-                        <div
-                          className={`text-xs font-bold flex items-center justify-end gap-1 ${
-                            t.changePercent >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                          }`}
-                        >
-                          {t.changePercent >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                          <span>{scannerPercent(t.changePercent)}</span>
+                        <div className="shrink-0 text-right">
+                          <div className="font-mono text-xs text-neutral-200">{scannerPrice(t.ltp)}</div>
+                          <div className={'font-mono text-[11px] ' + (t.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(t.changePercent)}</div>
                         </div>
                       </div>
-                    </div>
 
-                    {liveQuoteFor(t.id) && <LiveQuoteLine quote={liveQuoteFor(t.id)!} eodClose={t.ltp} className="border-t border-white/6 pt-2" />}
-
-                    <div className="flex items-center justify-between p-2.5 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl text-[11px]">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            t.trend === 'STRONG_BULLISH'
-                              ? 'bg-emerald-400 animate-pulse'
-                              : t.trend === 'BULLISH'
-                              ? 'bg-emerald-500'
-                              : t.trend === 'OVERSOLD_REVERSAL'
-                              ? 'bg-amber-400'
-                              : 'bg-rose-400'
-                          }`}
-                        />
-                        <span className="font-semibold text-neutral-200">{t.trendLabel}</span>
-                      </div>
-                      <span className="font-mono font-bold text-amber-400 text-[10px] uppercase">
-                        {t.signalLabel}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-4 gap-2 text-center text-[10px] font-mono p-2 bg-[#151517]/40 rounded-xl border border-[rgba(236,236,237,0.08)]/60">
-                      <div>
-                        <span className="text-neutral-500 block text-[9px]">RSI (14)</span>
-                        <span className={`font-bold ${t.rsi > 65 ? 'text-emerald-400' : t.rsi < 35 ? 'text-amber-400' : 'text-neutral-300'}`}>
-                          {scannerNumber(t.rsi, 1)}
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-neutral-400">
+                        <span className="flex items-center gap-1.5">
+                          <span aria-hidden="true" className={'h-1.5 w-1.5 rounded-full ' + (t.trend === 'STRONG_BULLISH' ? 'bg-emerald-400' : t.trend === 'BULLISH' ? 'bg-emerald-500' : t.trend === 'OVERSOLD_REVERSAL' ? 'bg-amber-400' : 'bg-rose-400')} />
+                          <span className="text-neutral-300">{t.trendLabel}</span>
                         </span>
+                        <span className="text-neutral-500">{t.signalLabel}</span>
+                        <span className="font-mono text-neutral-500">RSI {scannerNumber(t.rsi, 1)}</span>
+                        <span className="font-mono text-neutral-500">20 EMA {scannerPrice(t.ema20)}</span>
+                        <span className="font-mono text-neutral-500">50 SMA {scannerPrice(t.sma50)}</span>
+                        <span className="font-mono text-neutral-500">H/L {scannerNumber(t.high)} / {scannerNumber(t.low)}</span>
                       </div>
-                      <div>
-                        <span className="text-neutral-400 block text-[9px]">20 EMA</span>
-                        <span className="text-neutral-300 font-semibold">{scannerPrice(t.ema20)}</span>
-                      </div>
-                      <div>
-                        <span className="text-neutral-400 block text-[9px]">50 SMA</span>
-                        <span className="text-neutral-300 font-semibold">{scannerPrice(t.sma50)}</span>
-                      </div>
-                      <div>
-                        <span className="text-neutral-400 block text-[9px]">Day High/Low</span>
-                        <span className="text-neutral-400">{scannerNumber(t.high)} / {scannerNumber(t.low)}</span>
-                      </div>
-                    </div>
 
-                    <button
-                      onClick={() => launchBacktest(t.id, t.date)}
-                      className="w-full py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#101012] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
-                    >
-                      <span>Backtest active strategy on {t.ticker}</span>
-                      <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => launchBacktest(t.id, t.date)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1 text-[11px] text-neutral-300 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
+                      >
+                        <span>Backtest {t.ticker} with the active strategy</span>
+                        <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
 
-              {/* Pagination Controls */}
               {totalTrendPages > 1 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#171719]/80 border border-[rgba(236,236,237,0.08)] rounded-xl text-xs text-neutral-400">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/8 bg-[#171719] px-4 py-2.5 text-[11px] text-neutral-400">
                   <div className="flex items-center gap-2">
                     <button
+                      type="button"
                       onClick={() => setTrendPage(p => Math.max(1, p - 1))}
                       disabled={currentPageSafe <= 1}
-                      className="px-3 py-1.5 rounded-lg bg-[#1e1e21] hover:bg-[#27272a] disabled:opacity-40 disabled:pointer-events-none text-white font-medium flex items-center gap-1 transition-all"
+                      className="inline-flex items-center gap-1 rounded-lg border border-white/12 px-2.5 py-1 text-neutral-300 hover:bg-white/[0.04] disabled:pointer-events-none disabled:opacity-40"
                     >
-                      <ChevronLeft className="w-3.5 h-3.5" />
-                      <span>Previous</span>
+                      <ChevronLeft className="h-3 w-3" aria-hidden="true" />
+                      Previous
                     </button>
                     <button
+                      type="button"
                       onClick={() => setTrendPage(p => Math.min(totalTrendPages, p + 1))}
                       disabled={currentPageSafe >= totalTrendPages}
-                      className="px-3 py-1.5 rounded-lg bg-[#1e1e21] hover:bg-[#27272a] disabled:opacity-40 disabled:pointer-events-none text-white font-medium flex items-center gap-1 transition-all"
+                      className="inline-flex items-center gap-1 rounded-lg border border-white/12 px-2.5 py-1 text-neutral-300 hover:bg-white/[0.04] disabled:pointer-events-none disabled:opacity-40"
                     >
-                      <span>Next</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
+                      Next
+                      <ChevronRight className="h-3 w-3" aria-hidden="true" />
                     </button>
                   </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-neutral-400">
-                      Page <strong className="text-white">{currentPageSafe}</strong> of <strong className="text-white">{totalTrendPages}</strong>
-                    </span>
-                    <span className="text-neutral-500">•</span>
-                    <span className="text-neutral-400">{filteredTrends.length} total matching stocks</span>
-                  </div>
+                  <span>Page {currentPageSafe} of {totalTrendPages} · {filteredTrends.length} matching symbols</span>
                 </div>
               )}
             </>
           )}
-        </div>
+        </section>
       )}
 
       {/* TAB 6: STRATEGY SCREENER MATCHES */}
       {activeTab === 'strategy_matches' && (
-        <div className="space-y-3">
-          {scanResult && !scanError && (
-            <div className="flex items-center justify-between text-xs text-neutral-400 px-1">
-              <span>
-                Evaluated <strong className="text-white">{scanResult.succeeded}</strong> symbols in the requested subset • Found{' '}
-                <strong className="text-emerald-400">{scanResult.succeeded > 0 ? scanResult.matched : 'unavailable'}</strong> matching trigger setups. Unavailable: {scanResult.unavailable}; failed: {scanResult.failed}.
-              </span>
-              <span className="text-[11px] font-mono text-neutral-500">Source: {(SOURCE_LABELS[scanResult.dataSource] ?? scanResult.dataSource.toLowerCase().replace(/_/g, ' '))} · not live</span>
+        <section aria-label="Strategy matches" className="space-y-3">
+          <div className="rounded-xl border border-white/8 bg-[#171719] p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-medium text-neutral-100">Scanning {currentUniverseConfig.shortLabel} with “{strategy.name}”</h3>
+              <span className="font-mono text-[11px] text-neutral-500">Session: {initialLoading ? 'loading…' : dataCutoff || 'Cutoff unavailable'}</span>
             </div>
+            <p className="mt-1 text-[11px] leading-5 text-neutral-500">
+              A symbol matches when every entry condition below is true on the latest completed bar. Unavailable values never satisfy a condition.
+            </p>
+            {(strategy.rules?.entry ?? []).length > 0 ? (
+              <ul className="mt-2 space-y-1">
+                {(strategy.rules?.entry ?? []).map((rule, index) => (
+                  <li key={index} className="font-mono text-[11px] leading-5 text-neutral-300">{plainRule(rule, strategy.indicators)}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-[11px] text-neutral-500">No entry conditions are defined in this strategy.</p>
+            )}
+            {(strategy.rules?.exit ?? []).length > 0 && (
+              <p className="mt-2 text-[11px] leading-5 text-neutral-500">
+                Exit: <span className="font-mono text-neutral-400">{(strategy.rules?.exit ?? []).map(rule => plainRule(rule, strategy.indicators)).join(' · ')}</span>
+              </p>
+            )}
+          </div>
+
+          {scanResult && !scanError && (
+            <p className="px-1 text-[11px] leading-5 text-neutral-500">
+              Evaluated {scanResult.succeeded} symbols · found{' '}
+              <span className="text-neutral-200">{scanResult.succeeded > 0 ? scanResult.matched : 'unavailable'}</span> matches · unavailable {scanResult.unavailable} · failed {scanResult.failed}
+              {' · '}source {SOURCE_LABELS[scanResult.dataSource] ?? 'reported as ' + scanResult.dataSource} (not live)
+            </p>
           )}
 
           {isScanning ? (
-            <div className="p-16 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-400 space-y-3">
-              <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs">Evaluating technical rules against universe...</p>
+            <div role="status" className="rounded-xl border border-white/8 bg-[#171719] px-4 py-10 text-center text-xs text-neutral-400">
+              Evaluating the entry conditions against {currentUniverseConfig.shortLabel}. Coverage may be partial.
             </div>
           ) : !scanError && scanResult && scanResult.matches.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            <ul className="divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
               {scanResult.matches.map((m, idx) => (
-                <div
-                  key={`scan_${m.symbolId}_${m.ticker}_${idx}`}
-                  className="p-4 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl hover:border-amber-500/40 transition-all space-y-3 shadow-sm"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-base text-white">{m.ticker}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1e1e21] text-neutral-400 font-medium">
-                          {m.sector}
-                        </span>
+                <li key={'scan_' + m.symbolId + '_' + m.ticker + '_' + idx} className="space-y-2 px-4 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-sm font-medium text-neutral-100">{m.ticker}</span>
+                        <span className="text-[11px] text-neutral-500">{m.sector}</span>
                       </div>
-                      <p className="text-xs text-neutral-400 mt-0.5">{m.name}</p>
+                      <p className="truncate text-[11px] text-neutral-500">{m.name}</p>
                     </div>
-
-                    <div className="text-right">
-                      <div className="font-mono font-bold text-base text-white">{scannerPrice(m.lastClose)}</div>
-                      <div className={`text-xs font-semibold ${m.changePercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {scannerPercent(m.changePercent)}
-                      </div>
+                    <div className="shrink-0 text-right">
+                      <div className="font-mono text-xs text-neutral-200">{scannerPrice(m.lastClose)}</div>
+                      <div className={'font-mono text-[11px] ' + (m.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(m.changePercent)}</div>
                     </div>
                   </div>
 
-                  <div className="p-2.5 bg-[#151517]/70 border border-[rgba(236,236,237,0.08)] rounded-xl space-y-1.5 text-[11px]">
-                    <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1 uppercase tracking-wider">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Entry Rule Verified:
-                    </span>
-                    {m.matchedRules.map((r, idx) => (
-                      <div key={idx} className="flex justify-between text-neutral-300">
-                        <span className="font-mono text-neutral-400">{r.rule}</span>
-                        <span className="font-mono font-semibold text-emerald-400">
-                          Actual: {scannerNumber(r.actualLeft)} vs {scannerNumber(r.actualRight)}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="rounded-lg border border-white/8 bg-[#101012] px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-neutral-500">Entry conditions verified</p>
+                    <div className="mt-1 space-y-1">
+                      {m.matchedRules.map((r, ruleIndex) => (
+                        <div key={ruleIndex} className="flex flex-wrap justify-between gap-x-3 font-mono text-[11px]">
+                          <span className="text-neutral-400">{r.rule}</span>
+                          <span className="text-neutral-200">Actual: {scannerNumber(r.actualLeft)} vs {scannerNumber(r.actualRight)}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <button
+                    type="button"
                     onClick={() => launchBacktest(m.symbolId, m.lastDate)}
-                    className="w-full py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-[#101012] font-bold text-xs border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all shadow-sm group"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
                   >
                     <span>Load & Run Backtest on {m.ticker}</span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                    <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           ) : (
-            <div className="p-12 text-center border border-dashed border-[rgba(236,236,237,0.08)] rounded-2xl bg-[#171719]/30 text-neutral-500 text-xs space-y-2">
+            <div className="rounded-xl border border-dashed border-white/12 px-4 py-10 text-center text-xs text-neutral-400">
               <p>{scanError ? 'Strategy scan failed. Results are unavailable; retry the scan.' : scanResult && scanResult.succeeded > 0 && scanResult.matched === 0 ? `No matches in the ${scanResult.succeeded} evaluated symbols. This does not establish no matches across the full universe.` : 'Strategy results unavailable: no evaluated coverage was reported.'}</p>
-              {!scanError && <button type="button" onClick={() => void runScan()} className="underline text-amber-400">Retry strategy scan</button>}
-              <button
-                onClick={() => setActiveTab('movers')}
-                className="px-3 py-1.5 rounded-lg bg-[#1e1e21] text-amber-400 font-semibold text-xs border border-[rgba(236,236,237,0.12)] hover:bg-[#27272a]"
-              >
-                Switch to Top Gainers / Losers View
-              </button>
+              {!scanError && <button type="button" onClick={() => void runScan()} className="mt-2 underline hover:text-neutral-200">Retry strategy scan</button>}
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('movers')}
+                  className="rounded-lg border border-white/12 px-3 py-1.5 text-[11px] text-neutral-300 hover:bg-white/[0.04]"
+                >
+                  Switch to Top Gainers / Losers View
+                </button>
+              </div>
             </div>
           )}
-        </div>
+        </section>
       )}
 
       </>)}

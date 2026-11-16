@@ -79,6 +79,7 @@ describe('provider settings', () => {
     expect(await screen.findByText('Saved (…ab12)')).toBeTruthy();
     expect(screen.getByText('From env')).toBeTruthy();
     expect(screen.getByText('No key')).toBeTruthy();
+    expect(screen.getByText(/means no key in the server environment and none saved here/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit OpenRouter' }));
 

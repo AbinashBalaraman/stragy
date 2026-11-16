@@ -7,6 +7,10 @@ import { canonicalStrategySignature, exitRuleCompatibility } from '../../shared/
 import { assertProposalCurrent, parseStrategyProposal, type StrategyProposal } from '../../shared/contracts/ai-proposal';
 import { requestScan, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
+import { requestFeatureSetup } from '../../client/featureSetup';
+import { publishFeaturePrefill } from '../../client/featureHandoff';
+import { readPreferences, rememberPreference } from '../../client/preferences';
+import { getSymbolById } from '../../shared/data/symbols';
 import { prepareChartImage, requestChartAnalysis, CHART_IMAGE_ACCEPT, type ChartAnalysisResponse, type ChartImageAttachment, type ChartImageReading } from '../../client/chartAnalysis';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import { ScreenResultCard } from './ScreenResultCard';
@@ -65,6 +69,15 @@ const MessageSchema = z.object({
 const MessageListSchema = z.array(MessageSchema).max(40);
 const HISTORY_KEY = 'stragy_copilot_review_history_v2';
 const ARCHIVE_KEY = 'stragy_copilot_previous_conversation_v1';
+
+/** Only explicit rule sentences enter the async feature-setup call path. */
+function wantsFeatureSetup(text: string): boolean {
+  const explicitRules = /\brsi\b/i.test(text)
+    && /(?:below|above|under|over|less\s+than|greater\s+than|<|>)/i.test(text)
+    && /\d/.test(text);
+  const asksTester = /\b(?:backtest|strategy\s+tester|test\s+(?:this|the)\s+strategy|run\s+(?:this|the)\s+strategy)\b/i.test(text);
+  return explicitRules && asksTester;
+}
 
 function loadMessages(key: string): ChatMessage[] {
   try { return MessageListSchema.parse(JSON.parse(localStorage.getItem(key) ?? '[]')); } catch { return []; }
@@ -473,6 +486,11 @@ export const AiCopilotDock: React.FC<Props> = ({
       setReviewStatus('idle');
       setReviewError('');
       setAwaitingSymbolFor(null);
+      rememberPreference({
+        symbolId: symbol.id,
+        ticker: symbol.ticker,
+        riskPercent: candidate.risk.stopLoss?.type === 'percent' ? candidate.risk.stopLoss.value : undefined,
+      });
       append('assistant', 'I prepared a backtest review for ' + symbol.ticker + '. Nothing has been applied or run. Review the assumptions, then choose “Use these assumptions and run”.');
     } catch (caught) {
       setReviewError((caught as Error).message);
@@ -675,6 +693,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       throw new Error('Real current data is unavailable. Demo results were not presented as stock matches.');
     }
     setScanResult(scanned);
+    rememberPreference({ universe: 'NIFTY_50' });
   }
 
   const retryScreenScan = async () => {
@@ -699,6 +718,69 @@ export const AiCopilotDock: React.FC<Props> = ({
     }
   };
 
+  /**
+   * The copilot fills the Strategy tester from explicit rules in the message,
+   * using the feature registry. The filled setup is validated server-side against
+   * the same schema; a missing field yields exactly one question, never an
+   * invented symbol or rule.
+   */
+  const prepareFromFeatureSetup = async (text: string): Promise<boolean> => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await requestFeatureSetup({ message: text, currentStrategy: strategy, preferences: readPreferences() });
+      if (data.status === 'needs-input') {
+        append('assistant', data.question);
+        return true;
+      }
+      if (data.setup.feature === 'strategy_tester') {
+        const setup = data.setup;
+        const symbol = symbols.find(candidate => candidate.id === setup.strategy.universe.symbolId)
+          ?? getSymbolById(setup.strategy.universe.symbolId);
+        const candidate = snapshotStrategy(setup.strategy);
+        const signature = canonicalStrategySignature(candidate);
+        if (!signature) throw new Error('The filled strategy did not pass canonical validation. Nothing was run.');
+        const next: BacktestReview = {
+          id: 'review_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+          strategy: candidate,
+          symbol,
+          asOf: setup.asOf ?? setup.end,
+          sourceLabel: 'AI-filled strategy tester setup from your message',
+          sourceType: 'draft',
+          assumptions: setup.assumptions,
+          originSnapshot: JSON.stringify(strategy),
+          strategySignature: signature,
+          runOptions: { start: setup.start, end: setup.end, asOf: setup.asOf, initialCapital: setup.initialCapital, seed: setup.seed, robustness: setup.robustness },
+        };
+        supersedeReview();
+        setReview(next);
+        setReviewStatus('idle');
+        setReviewError('');
+        setAwaitingSymbolFor(null);
+        setLastContext('draft');
+        publishFeaturePrefill(setup);
+        rememberPreference({
+          symbolId: symbol.id,
+          ticker: symbol.ticker,
+          riskPercent: candidate.risk.stopLoss?.type === 'percent' ? candidate.risk.stopLoss.value : undefined,
+        });
+        append('assistant', 'I filled the strategy tester for ' + symbol.ticker + ' from your message. Review the assumptions below; nothing has been run or applied.');
+        return true;
+      }
+      if (data.setup.feature === 'market_scanner') {
+        publishFeaturePrefill(data.setup);
+        append('assistant', 'I filled a ' + data.setup.universe + ' scan setup. Open Market scanner to review it; nothing has been run.');
+        return true;
+      }
+      return false;
+    } catch (caught) {
+      setError((caught as Error).message);
+      return true;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const submitText = async (raw: string, attachedImage: ChartImageAttachment | null = null) => {
     const text = raw.trim();
     if ((!text && !attachedImage) || loading || reviewStatus === 'running' || pendingApply.current) return;
@@ -713,6 +795,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       const reply = classifyReviewReply(text);
       if (handleApproval(reply, text)) return;
       if (handleAwaitingSymbol(text)) return;
+      if (wantsFeatureSetup(text) && await prepareFromFeatureSetup(text)) return;
 
       const intent = parseBacktestIntent(text);
       if (intent.kind === 'negated') {

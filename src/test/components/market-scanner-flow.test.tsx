@@ -14,7 +14,7 @@ const snapshot = () => ({ trends: [], errors: [], coverage: { requested: 84, suc
 const scanResult = (overrides: Record<string, unknown> = {}) => ({ universe: 'NIFTY_50', scanned: 84, matched: 0, requested: 84, attempted: 84, succeeded: 84, unavailable: 0, failed: 0, scannedAt: '2025-01-02', dataSource: 'DETERMINISTIC_DEMO_V1', sourceCoverage: { demo: 84 }, warnings: ['Current membership unverified'], errors: [], matches: [], offset: 0, limit: 35, ...overrides }) as unknown as Awaited<ReturnType<typeof requestScan>>;
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const renderScanner = () => render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} />);
-const openMatches = () => fireEvent.click(screen.getByRole('button', { name: /Strategy Matches/ }));
+const openMatches = () => fireEvent.click(screen.getByRole('button', { name: /Strategy matches/i }));
 const universe = () => screen.getAllByRole('combobox')[0];
 
 beforeEach(() => {
@@ -53,6 +53,15 @@ describe('bounded lazy market scanner flow', () => {
     scan.mockResolvedValueOnce(scanResult({ dataSource: 'OHLCV_ANALYSIS', sourceCoverage: {} }));
     fireEvent.click(screen.getByRole('button', { name: 'Reload snapshot' }));
     expect(await screen.findByText(/Price source not reported; observed coverage unverified/)).toBeTruthy();
+  });
+
+  it('summarizes partial pricing failures without dumping provider JSON', async () => {
+    market.mockResolvedValueOnce({ ...snapshot(), errors: [{ symbolId: 18, code: 'PROVIDER_RATE_LIMITED' }] } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    renderScanner();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('1 symbol could not be priced for this context');
+    expect(alert.textContent).not.toContain('symbolId');
+    expect(alert.textContent).not.toContain('PROVIDER_RATE_LIMITED');
   });
 
   it('never turns unavailable market data into no gainers, no losers, or zero breadth', async () => {
@@ -98,7 +107,7 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.queryByText(/Price source not yet reported/)).toBeNull();
     expect(screen.queryByText(/Gainers unavailable/)).toBeNull();
     await act(async () => { pending.resolve(snapshot()); });
-    expect(await screen.findByText(/Top Gainers & Losers Ranking/)).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: /^Top Gainers —/ })).toBeTruthy();
   });
 
   it('defaults to the bounded labelled pool, loads only market and never refetches for an observed cutoff', async () => {
@@ -128,13 +137,13 @@ describe('bounded lazy market scanner flow', () => {
     expect(market.mock.calls[0][1]?.aborted).toBe(true);
     expect(scan).toHaveBeenCalledTimes(1);
     expect(market).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: 'Strategy Matches (pending)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
     expect(screen.queryByText(/No matches/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Gainers.*Losers/ }));
     expect(scan.mock.calls[0][1]?.aborted).toBe(true);
     expect(market).toHaveBeenCalledTimes(2);
     await act(async () => { pendingScan.resolve(scanResult()); pendingMarket.resolve(snapshot()); });
-    expect(screen.getByRole('button', { name: 'Strategy Matches (not evaluated)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
     unmount();
     expect(market.mock.calls[1][1]?.aborted).toBe(true);
   });
@@ -157,7 +166,7 @@ describe('bounded lazy market scanner flow', () => {
     fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: '' } });
     expect(scan).toHaveBeenCalledTimes(1);
     expect(scan.mock.calls[0][1]?.aborted).toBe(false);
-    expect(screen.getByRole('button', { name: 'Strategy Matches (pending)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
     await act(async () => { pendingScan.resolve(scanResult()); });
     expect(screen.getByText(/No matches in the 84 evaluated symbols/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Reload snapshot' })).toBeTruthy();
@@ -170,12 +179,12 @@ describe('bounded lazy market scanner flow', () => {
     scan.mockReturnValueOnce(retry.promise);
     fireEvent.click(screen.getByRole('button', { name: 'Reload snapshot' }));
     expect(screen.queryByText(/No matches/)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Strategy Matches (pending)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
     await act(async () => { retry.reject(new Error('HTTP 504: scan job failed')); });
     expect(screen.getByRole('alert').textContent).toContain('504');
     expect(screen.queryByText(/No matches/)).toBeNull();
     expect(screen.queryByText(/No stocks currently trigger/)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Strategy Matches (unavailable)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry strategy scan' }));
     await screen.findByText(/No matches in the 84 evaluated symbols/);
     expect(scan).toHaveBeenCalledTimes(3);
@@ -186,7 +195,7 @@ describe('bounded lazy market scanner flow', () => {
     scan.mockResolvedValueOnce(scanResult({ scanned: 10, succeeded: 10, unavailable: 70, failed: 4 }));
     renderScanner(); openMatches();
     expect(await screen.findByText('No matches in the 10 evaluated symbols. This does not establish no matches across the full universe.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Strategy Matches (0)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
     expect(screen.getByText(/Coverage: 10 of 84 symbols/)).toBeTruthy();
     expect(screen.getByText(/10 of 84 evaluated; 70 unavailable; 4 failed/)).toBeTruthy();
     expect(screen.getByText(/Demo OHLCV · not observed market prices/)).toBeTruthy();
@@ -197,7 +206,7 @@ describe('bounded lazy market scanner flow', () => {
     renderScanner(); openMatches();
     await screen.findByText('Strategy results unavailable: no evaluated coverage was reported.');
     expect(screen.queryByText(/No matches/)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Strategy Matches (not evaluated)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
   });
 
   it('ignores late scan completion and errors from replaced universe contexts', async () => {
@@ -234,7 +243,7 @@ describe('bounded lazy market scanner flow', () => {
 
 it('shows official membership and actual observation dates after a real market response',async()=>{
   market.mockResolvedValueOnce({...snapshot(),mode:'real',sourceCoverage:{YAHOO_PUBLIC_CHART:50},membership:{requested:50,unmapped:[],source:'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv',observedAt:'2026-10-16T11:00:00.000Z',freshness:'official-feed-observed; effective date not supplied',warnings:[]},observationDates:{earliest:'2026-10-15',latest:'2026-10-16',staleSymbols:0}});
-  renderScanner();await screen.findByText(/Observed sessions: 2026-10-15 to 2026-10-16/);expect(screen.getAllByText(/NIFTY 50 \(official constituent feed\)/).length).toBeGreaterThan(0);expect(screen.getByRole('option',{name:'NIFTY 50 (official 50-member feed)'})).toBeTruthy();
+  renderScanner();await screen.findByText(/Observed sessions: 2026-10-15 to 2026-10-16/);expect(screen.getAllByText(/NIFTY 50 \(official constituent feed\)/).length).toBeGreaterThan(0);expect(screen.getByRole('option',{name:'Nifty 50'})).toBeTruthy();
 });
 
 describe('live quotes and readable coverage in the scanner', () => {
@@ -282,16 +291,19 @@ describe('live quotes and readable coverage in the scanner', () => {
     market.mockResolvedValueOnce(liveSnapshot() as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     const fetch = q();
     renderScanner();
-    await screen.findByText(/Top Gainers & Losers Ranking/);
+    await screen.findByRole('heading', { name: /^Top Gainers —/ });
     await waitFor(() => expect(screen.getAllByText('Live', { exact: true }).length).toBeGreaterThan(0));
-    expect(screen.getAllByText('Close (live feed)').length).toBeGreaterThan(0);
+    // GAINCO's live quote equals its EOD close, so its row must not repeat the price/time.
+    expect(screen.queryByText('Close (live feed)')).toBeNull();
+    expect(screen.getAllByText('₹7,011.00').length).toBe(1);
+    // WINCO's live quote differs, so that row keeps the overlay.
     expect(screen.getAllByText(/IST/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Ranking: 13 Nov 2026 EOD/)).toBeTruthy();
+    expect(screen.getByText('50 stocks ranked on 13 Nov close')).toBeTruthy();
     expect(screen.getByText(/Coverage: 50 of 50 symbols/)).toBeTruthy();
     expect(screen.getAllByText(/Source: Yahoo public chart \(50\)/).length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain('{"requested"');
     expect(document.body.textContent).not.toContain('{"YAHOO_PUBLIC_CHART"');
-    expect(screen.getByText('Details')).toBeTruthy();
+    expect(screen.getByText('Data details')).toBeTruthy();
     expect(screen.getByText(/Coverage detail: 50 of 50 symbols evaluated/)).toBeTruthy();
     expect(fetch.mock.calls.some(call => { const count = quotedIds(call[0]).length; return count > 0 && count <= 10; })).toBe(true);
 
@@ -310,6 +322,7 @@ describe('live quotes and readable coverage in the scanner', () => {
     }));
     renderScanner();
     expect(await screen.findByText('Market scanner')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
     expect(screen.queryByText(/do not support the selected historical cutoff/)).toBeNull();
     expect(screen.getByText(/Latest-only/)).toBeTruthy();
@@ -324,6 +337,7 @@ describe('live quotes and readable coverage in the scanner', () => {
     market.mockResolvedValueOnce({ ...snapshot(), mode: 'real', provenance: { mode: 'real', actualRange: { end: '2025-01-02' } }, sourceCoverage: { real: 84 } } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     renderScanner();
     await screen.findByText('Market scanner');
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
     expect(await screen.findByText(/is a fictional demo model/)).toBeTruthy();
     expect(screen.getByText(/model-only derivatives are disabled/)).toBeTruthy();

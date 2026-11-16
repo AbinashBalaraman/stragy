@@ -39,6 +39,11 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
 
       <div className="rounded-lg border border-white/8 bg-black/15 px-3 py-2 text-xs text-neutral-400">
         Data: {assumptions.dataWindow} The stock is {review.symbol.name} ({review.symbol.exchange}).
+        {review.runOptions?.start && (
+          <span className="mt-1 block">
+            Filled tester inputs: {review.runOptions.start} to {review.runOptions.end ?? 'latest'} · ₹{(review.runOptions.initialCapital ?? 100_000).toLocaleString('en-IN')} initial capital · {review.runOptions.robustness ? 'robustness on' : 'robustness off'}.
+          </span>
+        )}
       </div>
 
       <section aria-label="Key assumptions" className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-3">

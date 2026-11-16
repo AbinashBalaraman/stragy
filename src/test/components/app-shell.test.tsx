@@ -93,6 +93,32 @@ describe('calm app shell', () => {
     expect(onNewChat).not.toHaveBeenCalled();
   });
 
+  it('shows a neutral checking state before the first quote result, never the wrong label', () => {
+    const view = render(
+      <AppShell activeView="chat" onNavigate={vi.fn()} onNewChat={vi.fn()} dataMode="real" liveQuotes={{ connected: false, provider: null, loading: true }}>
+        Chat content
+      </AppShell>
+    );
+    expect(screen.getByText('Checking quotes…')).toBeTruthy();
+    expect(screen.queryByText(/Observed public daily data/)).toBeNull();
+    expect(screen.queryByText(/Live quotes ·/)).toBeNull();
+
+    view.rerender(
+      <AppShell activeView="chat" onNavigate={vi.fn()} onNewChat={vi.fn()} dataMode="real" liveQuotes={{ connected: false, provider: null, loading: false }}>
+        Chat content
+      </AppShell>
+    );
+    expect(screen.getByText(/Observed public daily data · delayed, not live/)).toBeTruthy();
+    expect(screen.queryByText('Checking quotes…')).toBeNull();
+  });
+
+  it('keeps the AI providers pill the same width as the other rail items', () => {
+    renderShell();
+    const settings = screen.getByRole('button', { name: 'AI providers' });
+    expect(settings.className).toContain('w-full');
+    expect(settings.className).toContain('rounded-xl');
+  });
+
   it('shows connected Angel One quotes only in real mode and keeps the delayed wording otherwise', () => {
     const view = render(
       <AppShell activeView="chat" onNavigate={vi.fn()} onNewChat={vi.fn()} dataMode="real" liveQuotes={{ connected: true, provider: 'angel' }}>

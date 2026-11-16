@@ -1,5 +1,29 @@
 import 'dotenv/config';
+import { appendFileSync } from 'node:fs';
 import { parseConfig } from './src/server/config';
+
+const EXIT_LOG = process.env.SERVER_EXIT_LOG ?? '/tmp/opencode/stragy-server-exit.log';
+
+function scrub(value: string): string {
+  return value
+    .replace(/(postgres(?:ql)?:\/\/)[^\s]+/gi, '$1[redacted]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi, '$1[redacted]')
+    .slice(0, 4000);
+}
+
+function logLifecycle(event: string, detail?: unknown): void {
+  const line = JSON.stringify({
+    event,
+    at: new Date().toISOString(),
+    pid: process.pid,
+    detail: detail instanceof Error ? { name: detail.name, message: scrub(detail.message), stack: scrub(detail.stack ?? '') } : detail === undefined ? undefined : scrub(String(detail)),
+  });
+  console.error(line);
+  try { appendFileSync(EXIT_LOG, line + '\n'); } catch { /* The exit log is best effort. */ }
+}
+
+process.on('uncaughtException', error => { logLifecycle('uncaught_exception', error); process.exit(1); });
+process.on('unhandledRejection', reason => { logLifecycle('unhandled_rejection', reason); process.exit(1); });
 
 async function main() {
   const config = parseConfig();
@@ -19,7 +43,7 @@ async function main() {
     await jobs.shutdown();
     server.close(async () => { await repository.close(); clearTimeout(deadline); process.exit(0); });
   };
-  process.on('SIGTERM', () => { void stop(); }); process.on('SIGINT', () => { void stop(); });
-  server.on('error', () => { console.error('Server could not start. Check host/port/configuration.'); process.exitCode = 1; void jobs.shutdown(); });
+  process.on('SIGTERM', () => { logLifecycle('sigterm'); void stop(); }); process.on('SIGINT', () => { logLifecycle('sigint'); void stop(); });
+  server.on('error', error => { logLifecycle('server_error', error); process.exitCode = 1; void jobs.shutdown(); });
 }
-main().catch(() => { console.error('Startup failed. Check validated configuration, storage, and build artifacts. No provider login was attempted.'); process.exitCode = 1; });
+main().catch(error => { logLifecycle('startup_failed', error); process.exitCode = 1; });

@@ -21,6 +21,10 @@ interface ResultsDashboardProps {
   onSelectActiveResult?: (result: BacktestResponse) => void;
   isLoading: boolean;
   initialTab?: 'overview' | 'compare' | 'robustness' | 'costs' | 'trades';
+  /** Name of the draft in the tester, shown in the empty state. */
+  draftName?: string;
+  /** Opens the strategy tester from the empty state. */
+  onOpenTester?: () => void;
 }
 
 type TabId = NonNullable<ResultsDashboardProps['initialTab']>;
@@ -41,23 +45,38 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
   onUpdateComparisonList,
   onSelectActiveResult,
   isLoading,
-  initialTab = 'overview'
+  initialTab = 'overview',
+  draftName,
+  onOpenTester
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
 
   if (!result) {
     return (
-      <div className="mx-auto max-w-lg space-y-4 p-8 text-center sm:p-12">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-[#a8c7fa]/30 bg-[#a8c7fa]/10 text-[#a8c7fa]">
-          <Activity className="h-6 w-6 animate-pulse" />
+      <div className="mx-auto max-w-xl p-6 sm:p-10">
+        <div className="space-y-4 rounded-2xl border border-white/10 bg-[#171719] p-6 sm:p-8">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#a8c7fa]/25 bg-[#a8c7fa]/10 text-[#a8c7fa]">
+            <Activity className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="text-lg font-semibold tracking-tight text-[#ececed]">No backtest yet</h3>
+            <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.6)]">
+              {draftName
+                ? <>The tester currently holds <span className="text-neutral-200">{draftName}</span>. Review its rules and window there, then run it.</>
+                : 'Open the strategy tester, review the rule summary, then run a backtest on NSE daily sessions.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => onReRun()} disabled={isLoading} className="btn-primary-mint">
+              {isLoading ? 'Running research…' : 'Run the current strategy'}
+            </button>
+            {onOpenTester && (
+              <button type="button" onClick={onOpenTester} className="rounded-lg border border-white/15 px-3.5 py-2 text-xs font-medium text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]">
+                Open Strategy tester
+              </button>
+            )}
+          </div>
         </div>
-        <h3 className="text-base font-semibold text-[#ececed]">No simulation results yet</h3>
-        <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.6)]">
-          Configure your strategy rules and parameters in the Strategy Builder, then run a backtest on historical NSE sessions.
-        </p>
-        <button onClick={() => onReRun()} disabled={isLoading} className="btn-primary-mint">
-          Run Backtest Now
-        </button>
       </div>
     );
   }

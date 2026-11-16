@@ -14,6 +14,7 @@ import {
 import { VERIFIED_FREE_MODEL } from './freeModel';
 import { decryptSecret, encryptSecret, getSecretsStorage, redactSecret, secretHint } from './providerSecrets';
 import { clearState, loadState, persistence as storePersistence, readFileState, saveState, type StoredProvider, type StoredState } from './providerStore';
+import { AIChainUpdateInputSchema, AIProviderWriteInputSchema } from '../../shared/contracts/featureRegistry';
 import type {
   AIChainEntryInput, AIChainEntryPublic, AIProviderModelPublic, AIProviderPrice, AIProviderPublic,
   AIProviderTestResponse, AIProviderWriteInput, AIProvidersResponse,
@@ -50,25 +51,8 @@ export class ProviderError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
 }
 
-const providerInputSchema = z.object({
-  id: z.string().trim().regex(/^[a-z0-9][a-z0-9.-]{1,40}$/).optional(),
-  label: z.string().trim().min(1).max(100),
-  baseUrl: z.string().trim().min(1).max(500),
-  apiKey: z.string().max(500).optional(),
-  clearKey: z.boolean().optional(),
-  extraHeaders: z.record(z.string().max(100), z.string().max(2000)).optional(),
-  enabled: z.boolean().default(true),
-}).strict();
-
-const chainSchema = z.object({
-  entries: z.array(z.object({
-    providerId: z.string().trim().min(1).max(60),
-    model: z.string().trim().min(1).max(160),
-    vision: z.boolean().default(false),
-    paidApproved: z.boolean().default(false),
-  }).strict()).max(MAX_CHAIN),
-}).strict();
-
+const providerInputSchema = AIProviderWriteInputSchema;
+const chainSchema = AIChainUpdateInputSchema;
 const testSchema = z.object({ model: z.string().trim().min(1).max(160) }).strict();
 
 let cache: StoredState | null | undefined;

@@ -10,7 +10,7 @@ import { legacyOutputNames } from '../../shared/strategy/registry';
 /** Near matches are ranked by score and capped independently of match pagination. */
 export const NEAR_MATCH_LIMIT = 10;
 
-export interface ScanRuleDiagnostic {rule:string;ruleIndex?:number;actualLeft:number;actualRight:number;matchedIndex?:number;matchedDate?:string;currentActualLeft?:number;currentActualRight?:number;}
+export interface ScanRuleDiagnostic {rule:string;ruleIndex?:number;actualLeft:number|null;actualRight:number|null;matchedIndex?:number;matchedDate?:string;currentActualLeft?:number|null;currentActualRight?:number|null;}
 export interface ScanMatchResult{symbolId:number;ticker:string;name:string;sector:string;lastDate:string;lastClose:number;changePercent:number;score?:number;matchedRules:ScanRuleDiagnostic[];unmatchedRules?:ScanRuleDiagnostic[];indicatorValues:Record<string,number>;provenance:MarketSeries['provenance'];}
 export interface UniverseScanResponse{mode:'demo'|'real';universe:string;scanned:number;matched:number;scannedAt:string;dataSource:string;matches:ScanMatchResult[];nearMatches:ScanMatchResult[];requested:number;attempted:number;succeeded:number;unavailable:number;failed:number;asOf?:string;offset:number;limit:number;errors:{symbolId:number;code:string;message:string;ticker?:string}[];sourceCoverage:Record<string,number>;warnings:string[];observationDates?:{earliest:string;latest:string;staleSymbols:number};membership?:Omit<ObservedUniverse,'symbols'>;status?:'complete'|'partial'|'unavailable';}
 export interface ScanOptions extends LoadMarketOptions{offset?:number;limit?:number;}
@@ -28,12 +28,16 @@ function initialize(name:string,symbols:SymbolMeta[],o:ScanOptions):UniverseScan
   return{mode:o.mode??getDataMode(),universe:name,scanned:0,matched:0,scannedAt:new Date().toISOString(),dataSource:'PROVENANCE_PER_SYMBOL',matches:[],nearMatches:[],requested:symbols.length,attempted:0,succeeded:0,unavailable:0,failed:0,asOf:o.asOf,offset,limit,errors:[],sourceCoverage:{},warnings:['Current membership survivorship bias','Partial coverage; no live streaming','Licensing and provider entitlement unverified']};
 }
 
+function observed(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function diagnostics(strategy:StrategyAST,index:number,series:Record<string,(number|null)[]>,bars:MarketSeries['bars'],onlyMatched:boolean[]) {
   return strategy.rules.entry.flatMap((rule,i)=>{
     if(onlyMatched[i]===false)return[];
     const diagnostic=evaluateConditionMatch(rule,index,series,bars);
     const at=diagnostic.mostRecentMatchingIndex??index;
-    return [{rule:rule.leftIndicator+' '+rule.operator+' '+(rule.rightIndicator??rule.rightValue),ruleIndex:i,actualLeft:rule.leftValue??series[rule.leftIndicator]?.[at]??NaN,actualRight:rule.rightIndicator?series[rule.rightIndicator]?.[at]??NaN:rule.rightValue??NaN,matchedIndex:diagnostic.mostRecentMatchingIndex,matchedDate:diagnostic.mostRecentMatchingDate,currentActualLeft:rule.leftValue??series[rule.leftIndicator]?.[index]??NaN,currentActualRight:rule.rightIndicator?series[rule.rightIndicator]?.[index]??NaN:rule.rightValue??NaN}];
+    return [{rule:rule.leftIndicator+' '+rule.operator+' '+(rule.rightIndicator??rule.rightValue),ruleIndex:i,actualLeft:observed(rule.leftValue??series[rule.leftIndicator]?.[at]),actualRight:rule.rightIndicator?observed(series[rule.rightIndicator]?.[at]):observed(rule.rightValue),matchedIndex:diagnostic.mostRecentMatchingIndex,matchedDate:diagnostic.mostRecentMatchingDate,currentActualLeft:observed(rule.leftValue??series[rule.leftIndicator]?.[index]),currentActualRight:rule.rightIndicator?observed(series[rule.rightIndicator]?.[index]):observed(rule.rightValue)}];
   });
 }
 

@@ -40,11 +40,11 @@ describe('My Strategies alongside immutable templates', () => {
     const before = JSON.stringify(STRATEGY_TEMPLATES), onLoad = vi.fn(s => { s.name = 'builder edits'; });
     render(<StrategyLibraryView onLoadStrategy={onLoad} />);
     expect(saveButton()).toBeDisabled();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Load Template into Builder' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open template in Strategy tester' })[0]);
     expect(onLoad).toHaveBeenCalledTimes(1); expect(JSON.stringify(STRATEGY_TEMPLATES)).toBe(before);
     expect(window.localStorage.getItem(KEY)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Momentum' }));
-    expect(screen.getAllByRole('button', { name: 'Load Template into Builder' })).toHaveLength(STRATEGY_TEMPLATES.filter(t => t.category === 'Momentum').length);
+    expect(screen.getAllByRole('button', { name: 'Open template in Strategy tester' })).toHaveLength(STRATEGY_TEMPLATES.filter(t => t.category === 'Momentum').length);
   });
   it('explicitly saves, renames, selects old revisions, duplicates, deletes and restores', async () => {
     const onLoad = vi.fn(), current = strategy(), original = JSON.stringify(current);
