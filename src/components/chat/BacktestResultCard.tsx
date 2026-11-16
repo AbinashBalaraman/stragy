@@ -1,6 +1,6 @@
 import React from 'react';
 import type { BacktestResponse } from '../../shared/strategy/types';
-import { formatDate, formatINR, formatNumber, formatPercent } from '../../shared/format';
+import { formatDate, formatINR, formatNumber, formatPercent, truncateAtWord } from '../../shared/format';
 import { summarizeRunData } from './runSummary';
 
 interface Props {
@@ -56,7 +56,7 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[11px] uppercase tracking-wide text-neutral-500">Latest backtest</p>
-          <h3 className="mt-1 text-lg font-semibold text-neutral-100">{result.strategy.name}</h3>
+          <h3 className="mt-1 text-lg font-semibold text-neutral-100">{truncateAtWord(result.strategy.name, 70)}</h3>
           <p className="text-sm text-neutral-400">{result.symbol.ticker} · {result.symbol.name}</p>
         </div>
         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${demo ? 'border-amber-400/40 text-amber-200' : unknown ? 'border-amber-400/40 text-amber-200' : 'border-emerald-400/30 text-emerald-200'}`}>

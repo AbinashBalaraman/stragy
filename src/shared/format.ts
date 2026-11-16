@@ -130,3 +130,17 @@ export function formatDateTime(value: string | number | Date | null | undefined)
     .replace(/\u202f/g, ' ')
     .replace(/\s?(AM|PM)\b/g, match => match.toLowerCase());
 }
+
+/**
+ * Short card title: trim, collapse whitespace, cut at a word boundary and add
+ * an ellipsis. Never returns more than `max` characters, including the ellipsis.
+ */
+export function truncateAtWord(value: string, max: number): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  const limit = Math.max(2, Math.floor(max));
+  if (text.length <= limit) return text;
+  const slice = text.slice(0, limit - 1);
+  const boundary = slice.lastIndexOf(' ');
+  const base = (boundary >= Math.min(20, limit - 2) ? slice.slice(0, boundary) : slice).trimEnd();
+  return base.replace(/[\s.,;:·\-–—]+$/u, '') + '…';
+}

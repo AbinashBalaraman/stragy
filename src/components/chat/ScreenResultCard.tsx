@@ -3,6 +3,7 @@ import type { ScanResult } from '../../client/api';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import { formatNumber } from '../../client/format';
 import { describeUnmatchedRule, formatIndicatorValue, getIndicatorLabel, humanObservationFreshness, humanSourceLabel } from '../../shared/strategy/renderPlainLanguage';
+import { truncateAtWord } from '../../shared/format';
 import { summarizeProviderFailures } from './researchFollowUp';
 
 interface Props {
@@ -98,7 +99,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[11px] uppercase tracking-wide text-neutral-500">Read-only screen · Nifty 50</p>
-          <h3 className="mt-1 text-lg font-semibold text-neutral-100">{plan.strategy.name}</h3>
+          <h3 className="mt-1 text-lg font-semibold text-neutral-100">{truncateAtWord(plan.strategy.name, 70)}</h3>
           <p className="mt-1 text-xs text-neutral-400">{methodLabel(plan)}</p>
         </div>
         {pending && <span className="rounded-full border border-sky-400/30 px-2.5 py-1 text-[11px] text-sky-200">Scanning…</span>}

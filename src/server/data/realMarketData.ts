@@ -70,7 +70,7 @@ let lastFetchTimestamp = 0;
 /**
  * Fetches real historical daily OHLCV bars from Yahoo Finance chart endpoint
  */
-export function yahooTickerUrl(ticker:string,range='1y'):string {const raw=YAHOO_NSE_TICKER_MAP[ticker];if(!raw)throw new MarketDataError('UNKNOWN_MAPPING','Provider ticker mapping unverified');if(!['1y','2y','5y','1mo','3mo','6mo'].includes(range))throw new MarketDataError('INVALID_RANGE','Unsupported range');return 'https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(raw)+'?range='+range+'&interval=1d';}
+export function yahooTickerUrl(ticker:string,range='1y'):string {const raw=YAHOO_NSE_TICKER_MAP[ticker];if(!raw)throw new MarketDataError('UNKNOWN_MAPPING','Provider ticker mapping unverified');if(!['1y','2y','3y','5y','1mo','3mo','6mo'].includes(range))throw new MarketDataError('INVALID_RANGE','Unsupported range');return 'https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(raw)+'?range='+range+'&interval=1d';}
 /** No entitled production adapter enabled. This function intentionally performs no network request. */
 export async function fetchYahooFinanceBars(ticker:string,range='1y'):Promise<OHLCVBar[]|null>{yahooTickerUrl(ticker,range);throw new MarketDataError('PROVIDER_UNAVAILABLE','Yahoo entitlement not verified; adapter disabled');}
 export async function refreshAllRealMarketData():Promise<void>{if(getDataMode()==='demo')return;throw new MarketDataError('PROVIDER_UNAVAILABLE','No entitled production adapter configured');}

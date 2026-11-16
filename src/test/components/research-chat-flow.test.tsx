@@ -138,7 +138,13 @@ it('fills the strategy tester from a rule sentence and never runs or applies it'
   expect(within(review).getByText(/RSI \(14\) is greater than 70/)).toBeTruthy();
   expect(within(review).getByText(/3.5% below the entry price/)).toBeTruthy();
   expect(within(review).getAllByText(/2023-11-17 to 2026-11-16/).length).toBeGreaterThan(0);
+  expect(within(review).getByText("Or type 'run it'.")).toBeTruthy();
   expect(run).not.toHaveBeenCalled();
+  fireEvent.click(within(review).getByRole('button',{name:'Use these assumptions and run'}));
+  await waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+  const [, asOf, runOptions] = run.mock.calls[0];
+  expect(asOf).toBe('2026-11-16');
+  expect(runOptions).toMatchObject({start:'2023-11-17',end:'2026-11-16',initialCapital:100000,robustness:false});
   expect(JSON.parse(localStorage.getItem('stragy_user_preferences_v1')!)).toMatchObject({lastTicker:'RELIANCE',riskPercent:3.5});
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDate, formatDateTime, formatINR, formatNumber, formatPercent } from '../../shared/format';
+import { formatDate, formatDateTime, formatINR, formatNumber, formatPercent, truncateAtWord } from '../../shared/format';
 
 describe('formatINR', () => {
   it('uses Indian grouping and two decimals', () => {
@@ -83,5 +83,21 @@ describe('dates', () => {
     expect(formatDate(undefined)).toBe('N/A');
     expect(formatDate('not a date')).toBe('N/A');
     expect(formatDateTime(null)).toBe('N/A');
+  });
+});
+
+describe('truncateAtWord', () => {
+  it('cuts at a word boundary and never exceeds the limit', () => {
+    const title = 'Near range lows with RSI breaking above a falling resistance trendline and price still weak';
+    const short = truncateAtWord(title, 70);
+    expect(short.length).toBeLessThanOrEqual(70);
+    expect(short.endsWith('…')).toBe(true);
+    expect(title.startsWith(short.slice(0, -1).trimEnd())).toBe(true);
+    expect(short).not.toMatch(/\s…$/);
+  });
+
+  it('keeps short titles unchanged and collapses whitespace', () => {
+    expect(truncateAtWord('Near range lows · RSI breaking its downtrend', 70)).toBe('Near range lows · RSI breaking its downtrend');
+    expect(truncateAtWord('  two   spaces  ', 70)).toBe('two spaces');
   });
 });

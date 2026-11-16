@@ -36,13 +36,15 @@ export const INDICATOR_REGISTRY = {
     defaults: { period: 126 }, outputs: ['value'], unit: 'percent',
   },
   ATR: { params: periodParams, defaults: { period: 14 }, outputs: ['value'], unit: 'price' },
+  /** Highest high of the previous `period` completed bars, excluding the current bar. */
+  HIGHEST: { params: z.object({ period: boundedPeriod(2, 500, 20) }).strict(), defaults: { period: 20 }, outputs: ['value'], unit: 'price' },
   VOLUME_SMA: { params: periodParams, defaults: { period: 20 }, outputs: ['value'], unit: 'volume' },
   BBANDS: { params: z.object({ period: periodSchema, stdDev: positive }).strict(), defaults: { period: 20, stdDev: 2 }, outputs: ['middle', 'upper', 'lower'], unit: 'price' },
   MACD: { params: z.object({ fastPeriod: periodSchema, slowPeriod: periodSchema, signalPeriod: periodSchema }).strict().refine(p => p.fastPeriod < p.slowPeriod, 'MACD fastPeriod must be less than slowPeriod'), defaults: { fastPeriod: 12, slowPeriod: 26, signalPeriod: 9 }, outputs: ['line', 'signal', 'histogram'], unit: 'price' },
   SUPERTREND: { params: z.object({ period: periodSchema, multiplier: positive }).strict(), defaults: { period: 10, multiplier: 3 }, outputs: ['line', 'direction'], unit: 'price' },
 } as const;
 export type RegisteredIndicatorType = keyof typeof INDICATOR_REGISTRY;
-export const IndicatorTypeSchema = z.enum(['SMA', 'EMA', 'RSI', 'RSI_SMA', 'RSI_TRENDLINE', 'PCT_ABOVE_LOW', 'PCT_CHANGE', 'ATR', 'VOLUME_SMA', 'BBANDS', 'MACD', 'SUPERTREND']);
+export const IndicatorTypeSchema = z.enum(['SMA', 'EMA', 'RSI', 'RSI_SMA', 'RSI_TRENDLINE', 'PCT_ABOVE_LOW', 'PCT_CHANGE', 'ATR', 'HIGHEST', 'VOLUME_SMA', 'BBANDS', 'MACD', 'SUPERTREND']);
 export const IndicatorV2Schema = z.discriminatedUnion('type', [
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('SMA'), params: INDICATOR_REGISTRY.SMA.params }).strict(),
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('EMA'), params: INDICATOR_REGISTRY.EMA.params }).strict(),
@@ -52,6 +54,7 @@ export const IndicatorV2Schema = z.discriminatedUnion('type', [
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('PCT_ABOVE_LOW'), params: INDICATOR_REGISTRY.PCT_ABOVE_LOW.params }).strict(),
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('PCT_CHANGE'), params: INDICATOR_REGISTRY.PCT_CHANGE.params }).strict(),
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('ATR'), params: INDICATOR_REGISTRY.ATR.params }).strict(),
+  z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('HIGHEST'), params: INDICATOR_REGISTRY.HIGHEST.params }).strict(),
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('VOLUME_SMA'), params: INDICATOR_REGISTRY.VOLUME_SMA.params }).strict(),
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('BBANDS'), params: INDICATOR_REGISTRY.BBANDS.params }).strict(),
   z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/), type: z.literal('MACD'), params: INDICATOR_REGISTRY.MACD.params }).strict(),

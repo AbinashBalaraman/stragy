@@ -1,6 +1,7 @@
 import type { RuleNode, StrategyAST } from '../../shared/strategy/types';
 import { validateStrategy } from '../../shared/strategy/schema';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
+import { truncateAtWord } from '../../shared/format';
 import { ALL_SYMBOLS } from '../../shared/data/symbols';
 import {
   DEFAULT_USER_PREFERENCES, FeatureSetupRequestSchema, FeatureSetupResponseSchema,
@@ -96,8 +97,58 @@ function rsiThresholds(message: string): { entry: number | null; exit: number | 
   };
 }
 
+type MaType = 'SMA' | 'EMA';
+type StrategyIntent =
+  | { kind: 'rsi'; entry: number; exit: number | null; period: number }
+  | { kind: 'ma_cross'; fast: { type: MaType; period: number }; slow: { type: MaType; period: number }; direction: 'above' | 'below' }
+  | { kind: 'breakout'; period: number }
+  | { kind: 'price_ma'; type: MaType; period: number; direction: 'above' | 'below' };
+
+function parseStrategyIntent(message: string): StrategyIntent | null {
+  const rsi = rsiThresholds(message);
+  if (rsi.entry !== null) return { kind: 'rsi', entry: rsi.entry, exit: rsi.exit, period: rsi.period };
+
+  const averages = [...message.matchAll(/\b(sma|ema)\s*(\d{1,3})\b/gi)].map(match => ({
+    type: match[1].toUpperCase() as MaType,
+    period: Math.min(250, Math.max(2, Number(match[2]))),
+  }));
+  if (averages.length >= 2) {
+    const sorted = [...averages].sort((a, b) => a.period - b.period);
+    const fast = sorted[0], slow = sorted[sorted.length - 1];
+    if (fast.period !== slow.period) {
+      const direction: 'above' | 'below' = /cross(?:es|ed|ing)?\s*(?:below|under|down)/i.test(message) ? 'below' : 'above';
+      return { kind: 'ma_cross', fast, slow, direction };
+    }
+  }
+  if (averages.length === 1) {
+    const average = averages[0];
+    const direction: 'above' | 'below' = /\b(?:below|under|less\s+than)\b/i.test(message) ? 'below' : 'above';
+    if (/\b(?:price|close|closes|trades?)\b/i.test(message) || /\b(?:above|below)\b/i.test(message)) {
+      return { kind: 'price_ma', type: average.type, period: average.period, direction };
+    }
+  }
+
+  const breakout = /(?:close|price)?[^.;\n]{0,40}\b(?:breakout|breaks?\s+(?:out\s+)?(?:above|over)|closes?\s+(?:above|over))\b[^.;\n]{0,30}?(\d{1,3})[- ]?(?:day|bar|period|session)?\s*high/i.exec(message)
+    ?? /(\d{1,3})[- ](?:day|bar|period)\s+high/i.exec(message);
+  if (breakout) {
+    const period = Number(breakout[1]);
+    if (Number.isFinite(period)) return { kind: 'breakout', period: Math.min(250, Math.max(2, Math.trunc(period))) };
+  }
+  return null;
+}
+
 function cloneStrategy(strategy: StrategyAST): StrategyAST {
   return JSON.parse(JSON.stringify(strategy)) as StrategyAST;
+}
+
+function ensureIndicator(strategy: StrategyAST, type: StrategyAST['indicators'][number]['type'], params: Record<string, number>, base: string): string {
+  const same = strategy.indicators.find(indicator => indicator.type === type && JSON.stringify(indicator.params) === JSON.stringify(params));
+  if (same) return same.id;
+  let id = base;
+  let suffix = 2;
+  while (strategy.indicators.some(indicator => indicator.id === id)) id = base + '_' + suffix++;
+  strategy.indicators.push({ id, type, params });
+  return id;
 }
 
 function applyPreferences(strategy: StrategyAST, preferences: UserPreferences): StrategyAST {
@@ -119,15 +170,13 @@ function applyPreferences(strategy: StrategyAST, preferences: UserPreferences): 
   return next;
 }
 
-function buildRsiStrategy(
+function buildIntentStrategy(
   base: StrategyAST,
   symbol: { symbolId: number; ticker: string },
-  rules: { entry: number; exit: number; period: number },
+  intent: StrategyIntent,
   preferences: UserPreferences,
 ): { strategy: StrategyAST; assumptions: string[] } {
   const next = applyPreferences(base, preferences);
-  next.name = 'RSI (' + rules.period + ') below ' + rules.entry + ' entry / above ' + rules.exit + ' exit';
-  next.description = 'Chat-filled strategy tester setup: buy when RSI(' + rules.period + ') is below ' + rules.entry + ', sell when RSI(' + rules.period + ') is above ' + rules.exit + '.';
   next.universe = {
     ...next.universe,
     symbolId: symbol.symbolId,
@@ -135,27 +184,51 @@ function buildRsiStrategy(
     ticker: symbol.ticker,
     timeframe: '1D',
   };
-  let rsiId = 'rsi' + rules.period;
-  const existing = next.indicators.find(indicator => indicator.id === rsiId);
-  if (existing && (existing.type !== 'RSI' || existing.params.period !== rules.period)) {
-    let suffix = 2;
-    while (next.indicators.some(indicator => indicator.id === rsiId + '_' + suffix)) suffix++;
-    rsiId = rsiId + '_' + suffix;
+  const assumptions: string[] = [];
+  let entry: RuleNode;
+  let exit: RuleNode[] | null = null;
+
+  if (intent.kind === 'rsi') {
+    const rsiId = ensureIndicator(next, 'RSI', { period: intent.period }, 'rsi' + intent.period);
+    entry = { leftIndicator: rsiId, operator: 'lt', rightValue: intent.entry };
+    if (intent.exit !== null) exit = [{ leftIndicator: rsiId, operator: 'gt', rightValue: intent.exit }];
+    next.name = truncateAtWord('RSI ' + intent.entry + (intent.exit !== null ? '/' + intent.exit : '') + ' · ' + symbol.ticker, 70);
+    next.description = 'Chat-filled setup: buy when RSI(' + intent.period + ') is below ' + intent.entry + (intent.exit !== null ? ', sell when RSI(' + intent.period + ') is above ' + intent.exit : '') + '.';
+    assumptions.push('Entry: RSI(' + intent.period + ') is below ' + intent.entry + ' on the current completed daily bar.');
+    if (intent.exit !== null) assumptions.push('Exit: RSI(' + intent.period + ') is above ' + intent.exit + ' on the current completed daily bar.');
+  } else if (intent.kind === 'ma_cross') {
+    const fastId = ensureIndicator(next, intent.fast.type, { period: intent.fast.period }, 'ma' + intent.fast.period);
+    const slowId = ensureIndicator(next, intent.slow.type, { period: intent.slow.period }, 'ma' + intent.slow.period);
+    entry = { leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesAbove' : 'crossesBelow', rightIndicator: slowId };
+    // The inverse cross is the symmetric default exit for a crossover strategy.
+    exit = [{ leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesBelow' : 'crossesAbove', rightIndicator: slowId }];
+    next.name = truncateAtWord(intent.fast.type + ' ' + intent.fast.period + ' / ' + intent.slow.type + ' ' + intent.slow.period + ' crossover · ' + symbol.ticker, 70);
+    next.description = 'Chat-filled setup: ' + intent.fast.type + '(' + intent.fast.period + ') crosses ' + intent.direction + ' ' + intent.slow.type + '(' + intent.slow.period + '), exit on the opposite cross.';
+    assumptions.push('Entry: ' + intent.fast.type + '(' + intent.fast.period + ') crosses ' + intent.direction + ' ' + intent.slow.type + '(' + intent.slow.period + ') on the current completed daily bar.');
+    assumptions.push('Exit: the opposite crossover (' + intent.fast.type + '(' + intent.fast.period + ') crosses ' + (intent.direction === 'above' ? 'below' : 'above') + ' ' + intent.slow.type + '(' + intent.slow.period + ')).');
+  } else if (intent.kind === 'breakout') {
+    const highId = ensureIndicator(next, 'HIGHEST', { period: intent.period }, 'high' + intent.period);
+    entry = { leftIndicator: 'close', operator: 'crossesAbove', rightIndicator: highId };
+    next.name = truncateAtWord(intent.period + '-day high breakout · ' + symbol.ticker, 70);
+    next.description = 'Chat-filled setup: buy when close crosses above the highest high of the previous ' + intent.period + ' completed bars.';
+    assumptions.push('Entry: close crosses above the highest high of the previous ' + intent.period + ' completed bars (the current bar is excluded).');
+    assumptions.push('Exit: the workspace exit rules are preserved; add an explicit sell rule if you want a different exit.');
+  } else {
+    const maId = ensureIndicator(next, intent.type, { period: intent.period }, 'ma' + intent.period);
+    entry = { leftIndicator: 'close', operator: intent.direction === 'above' ? 'gt' : 'lt', rightIndicator: maId };
+    next.name = truncateAtWord('Close ' + intent.direction + ' ' + intent.type + ' ' + intent.period + ' · ' + symbol.ticker, 70);
+    next.description = 'Chat-filled setup: buy when close is ' + intent.direction + ' ' + intent.type + '(' + intent.period + ').';
+    assumptions.push('Entry: close is ' + intent.direction + ' ' + intent.type + '(' + intent.period + ') on the current completed daily bar.');
+    assumptions.push('Exit: the workspace exit rules are preserved.');
   }
-  if (!next.indicators.some(indicator => indicator.id === rsiId)) {
-    next.indicators.push({ id: rsiId, type: 'RSI', params: { period: rules.period } });
-  }
-  const entry: RuleNode = { leftIndicator: rsiId, operator: 'lt', rightValue: rules.entry };
-  const exit: RuleNode = { leftIndicator: rsiId, operator: 'gt', rightValue: rules.exit };
-  next.rules = { entry: [entry], exit: [exit] };
-  const assumptions = [
-    'Entry: RSI(' + rules.period + ') is below ' + rules.entry + ' on the current completed daily bar.',
-    'Exit: RSI(' + rules.period + ') is above ' + rules.exit + ' on the current completed daily bar.',
+
+  next.rules = { entry: [entry], exit: exit ?? next.rules.exit };
+  assumptions.push(
     'Risk: ' + preferences.riskPercent + '% stop loss; your workspace sizing and execution settings are preserved.',
     preferences.costPreset === 'custom'
       ? 'Costs: the workspace custom cost model is preserved.'
       : 'Costs: Indian ' + (preferences.costPreset === 'indian-intraday' ? 'intraday' : 'delivery') + ' preset (5 bps slippage, ₹20 flat brokerage, taxes on).',
-  ];
+  );
   return { strategy: next, assumptions };
 }
 
@@ -211,26 +284,28 @@ export function resolveFeatureSetup(raw: unknown, options: FeatureSetupOptions =
     return needsInput(featureId, 'Which AI provider and model should I configure, and is it free or explicitly approved as paid?', []);
   }
 
-  const thresholds = rsiThresholds(message);
-  if (thresholds.entry === null && thresholds.exit === null) {
-    return needsInput(featureId, 'Which exact entry and exit rules should I fill in? For example: RSI below 30 to buy, above 70 to sell.', []);
+  const intent = parseStrategyIntent(message);
+  if (!intent) {
+    return needsInput(featureId, 'Which exact entry rule should I fill in? For example: RSI below 30, SMA 20 crossing above SMA 50, or a close above the 20-day high.', []);
   }
-  if (thresholds.entry === null) {
-    return needsInput(featureId, 'What exact entry rule should I use? For example: RSI below 30 to buy.', []);
-  }
-  if (thresholds.exit === null) {
+  if (featureId === 'strategy_tester' && intent.kind === 'rsi' && intent.exit === null) {
     return needsInput(featureId, 'What exact exit rule should I use with the entry you described?', []);
   }
-  const symbol = resolveSymbol(message, preferences);
+  const base = input.currentStrategy ?? STRATEGY_TEMPLATES[0].strategy;
+  const symbol = resolveSymbol(message, preferences) ?? (featureId === 'market_scanner'
+    ? { symbolId: base.universe.symbolId, ticker: base.universe.ticker ?? 'NIFTY 50' }
+    : null);
   if (!symbol) {
     const ambiguous = ambiguousSymbol(message);
     return needsInput(featureId, ambiguous
       ? 'Which exact NSE ticker did you mean: ' + ambiguous + '?'
-      : 'Which NSE stock should I test this on? Reply with one ticker such as RELIANCE.', []);
+      : 'Which NSE stock should I ' + (featureId === 'market_scanner' ? 'scan' : 'test') + ' this on? Reply with one ticker such as RELIANCE.', []);
   }
 
-  const base = input.currentStrategy ?? STRATEGY_TEMPLATES[0].strategy;
-  const built = buildRsiStrategy(base, symbol, { entry: thresholds.entry, exit: thresholds.exit, period: thresholds.period }, preferences);
+  if (featureId === 'strategy_tester' && (intent.kind === 'breakout' || intent.kind === 'price_ma') && base.rules.exit.length === 0) {
+    return needsInput(featureId, 'What exact exit rule should I use with this entry? For example: close below SMA 20.', []);
+  }
+  const built = buildIntentStrategy(base, symbol, intent, preferences);
   const validated = validateStrategy(built.strategy);
   if (!validated.success || !validated.data) {
     return needsInput(featureId, 'The filled strategy did not pass validation: ' + (validated.errors?.[0] ?? 'unknown rule error') + '. What should I change?', built.assumptions);

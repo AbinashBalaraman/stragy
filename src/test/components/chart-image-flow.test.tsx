@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { JSDOM } from 'jsdom';
+import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { requestScan, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
+import { clearChartReadingCache } from '../../client/chartReadingCache';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { StrategyAST } from '../../shared/strategy/types';
 
@@ -96,6 +98,8 @@ const historyValue = () => Array.from({ length: localStorage.length }, (_, index
 beforeEach(() => {
   dom = new JSDOM('', { url: 'https://chart.test/' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
+  vi.stubGlobal('crypto', webcrypto);
+  clearChartReadingCache();
   chartResponse = chartScreen();
   fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => chartResponse }));
   vi.stubGlobal('fetch', fetchMock);
@@ -131,6 +135,10 @@ describe('chart image research flow', () => {
     expect(within(card).getByText('What the AI saw')).toBeTruthy();
     expect(within(card).getAllByText(/RSI Falling Trendline/).length).toBeGreaterThan(0);
     expect(await screen.findByText('[chart image attached]')).toBeTruthy();
+    // A chart reading is only a proposal: nothing scans until the user confirms.
+    expect(requestScan).not.toHaveBeenCalled();
+    expect(within(card).getByRole('button', { name: 'Scan with these' })).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: 'Scan with these' }));
     await waitFor(() => expect(requestScan).toHaveBeenCalledTimes(1));
     expect(screen.getByLabelText('Screen results')).toBeTruthy();
     expect(run).not.toHaveBeenCalled();
@@ -200,6 +208,9 @@ describe('chart image research flow', () => {
     await screen.findByAltText('Attached chart preview');
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
 
+    const chartCard = await screen.findByRole('article', { name: 'Chart reading' });
+    expect(requestScan).not.toHaveBeenCalled();
+    fireEvent.click(within(chartCard).getByRole('button', { name: 'Scan with these' }));
     expect(await screen.findByText('Close matches (missing one condition)')).toBeTruthy();
     expect(screen.getByText('4/5 conditions')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Prepare backtest for RELIANCE' }));
@@ -221,11 +232,52 @@ describe('chart image research flow', () => {
     await screen.findByAltText('Attached chart preview');
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
     expect(await screen.findByRole('article', { name: 'Chart reading' })).toBeTruthy();
-    expect(await screen.findByLabelText('Screen results')).toBeTruthy();
 
     view.rerender(<AiCopilotDock strategy={strategy} newConversationSignal={2} />);
     expect(screen.queryByRole('article', { name: 'Chart reading' })).toBeNull();
     expect(screen.queryByLabelText('Screen results')).toBeNull();
     expect(screen.queryByAltText('Attached chart preview')).toBeNull();
+  });
+
+  it('edits and removes conditions, then scans exactly the confirmed setup', async () => {
+    render(<AiCopilotDock strategy={chartTemplate()} />);
+    attachFile(pngFile());
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    const card = await screen.findByRole('article', { name: 'Chart reading' });
+
+    expect(requestScan).not.toHaveBeenCalled();
+    fireEvent.change(within(card).getByLabelText('Condition 1 value'), { target: { value: '42' } });
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove condition 5' }));
+    expect(within(card).getByText('5 confirmed conditions')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: 'Scan with these' }));
+
+    await waitFor(() => expect(requestScan).toHaveBeenCalledTimes(1));
+    const scanned = vi.mocked(requestScan).mock.calls[0][0].strategy;
+    expect(scanned.rules.entry).toHaveLength(5);
+    expect(scanned.rules.entry[0].rightValue).toBe(42);
+    expect(scanned.indicators.some(indicator => indicator.id === 'low250')).toBe(true);
+  });
+
+  it('caches the reading by image SHA-256 so the same image is not re-read', async () => {
+    const strategy = chartTemplate();
+    const view = render(<AiCopilotDock strategy={strategy} />);
+    attachFile(pngFile('same.png'));
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    const first = await screen.findByRole('article', { name: 'Chart reading' });
+    fireEvent.click(within(first).getByRole('button', { name: 'Scan with these' }));
+    await waitFor(() => expect(requestScan).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    view.rerender(<AiCopilotDock strategy={strategy} newConversationSignal={1} />);
+    vi.mocked(requestScan).mockClear();
+    attachFile(pngFile('same.png'));
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    expect(await screen.findByRole('article', { name: 'Chart reading' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Cached chart reading · same image/)).toBeTruthy();
+    expect(requestScan).not.toHaveBeenCalled();
   });
 });

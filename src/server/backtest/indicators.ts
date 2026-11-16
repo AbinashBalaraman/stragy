@@ -19,6 +19,18 @@ export function calcSMA(bars: OHLCVBar[], period: number): (number | null)[] {
   return result;
 }
 
+/** Highest high of the previous `period` completed bars; the current bar is excluded. */
+export function calcHighestHigh(bars: OHLCVBar[], period: number): (number | null)[] {
+  validPeriod(period);
+  const result: (number | null)[] = new Array(bars.length).fill(null);
+  for (let i = period; i < bars.length; i++) {
+    let high = -Infinity;
+    for (let j = i - period; j < i; j++) high = Math.max(high, bars[j].high);
+    result[i] = high;
+  }
+  return result;
+}
+
 export function calcEMA(bars: OHLCVBar[], period: number): (number | null)[] {
   validPeriod(period);
   const result: (number | null)[] = new Array(bars.length).fill(null);
@@ -376,6 +388,8 @@ export function calculateAllIndicators(
       series[id] = calcSMA(bars.map(b => ({ ...b, close: b.volume })), ind.params.period);
     } else if (ind.type === 'EMA') {
       series[id] = calcEMA(bars, ind.params.period || 20);
+    } else if (ind.type === 'HIGHEST') {
+      series[id] = calcHighestHigh(bars, ind.params.period || 20);
     } else if (ind.type === 'RSI') {
       series[id] = calcRSI(bars, ind.params.period || 14);
     } else if (ind.type === 'RSI_SMA') {

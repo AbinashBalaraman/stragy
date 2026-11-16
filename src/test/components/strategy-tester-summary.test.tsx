@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { StrategyBuilder, windowStartIso } from '../../components/strategy/StrategyBuilder';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { StrategyAST } from '../../shared/strategy/types';
+import type { TesterPrefill } from '../../shared/contracts/featureRegistry';
 
 const base = () => JSON.parse(JSON.stringify(STRATEGY_TEMPLATES[0].strategy)) as StrategyAST;
 
@@ -65,6 +66,52 @@ describe('strategy tester summary', () => {
     fireEvent.click(screen.getByRole('button', { name: new RegExp(other.name) }));
     expect(screen.getByRole('heading', { level: 1, name: other.name })).toBeTruthy();
     expect(screen.queryByRole('button', { name: new RegExp(other.name) })).toBeNull();
+  });
+
+  it('applies a chat prefill: window, capital, note and dismissal', () => {
+    const onRunBacktest = vi.fn();
+    const onWindowChange = vi.fn();
+    const onPrefillDismiss = vi.fn();
+    const draft = { ...base(), name: 'Prefilled from chat' } as unknown as StrategyAST;
+    const prefill = {
+      feature: 'strategy_tester', strategy: JSON.parse(JSON.stringify(draft)),
+      start: '2024-01-01', end: '2026-11-16', initialCapital: 250000,
+      robustness: false, source: 'chat', assumptions: ['Uses the active exit rule'],
+    } as TesterPrefill;
+    render(
+      <StrategyBuilder
+        strategy={draft}
+        onChange={vi.fn()}
+        onRunBacktest={onRunBacktest}
+        isLoading={false}
+        prefill={prefill}
+        onPrefillDismiss={onPrefillDismiss}
+        onWindowChange={onWindowChange}
+      />
+    );
+    expect(screen.getByText(/Filled from chat · review before running/)).toBeTruthy();
+    expect(screen.getByText(/Chat window · 01 Jan 2024 – 16 Nov 2026/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /Run backtest/ }));
+    expect(onRunBacktest).toHaveBeenCalledWith(expect.objectContaining({ start: '2024-01-01', end: '2026-11-16', initialCapital: 250000 }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+    fireEvent.change(screen.getByLabelText('Backtest window'), { target: { value: '1y' } });
+    expect(onWindowChange).toHaveBeenCalledWith('last-1y');
+    onRunBacktest.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /Run backtest/ }));
+    expect(onRunBacktest).toHaveBeenCalledWith({ start: windowStartIso(1) });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss filled-from note' }));
+    expect(onPrefillDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the remembered window preference as the default', () => {
+    const onRunBacktest = vi.fn();
+    render(<StrategyBuilder strategy={base()} onChange={vi.fn()} onRunBacktest={onRunBacktest} isLoading={false} initialWindow="5y" />);
+    expect(screen.getByText(/Last 5 years/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Run backtest/ }));
+    expect(onRunBacktest).toHaveBeenCalledWith({ start: windowStartIso(5) });
   });
 
   it('hands off to the copilot instead of editing fields', () => {

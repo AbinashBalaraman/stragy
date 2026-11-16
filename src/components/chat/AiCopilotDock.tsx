@@ -5,14 +5,15 @@ import type { BacktestResponse, StrategyAST, SymbolMeta } from '../../shared/str
 import { snapshotStrategy } from '../../client/workspace';
 import { canonicalStrategySignature, exitRuleCompatibility } from '../../shared/strategy/backtestReview';
 import { assertProposalCurrent, parseStrategyProposal, type StrategyProposal } from '../../shared/contracts/ai-proposal';
-import { requestScan, type ScanResult } from '../../client/api';
+import { requestScan, type RunRequestOptions, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
 import { requestFeatureSetup } from '../../client/featureSetup';
-import { publishFeaturePrefill } from '../../client/featureHandoff';
 import { readPreferences, rememberPreference } from '../../client/preferences';
 import { getSymbolById } from '../../shared/data/symbols';
 import { prepareChartImage, requestChartAnalysis, CHART_IMAGE_ACCEPT, type ChartAnalysisResponse, type ChartImageAttachment, type ChartImageReading } from '../../client/chartAnalysis';
-import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
+import { chartImageHash, readCachedChartAnalysis, writeCachedChartAnalysis } from '../../client/chartReadingCache';
+import { validateStrategy } from '../../shared/strategy/schema';
+import type { ResearchChatResponse, ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import { ScreenResultCard } from './ScreenResultCard';
 import { ChartReadingCard } from './ChartReadingCard';
 import { BacktestResultCard } from './BacktestResultCard';
@@ -47,7 +48,7 @@ interface Props {
   strategy: StrategyAST;
   onApplyVariation?: (strategy: StrategyAST) => boolean | void | Promise<boolean | void>;
   onClose?: () => void;
-  onResearchBacktest?: (strategy: StrategyAST, asOf?: string) => Promise<BacktestResponse | null | void>;
+  onResearchBacktest?: (strategy: StrategyAST, asOf?: string, options?: RunRequestOptions) => Promise<BacktestResponse | null | void>;
   variant?: CopilotVariant;
   symbols?: SymbolMeta[];
   onOpenDetails?: (result: BacktestResponse) => void;
@@ -190,6 +191,8 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [scanPending, setScanPending] = useState(false);
   const scanPendingRef = useRef(false);
   const [scanError, setScanError] = useState('');
+  /** A chart reading must be confirmed/edited before any scan starts. */
+  const [awaitingChartConfirm, setAwaitingChartConfirm] = useState(false);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [allowLocal, setAllowLocal] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -252,6 +255,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     }
     setValidatedResult(null);
     setChartReading(null);
+    setAwaitingChartConfirm(false);
     abort.current?.abort();
     setLoading(false);
     scanPendingRef.current = false;
@@ -335,6 +339,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     setScanError('');
     setScreenPlan(null);
     setChartReading(null);
+    setAwaitingChartConfirm(false);
     setProposal(null);
     setReview(null);
     setReviewStatus('idle');
@@ -381,6 +386,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     setScanError('');
     setScreenPlan(null);
     setChartReading(null);
+    setAwaitingChartConfirm(false);
     setProposal(null);
     setReview(null);
     setReviewStatus('idle');
@@ -576,7 +582,9 @@ export const AiCopilotDock: React.FC<Props> = ({
     setReviewError('');
     setValidatedResult(null);
     try {
-      const outcome = await onResearchBacktest(review.strategy, review.asOf);
+      const outcome = review.runOptions
+        ? await onResearchBacktest(review.strategy, review.runOptions.asOf ?? review.asOf, review.runOptions)
+        : await onResearchBacktest(review.strategy, review.asOf);
       if (runGeneration.current !== owned) return;
       if (reviewRef.current?.id !== review.id || !isCurrentReviewResult(outcome, review)) {
         setReviewStatus('idle');
@@ -696,6 +704,35 @@ export const AiCopilotDock: React.FC<Props> = ({
     rememberPreference({ universe: 'NIFTY_50' });
   }
 
+  const confirmChartScan = async (edited: StrategyAST) => {
+    if (!screenPlan || scanPendingRef.current) return;
+    const validated = validateStrategy(edited);
+    if (!validated.success || !validated.data) {
+      setScanError('The edited chart conditions did not pass validation: ' + (validated.errors?.[0] ?? 'unknown rule error') + '. Nothing was scanned.');
+      return;
+    }
+    const plan: ResearchScreenPlan = { ...screenPlan, strategy: validated.data as ResearchScreenPlan['strategy'] };
+    setScreenPlan(plan);
+    setAwaitingChartConfirm(false);
+    const owned = ++generation.current;
+    const controller = new AbortController();
+    abort.current = controller;
+    scanPendingRef.current = true;
+    setScanPending(true);
+    setScanError('');
+    setScanResult(null);
+    try {
+      await runScreenScan(plan, controller, owned);
+    } catch (caught) {
+      if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
+    } finally {
+      if (generation.current === owned) {
+        scanPendingRef.current = false;
+        setScanPending(false);
+      }
+    }
+  };
+
   const retryScreenScan = async () => {
     const plan = screenPlan;
     if (!plan || scanPendingRef.current) return;
@@ -758,7 +795,6 @@ export const AiCopilotDock: React.FC<Props> = ({
         setReviewError('');
         setAwaitingSymbolFor(null);
         setLastContext('draft');
-        publishFeaturePrefill(setup);
         rememberPreference({
           symbolId: symbol.id,
           ticker: symbol.ticker,
@@ -768,7 +804,6 @@ export const AiCopilotDock: React.FC<Props> = ({
         return true;
       }
       if (data.setup.feature === 'market_scanner') {
-        publishFeaturePrefill(data.setup);
         append('assistant', 'I filled a ' + data.setup.universe + ' scan setup. Open Market scanner to review it; nothing has been run.');
         return true;
       }
@@ -816,6 +851,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       // A new image is a new screen, not a continuation of the previous one.
       setChartReading(null);
       setScreenPlan(null);
+      setAwaitingChartConfirm(false);
       setLastContext(null);
     setBacktestChoice(null);
     }
@@ -841,13 +877,24 @@ export const AiCopilotDock: React.FC<Props> = ({
     setLoading(true);
 
     try {
-      const data = attachedImage
-        ? await requestChartAnalysis({
-          image: attachedImage.dataUrl,
-          ...(text ? { hint: text } : {}),
-          currentStrategy: current,
-        }, controller.signal)
-        : await requestResearchChat({
+      let chartCacheUsed = false;
+      let data: ChartAnalysisResponse | ResearchChatResponse;
+      if (attachedImage) {
+        const hash = await chartImageHash(attachedImage.dataUrl);
+        const cached = hash ? readCachedChartAnalysis(hash) : null;
+        if (cached) {
+          data = cached;
+          chartCacheUsed = true;
+        } else {
+          data = await requestChartAnalysis({
+            image: attachedImage.dataUrl,
+            ...(text ? { hint: text } : {}),
+            currentStrategy: current,
+          }, controller.signal);
+          if (hash) writeCachedChartAnalysis(hash, data);
+        }
+      } else {
+        data = await requestResearchChat({
           message: text,
           currentStrategy: current,
           originatingRevision,
@@ -855,6 +902,7 @@ export const AiCopilotDock: React.FC<Props> = ({
           history: messages.slice(-20).map(message => ({ role: message.sender, text: message.text })),
           ...(screenPlan ? { screenContext: { strategy: screenPlan.strategy, universe: screenPlan.universe } } : {}),
         }, controller.signal);
+      }
       if (generation.current !== owned) return;
       // Chart analysis has no workspace revision handshake; its owner generation
       // already discards results after a workspace change.
@@ -873,7 +921,7 @@ export const AiCopilotDock: React.FC<Props> = ({
         });
       } else {
         append('assistant', data.message, {
-          methodLabel: deterministicMarket ? 'Built-in market data · not AI' : methodLabel(data.method, data.provider),
+          methodLabel: chartCacheUsed ? 'Cached chart reading · same image (SHA-256)' : deterministicMarket ? 'Built-in market data · not AI' : methodLabel(data.method, data.provider),
           methodTitle: data.provider.aiGenerated
             ? `Answered by ${data.provider.name}. Verify factual claims with data.`
             : undefined,
@@ -906,18 +954,27 @@ export const AiCopilotDock: React.FC<Props> = ({
         setReviewStatus('idle');
         setAwaitingSymbolFor(null);
         setLastContext('screen');
-        scanPendingRef.current = true;
-        setScanPending(true);
         setScanResult(null);
         setScanError('');
-        try {
-          await runScreenScan(data, controller, owned);
-        } catch (caught) {
-          if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
-        } finally {
-          if (generation.current === owned) {
-            scanPendingRef.current = false;
-            setScanPending(false);
+        if (attachedImage) {
+          // Chart readings are a model interpretation. The user must review and
+          // confirm the conditions before any stock scan starts.
+          scanPendingRef.current = false;
+          setScanPending(false);
+          setAwaitingChartConfirm(true);
+        } else {
+          setAwaitingChartConfirm(false);
+          scanPendingRef.current = true;
+          setScanPending(true);
+          try {
+            await runScreenScan(data, controller, owned);
+          } catch (caught) {
+            if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
+          } finally {
+            if (generation.current === owned) {
+              scanPendingRef.current = false;
+              setScanPending(false);
+            }
           }
         }
       } else {
@@ -993,11 +1050,11 @@ export const AiCopilotDock: React.FC<Props> = ({
     await confirmApply(candidate, proposal.id, 'Draft applied to the workspace. The assumptions are in the builder; no backtest or broker order was executed.');
   };
 
-  const applyScreenDraft = async () => {
+  const applyScreenDraft = async (override?: StrategyAST) => {
     if (!screenPlan || !onApplyVariation || pendingApply.current) return;
     if (applied?.startsWith('screen:')) return;
     let candidate: StrategyAST;
-    try { candidate = snapshotStrategy(screenPlan.strategy); }
+    try { candidate = snapshotStrategy(override ?? screenPlan.strategy); }
     catch (caught) { setError((caught as Error).message); return; }
     const id = 'screen:' + Date.now() + ':' + Math.random().toString(36).slice(2, 6);
     await confirmApply(candidate, id, 'Screen strategy applied to the workspace draft. Review exits, risk, sizing and costs in the builder; no backtest or broker order was executed.');
@@ -1121,11 +1178,13 @@ export const AiCopilotDock: React.FC<Props> = ({
                 busy={busy}
                 canApply={!!onApplyVariation}
                 applied={!!applied && applied.startsWith('screen:')}
-                onUseAsDraft={() => void applyScreenDraft()}
+                onUseAsDraft={strategy => void applyScreenDraft(strategy)}
+                onConfirmScan={strategy => void confirmChartScan(strategy)}
+                scanning={scanPending}
               />
             )}
 
-            {screenPlan && (
+            {screenPlan && (!awaitingChartConfirm || scanPending || !!scanResult || !!scanError) && (
               <ScreenResultCard
                 plan={screenPlan}
                 result={scanResult}

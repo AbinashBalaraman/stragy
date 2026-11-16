@@ -1,6 +1,7 @@
 import React from 'react';
 import type { BacktestReview } from './types';
 import { describeBacktestAssumptions } from '../../shared/strategy/backtestReview';
+import { truncateAtWord } from '../../shared/format';
 
 interface Props {
   review: BacktestReview;
@@ -33,7 +34,7 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
     <article aria-label="Backtest review" className="rounded-2xl border border-sky-300/25 bg-[#191b1f] p-4 sm:p-5 space-y-4">
       <header>
         <p className="text-xs uppercase tracking-wide text-sky-200/70">Review before running</p>
-        <h3 className="mt-1 text-base font-semibold text-neutral-100 sm:text-lg">Backtest {review.symbol.ticker} with “{review.strategy.name}”</h3>
+        <h3 className="mt-1 text-base font-semibold text-neutral-100 sm:text-lg">Backtest {review.symbol.ticker} with “{truncateAtWord(review.strategy.name, 70)}”</h3>
         <p className="mt-1 text-xs text-neutral-400">{review.sourceLabel} · nothing has been run or applied.</p>
       </header>
 
@@ -123,7 +124,7 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
           )}
         </div>
         <p className="mt-2 hidden text-xs text-neutral-400 sm:block">
-          Or reply with “use these assumptions and run”. Choosing the assumptions alone does not run anything; a negative, conditional or ambiguous reply will not start the backtest.
+          Or type 'run it'.
         </p>
       </footer>
     </article>

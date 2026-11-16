@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StrategyAST, StockTrendData, MarketMoversData } from '../../shared/strategy/types';
 import { plainRule } from '../../client/plainRules';
+import { PrefillNote } from '../common/PrefillNote';
+import type { ScannerPrefill } from '../../shared/contracts/featureRegistry';
 import { requestMarketSnapshot, requestScan } from '../../client/api';
 import { useLiveQuotes, formatLivePrice, formatLiveChange, liveQuoteTime, liveQuoteTimeTitle, type LiveQuote } from '../../client/liveQuotes';
 import { actualDataCutoff, scannerContextKey, ScannerRequestOwner } from './scannerRequestContext';
@@ -70,6 +72,15 @@ function sourceSummary(coverage?: Record<string, number>): string {
   if (!entries.length) return 'Source: not reported';
   const labels = entries.map(([source, count]) => (SOURCE_LABELS[source] ?? source.toLowerCase().replace(/_/g, ' ')) + ' (' + count + ')');
   return (entries.length === 1 ? 'Source: ' : 'Sources: ') + labels.join(', ');
+}
+
+/** "2026-11-16" -> "16 Nov 2026". */
+function fullDay(iso: string | null | undefined): string {
+  if (!iso) return 'session unavailable';
+  const date = new Date(iso + 'T00:00:00Z');
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
+    : iso;
 }
 
 /** "2026-11-16" -> "16 Nov"; never an ambiguous MM-DD. */
@@ -155,6 +166,12 @@ const ScannerLoadingSkeleton: React.FC = () => (
 interface MarketScannerViewProps {
   strategy: StrategyAST;
   onSelectStockAndBacktest: (symbolId: number, asOf: string) => void;
+  /** A validated setup handed over by chat or another feature. */
+  prefill?: ScannerPrefill | null;
+  onPrefillDismiss?: () => void;
+  /** Remembered universe from user preferences. */
+  initialUniverse?: MarketUniverseType;
+  onUniverseChange?: (universe: MarketUniverseType) => void;
 }
 
 export type MarketUniverseType =
@@ -197,7 +214,11 @@ export const UNIVERSE_LIST: UniverseConfig[] = [
 
 export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   strategy,
-  onSelectStockAndBacktest
+  onSelectStockAndBacktest,
+  prefill: incomingPrefill,
+  onPrefillDismiss,
+  initialUniverse,
+  onUniverseChange
 }) => {
   const [activeTab, setActiveTab] = useState<
     | 'movers'
@@ -211,10 +232,14 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     | 'trends'
     | 'strategy_matches'
   >('movers');
-  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>('NIFTY_50');
+  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>(() =>
+    initialUniverse && UNIVERSE_LIST.some(item => item.id === initialUniverse) ? initialUniverse : 'NIFTY_50');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
   const [moreTabsOpen, setMoreTabsOpen] = useState(false);
+  const [scanLimit, setScanLimit] = useState(35);
+  const [prefill, setPrefill] = useState<ScannerPrefill | null>(null);
+  const appliedPrefill = useRef<ScannerPrefill | null>(null);
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
   const [trendFilter, setTrendFilter] = useState<'ALL' | 'BULLISH' | 'OVERSOLD' | 'BREAKOUT' | 'GOLDEN_CROSS'>('ALL');
   const [trendSearchQuery, setTrendSearchQuery] = useState('');
@@ -314,7 +339,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     setPriceLabel('Price source not yet reported');
     setCoverageLabel('Coverage not yet reported');setCoverageDetail('Coverage details not yet reported.');setDataEvidence(null);
     try {
-      const data = await requestScan({ universe: selectedUniverse, strategy, limit: 35, asOf: selectedDate || undefined }, ticket.signal);
+      const data = await requestScan({ universe: selectedUniverse, strategy, limit: scanLimit, asOf: selectedDate || undefined }, ticket.signal);
       if (!scanOwner.current.owns(ticket, currentContext.current)) return;
       setScanResult(data);setDataEvidence(data);
       setPriceLabel(priceDataLabel(data));
@@ -327,6 +352,24 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       if (scanOwner.current.owns(ticket, currentContext.current)) setIsScanning(false);
     }
   };
+
+  // A chat hand-off fills the universe, cutoff and scan size, then opens the matches.
+  useEffect(() => {
+    if (!incomingPrefill || appliedPrefill.current === incomingPrefill) return;
+    appliedPrefill.current = incomingPrefill;
+    setPrefill(incomingPrefill);
+    if (UNIVERSE_LIST.some(item => item.id === incomingPrefill.universe)) setSelectedUniverse(incomingPrefill.universe as MarketUniverseType);
+    setScanLimit(incomingPrefill.limit);
+    setActiveTab('strategy_matches');
+  }, [incomingPrefill]);
+
+  // Apply the hand-off cutoff once the session list can confirm it is an observed date.
+  useEffect(() => {
+    if (!prefill) return;
+    if (!prefill.asOf) { setSelectedDate(''); return; }
+    if (!availableTradingDates.length) return;
+    setSelectedDate(availableTradingDates.some(item => item.date === prefill.asOf) ? prefill.asOf : '');
+  }, [prefill, availableTradingDates]);
 
   useEffect(() => {
     setTrends([]); setMovers(null); setScanResult(null); setDataCutoff(''); setMarketEvaluated(0);
@@ -349,6 +392,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     marketOwner.current.cancel(); scanOwner.current.cancel();
     setSelectedUniverse(newUniv);
     setTrendPage(1);
+    onUniverseChange?.(newUniv);
   };
 
   const handleDateChange = (newDate: string) => {
@@ -420,7 +464,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
               <span className="text-neutral-200">{currentUniverseConfig.shortLabel}</span>
               <span aria-hidden="true">·</span>
-              <span>{initialLoading ? 'end-of-day loading…' : 'end-of-day ' + (movers?.formattedDate || movers?.asOfDate || dataCutoff || 'session unavailable')}</span>
+              <span>{initialLoading ? 'end-of-day loading…' : 'end-of-day ' + (movers?.formattedDate || fullDay(movers?.asOfDate || dataCutoff))}</span>
               {hasLiveOverlay && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -611,6 +655,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           </div>
         </div>
       </section>
+
+      {prefill && (
+        <PrefillNote
+          assumptions={prefill.assumptions}
+          onDismiss={() => { setPrefill(null); onPrefillDismiss?.(); }}
+        />
+      )}
 
       {initialLoading ? <ScannerLoadingSkeleton /> : (<>
       {/* TAB 1: TOP GAINERS & TOP LOSERS */}
@@ -1129,12 +1180,15 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <div className="rounded-lg border border-white/8 bg-[#101012] px-3 py-2">
                     <p className="text-[10px] uppercase tracking-[0.14em] text-neutral-500">Entry conditions verified</p>
                     <div className="mt-1 space-y-1">
-                      {m.matchedRules.map((r, ruleIndex) => (
-                        <div key={ruleIndex} className="flex flex-wrap justify-between gap-x-3 font-mono text-[11px]">
-                          <span className="text-neutral-400">{r.rule}</span>
-                          <span className="text-neutral-200">Actual: {scannerNumber(r.actualLeft)} vs {scannerNumber(r.actualRight)}</span>
-                        </div>
-                      ))}
+                      {m.matchedRules.map((r, ruleIndex) => {
+                        const entryRule = r.ruleIndex !== undefined ? strategy.rules?.entry?.[r.ruleIndex] : undefined;
+                        return (
+                          <div key={ruleIndex} className="flex flex-wrap justify-between gap-x-3 font-mono text-[11px]">
+                            <span className="text-neutral-400">{entryRule ? plainRule(entryRule, strategy.indicators ?? []) : r.rule}</span>
+                            <span className="text-neutral-200">Actual: {scannerNumber(r.actualLeft)} vs {scannerNumber(r.actualRight)}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 

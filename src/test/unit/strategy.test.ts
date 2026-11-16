@@ -1,7 +1,7 @@
 import { describe,expect,it } from 'vitest';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { validateStrategy,readStrategy,toLegacyStrategy,repairStrategyAST } from '../../shared/strategy/schema';
-import { calculateAllIndicators,calcSMA,calcEMA,calcRSI,calcATR } from '../../server/backtest/indicators';
+import { calculateAllIndicators,calcSMA,calcEMA,calcRSI,calcATR,calcHighestHigh } from '../../server/backtest/indicators';
 import { evaluateCondition,evaluateRuleSet } from '../../server/backtest/rules';
 import { simulate } from '../../server/backtest/engine';
 import type { IndicatorConfig } from '../../shared/strategy/types';
@@ -33,6 +33,11 @@ describe('indicator and rule arithmetic',()=>{
   const data=bars([[1,2,.5,1],[2,3,1,2],[3,4,2,3],[4,5,3,4]]);
   it('I01 SMA and seeded EMA have explicit warmup',()=>{expect(calcSMA(data,3)).toEqual([null,null,2,3]);expect(calcEMA(data,3)).toEqual([null,null,2,3]);expect(()=>calcSMA(data,0)).toThrow();});
   it('I02 volume averaging uses volume, not closing price',()=>{const d=data.map((b,i)=>({...b,volume:[10,20,30,40][i]}));expect(calculateAllIndicators(d,[{id:'v',type:'VOLUME_SMA',params:{period:2}}]).v).toEqual([null,15,25,35]);});
+  it('I02b highest high excludes the current bar and warms up honestly',()=>{
+    const d = bars([[100,110,99,100],[100,120,99,100],[100,105,99,100],[100,130,99,100],[100,115,99,100]]);
+    expect(calcHighestHigh(d,3)).toEqual([null,null,null,120,130]);
+    expect(calculateAllIndicators(d,[{id:'h',type:'HIGHEST',params:{period:3}}]).h).toEqual([null,null,null,120,130]);
+  });
   it('I03 flat RSI is 50, rising RSI is 100; ATR uses prior close gaps',()=>{expect(calcRSI(bars([[10,11,9,10],[10,11,9,10],[10,11,9,10]]),2)).toEqual([null,null,50]);expect(calcRSI(data,2).at(-1)).toBe(100);expect(calcATR(bars([[100,102,98,100],[110,112,109,111]]),1)).toEqual([4,12]);});
   it('I04 indicators are prefix-invariant and compound aliases agree',()=>{const inds:IndicatorConfig[]=[{id:'m',type:'MACD' as const,params:{fastPeriod:2,slowPeriod:3,signalPeriod:2}},{id:'st',type:'SUPERTREND' as const,params:{period:2,multiplier:2}}];const a=calculateAllIndicators(data,inds),b=calculateAllIndicators([...data,...bars([[200,201,199,200]]).map(x=>({...x,date:'2026-02-01',timestamp:Date.UTC(2026,1,1,10)}))],inds);for(const key of Object.keys(a))expect(b[key].slice(0,data.length)).toEqual(a[key]);expect(a.m_hist).toEqual(a.m_histogram);expect(a.st_dir).toEqual(a.st_direction);});
   it('I05 crossovers require finite previous operands and groups are AND',()=>{const s={a:[null,1,3],b:[2,2,2]};expect(evaluateCondition({leftIndicator:'a',operator:'crossesAbove',rightIndicator:'b'},1,s)).toBe(false);expect(evaluateCondition({leftIndicator:'a',operator:'crossesAbove',rightIndicator:'b'},2,s)).toBe(true);expect(evaluateRuleSet([{leftIndicator:'a',operator:'gt',rightValue:0},{leftIndicator:'a',operator:'gt',rightValue:100}],2,s)).toBe(false);expect(evaluateCondition({leftIndicator:'a',operator:'eq',rightValue:3.000001},2,s)).toBe(false);});

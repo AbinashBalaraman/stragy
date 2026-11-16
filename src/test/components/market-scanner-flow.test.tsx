@@ -4,6 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarketScannerView } from '../../components/scanner/MarketScannerView';
 import type { StrategyAST } from '../../shared/strategy/types';
+import type { ScannerPrefill } from '../../shared/contracts/featureRegistry';
+import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { requestMarketSnapshot, requestScan } from '../../client/api';
 
 vi.mock('../../client/api', () => ({ requestMarketSnapshot: vi.fn(), requestScan: vi.fn() }));
@@ -53,6 +55,52 @@ describe('bounded lazy market scanner flow', () => {
     scan.mockResolvedValueOnce(scanResult({ dataSource: 'OHLCV_ANALYSIS', sourceCoverage: {} }));
     fireEvent.click(screen.getByRole('button', { name: 'Reload snapshot' }));
     expect(await screen.findByText(/Price source not reported; observed coverage unverified/)).toBeTruthy();
+  });
+
+  it('applies a chat scanner prefill: universe, cutoff, limit, tab and note', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url) === '/api/market/dates') {
+        return { ok: true, status: 200, json: async () => ({ success: true, dates: [{ date: '2025-01-02', label: '2025-01-02', isLatest: true }, { date: '2025-01-01', label: '2025-01-01', isLatest: false }] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }));
+    scan.mockResolvedValue(scanResult());
+    const prefill = {
+      feature: 'market_scanner', universe: 'NIFTY_IT', strategy,
+      asOf: '2025-01-01', limit: 12, source: 'chat', assumptions: ['Uses the active entry rules'],
+    } as ScannerPrefill;
+    render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} prefill={prefill} />);
+    expect(await screen.findByText(/Filled from chat · review before running/)).toBeTruthy();
+    expect((screen.getByLabelText('Market universe') as HTMLSelectElement).value).toBe('NIFTY_IT');
+    await waitFor(() => expect(scan).toHaveBeenCalledWith(expect.objectContaining({ universe: 'NIFTY_IT', limit: 12, asOf: '2025-01-01' }), expect.anything()));
+  });
+
+  it('uses the remembered universe as the default and reports changes', async () => {
+    const onUniverseChange = vi.fn();
+    render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} initialUniverse="NIFTY_IT" onUniverseChange={onUniverseChange} />);
+    expect(await screen.findByText('Market scanner')).toBeTruthy();
+    const select = screen.getByLabelText('Market universe') as HTMLSelectElement;
+    expect(select.value).toBe('NIFTY_IT');
+    fireEvent.change(select, { target: { value: 'NIFTY_AUTO' } });
+    expect(onUniverseChange).toHaveBeenCalledWith('NIFTY_AUTO');
+  });
+
+  it('renders matched rule evidence in plain language when the rule index is known', async () => {
+    scan.mockResolvedValueOnce(scanResult({
+      matched: 1,
+      matches: [{
+        symbolId: 7, ticker: 'TEST', name: 'Test equity', sector: 'IT', lastDate: '2025-01-02',
+        lastClose: 100, changePercent: 1,
+        matchedRules: [{ rule: 'close gt st1', ruleIndex: 0, actualLeft: 100, actualRight: 90 }],
+        indicatorValues: {}, provenance: { mode: 'real', actualRange: { end: '2025-01-02' } },
+      }],
+      sourceCoverage: { real: 84 }, dataSource: 'OHLCV_ANALYSIS',
+    }));
+    render(<MarketScannerView strategy={STRATEGY_TEMPLATES[0].strategy} onSelectStockAndBacktest={vi.fn()} />);
+    openMatches();
+    expect(await screen.findByRole('button', { name: 'Load & Run Backtest on TEST' })).toBeTruthy();
+    expect(screen.queryByText('close gt st1')).toBeNull();
+    expect(screen.getAllByText('Close above Supertrend (10, 3)').length).toBeGreaterThanOrEqual(2);
   });
 
   it('summarizes partial pricing failures without dumping provider JSON', async () => {

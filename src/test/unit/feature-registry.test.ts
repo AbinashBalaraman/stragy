@@ -127,11 +127,77 @@ describe('copilot feature setup', () => {
     expect(response.setup).toBeNull();
   });
 
+  it('fills SMA and EMA crossover setups with a symmetric exit', () => {
+    const sma = resolveFeatureSetup({ message: 'Backtest SMA 20 crossing above SMA 50 on Reliance', currentStrategy: base() }, { now: NOW });
+    expect(sma.status).toBe('ready');
+    if (sma.status !== 'ready' || sma.setup.feature !== 'strategy_tester') throw new Error('Expected tester prefill');
+    const indicators = sma.setup.strategy.indicators;
+    expect(indicators).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'SMA', params: { period: 20 } }),
+      expect.objectContaining({ type: 'SMA', params: { period: 50 } }),
+    ]));
+    expect(sma.setup.strategy.rules.entry[0].operator).toBe('crossesAbove');
+    expect(sma.setup.strategy.rules.exit[0].operator).toBe('crossesBelow');
+
+    const ema = resolveFeatureSetup({ message: 'Backtest EMA 9 crossing above EMA 21 on Reliance', currentStrategy: base() }, { now: NOW });
+    expect(ema.status).toBe('ready');
+    if (ema.status !== 'ready' || ema.setup.feature !== 'strategy_tester') throw new Error('Expected tester prefill');
+    expect(ema.setup.strategy.indicators).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'EMA', params: { period: 9 } }),
+      expect.objectContaining({ type: 'EMA', params: { period: 21 } }),
+    ]));
+  });
+
+  it('fills a breakout scanner from an N-day high and preserves exits', () => {
+    const response = resolveFeatureSetup({
+      message: 'Find Nifty 50 stocks where close breaks above the 20-day high',
+      currentStrategy: base(),
+    }, { now: NOW });
+    expect(response.status).toBe('ready');
+    if (response.status !== 'ready' || response.setup.feature !== 'market_scanner') throw new Error('Expected scanner prefill');
+    expect(response.setup.universe).toBe('NIFTY_50');
+    expect(response.setup.strategy.indicators).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'HIGHEST', params: { period: 20 } })]));
+    const high = response.setup.strategy.indicators.find(indicator => indicator.type === 'HIGHEST')!;
+    expect(response.setup.strategy.rules.entry[0]).toMatchObject({ leftIndicator: 'close', operator: 'crossesAbove', rightIndicator: high.id });
+    expect(MarketScannerInputSchema.safeParse({
+      universe: response.setup.universe, strategy: response.setup.strategy, limit: response.setup.limit,
+    }).success).toBe(true);
+  });
+
+  it('fills a price-above-SMA setup and a scanner RSI < 30 sentence', () => {
+    const price = resolveFeatureSetup({ message: 'Backtest close above SMA 200 on Reliance', currentStrategy: base() }, { now: NOW });
+    expect(price.status).toBe('ready');
+    if (price.status !== 'ready' || price.setup.feature !== 'strategy_tester') throw new Error('Expected tester prefill');
+    expect(price.setup.strategy.rules.entry[0]).toMatchObject({ leftIndicator: 'close', operator: 'gt' });
+
+    const scan = resolveFeatureSetup({ message: 'Find Nifty 50 stocks where RSI < 30', currentStrategy: base() }, { now: NOW });
+    expect(scan.status).toBe('ready');
+    if (scan.status !== 'ready' || scan.setup.feature !== 'market_scanner') throw new Error('Expected scanner prefill');
+    expect(scan.setup.strategy.rules.entry[0]).toMatchObject({ operator: 'lt', rightValue: 30 });
+    expect(MarketScannerInputSchema.safeParse({
+      universe: scan.setup.universe, strategy: scan.setup.strategy, limit: scan.setup.limit,
+    }).success).toBe(true);
+  });
+
+  it('asks one question for a missing symbol or unsupported wording', () => {
+    const missingSymbol = resolveFeatureSetup({ message: 'Backtest SMA 20 crossing above SMA 50', currentStrategy: base() }, { now: NOW });
+    expect(missingSymbol.status).toBe('needs-input');
+    if (missingSymbol.status !== 'needs-input') throw new Error('Expected a question');
+    expect(missingSymbol.question.match(/\?/g)).toHaveLength(1);
+    expect(missingSymbol.question).toMatch(/which nse stock/i);
+
+    const unsupported = resolveFeatureSetup({ message: 'Find Nifty 50 stocks where the setup looks bullish', currentStrategy: base() }, { now: NOW });
+    expect(unsupported.status).toBe('needs-input');
+    if (unsupported.status !== 'needs-input') throw new Error('Expected a question');
+    expect(unsupported.question.match(/\?/g)).toHaveLength(1);
+    expect(unsupported.question).toMatch(/entry rule/i);
+  });
+
   it('does not invent rules when the message has none', () => {
     const response = resolveFeatureSetup({ message: 'Backtest this on Reliance', currentStrategy: base() }, { now: NOW });
     expect(response.status).toBe('needs-input');
     if (response.status !== 'needs-input') throw new Error('Expected a question');
-    expect(response.question).toMatch(/entry and exit rules/i);
+    expect(response.question).toMatch(/entry rule/i);
     expect(response.question.match(/\?/g)).toHaveLength(1);
   });
 

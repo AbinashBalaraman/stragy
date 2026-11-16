@@ -15,6 +15,10 @@ import { ResultsDashboard } from './components/results/ResultsDashboard';
 import { MarketScannerView } from './components/scanner/MarketScannerView';
 import { StrategyLibraryView } from './components/library/StrategyLibraryView';
 import { ProviderSettings } from './components/settings/ProviderSettings';
+import type { MarketUniverseType } from './components/scanner/MarketScannerView';
+import { readPreferences, rememberPreference } from './client/preferences';
+import { FEATURE_PREFILL_EVENT, parseFeaturePrefill, publishFeaturePrefill } from './client/featureHandoff';
+import { buildChatDraft, type ScannerPrefill, type TesterPrefill, type UserPreferences } from './shared/contracts/featureRegistry';
 
 export default function App() {
   const [activeView, setActiveView] = useState<AppView>('chat');
@@ -38,6 +42,9 @@ export default function App() {
   const [runError, setRunError] = useState('');
   const [saveStatus, setSaveStatus] = useState('Saving');
   const [workspaceConflict, setWorkspaceConflict] = useState(false);
+  const [preferences, setPreferences] = useState<UserPreferences>(() => readPreferences());
+  const [testerPrefill, setTesterPrefill] = useState<TesterPrefill | null>(null);
+  const [scannerPrefill, setScannerPrefill] = useState<ScannerPrefill | null>(null);
   const owner = useRef(new RequestOwner());
   const controller = useRef<AbortController | null>(null);
 
@@ -107,6 +114,33 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const onPrefill = (event: Event) => {
+      const prefill = parseFeaturePrefill((event as CustomEvent<unknown>).detail);
+      if (!prefill) return;
+      if (prefill.feature === 'strategy_tester' || prefill.feature === 'market_scanner') {
+        try {
+          changeStrategy(snapshotStrategy(prefill.strategy));
+        } catch (error) {
+          setRunError((error as Error).message);
+          return;
+        }
+        setPreferences(rememberPreference({ symbolId: prefill.strategy.universe.symbolId, ticker: prefill.strategy.universe.ticker }));
+        if (prefill.feature === 'strategy_tester') {
+          setTesterPrefill(prefill);
+          setActiveView('builder');
+        } else {
+          setScannerPrefill(prefill);
+          setPreferences(rememberPreference({ universe: prefill.universe }));
+          setActiveView('scanner');
+        }
+      }
+      // chat_draft is owned by the copilot composer (chat/**); this side only publishes it.
+    };
+    window.addEventListener(FEATURE_PREFILL_EVENT, onPrefill);
+    return () => window.removeEventListener(FEATURE_PREFILL_EVENT, onPrefill);
+  }, [strategy]);
+
   const invalidateRun = () => {
     owner.current.invalidate();
     controller.current?.abort();
@@ -124,7 +158,11 @@ export default function App() {
       setPreviousStrategy(null);
     }
   };
-  const handleSymbolChange = (symbolId: number) => changeStrategy(snapshotStrategy(strategy, symbolId));
+  const handleSymbolChange = (symbolId: number) => {
+    changeStrategy(snapshotStrategy(strategy, symbolId));
+    const symbol = symbols.find(item => item.id === symbolId);
+    setPreferences(rememberPreference({ symbolId, ...(symbol ? { ticker: symbol.ticker } : {}) }));
+  };
 
   const runSnapshot = async (input: StrategyAST, switchToResults = true, options: RunRequestOptions = {}): Promise<BacktestResponse | null> => {
     const inputSignature = JSON.stringify(input);
@@ -159,7 +197,23 @@ export default function App() {
   };
 
   const handleRunBacktest = async (options: RunRequestOptions = {}) => {
+    setTesterPrefill(null);
     try { await runSnapshot(strategy, true, options); } catch { /* Visible error is owned above. */ }
+  };
+
+  /** "Describe in chat" publishes a validated ChatDraft for the copilot composer. */
+  const handleDescribeInChat = () => {
+    const ticker = symbols.find(item => item.id === strategy.universe.symbolId)?.ticker;
+    const draft = buildChatDraft({
+      prompt: `Refine “${strategy.name}”${ticker ? ' on ' + ticker : ''}. Keep the current entry, exit, risk and costs and suggest one concrete change.`,
+      source: 'strategy_tester',
+      // buildChatDraft validates through the schema; the clone drops interface-only fields.
+      strategy: JSON.parse(JSON.stringify(strategy)),
+      context: { symbolId: strategy.universe.symbolId, ...(ticker ? { ticker } : {}) },
+    });
+    publishFeaturePrefill(draft);
+    setRunError('');
+    setActiveView('chat');
   };
 
   /** Re-run the displayed immutable result and its stored request window, not the draft. */
@@ -194,7 +248,11 @@ export default function App() {
     }
   };
 
-  const handleResearchBacktest = async (input: StrategyAST, asOf?: string) => {
+  const handleResearchBacktest = async (input: StrategyAST, asOf?: string, runOptions?: RunRequestOptions) => {
+    // The chat review freezes its exact tester inputs (start/end/asOf/capital/seed/
+    // robustness). An additive third argument keeps the older asOf-only callers
+    // working while the reviewed run finally uses the window it displayed.
+    if (runOptions) return await runSnapshot(input, false, { ...runOptions, ...(asOf && !runOptions.asOf ? { asOf } : {}) });
     return await runSnapshot(input, false, asOf ? scannerBacktestOptions(asOf) : {});
   };
 
@@ -316,7 +374,11 @@ export default function App() {
             symbols={symbols}
             onSymbolChange={handleSymbolChange}
             showReferencePrices={dataMode === 'demo'}
-            onDescribeInChat={() => { setRunError(''); setActiveView('chat'); }}
+            onDescribeInChat={handleDescribeInChat}
+            prefill={testerPrefill}
+            onPrefillDismiss={() => setTesterPrefill(null)}
+            initialWindow={preferences.dateRange === 'last-1y' ? '1y' : preferences.dateRange === 'last-5y' ? '5y' : preferences.dateRange === 'custom' ? 'max' : '3y'}
+            onWindowChange={dateRange => setPreferences(rememberPreference({ dateRange }))}
           />
         </div>
       )}
@@ -345,6 +407,10 @@ export default function App() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <MarketScannerView
             strategy={strategy}
+            prefill={scannerPrefill}
+            onPrefillDismiss={() => setScannerPrefill(null)}
+            initialUniverse={preferences.universe as MarketUniverseType}
+            onUniverseChange={universe => setPreferences(rememberPreference({ universe }))}
             onSelectStockAndBacktest={(symbolId, asOf) => {
               const next = snapshotStrategy(strategy, symbolId);
               changeStrategy(next);

@@ -19,6 +19,7 @@ import { parseModelJson, sanitizeText } from './validation';
 import { STRATEGY_JSON_RULES, strategyExample } from './strategyPrompt';
 import { renderStrategyInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
 import { describeConfigState } from './proposals';
+import { truncateAtWord } from '../../shared/format';
 
 export const CHART_IMAGE_LIMITS = {
   maxDataUrlChars: 7_000_000,
@@ -236,7 +237,7 @@ function buildStrategy(plan: ChartPlan, current: StrategyAST, observations: Char
   // Preserve every workspace indicator so existing exit rules keep their exact semantics.
   for (const indicator of current.indicators) if (!indicators.some(i => i.id === indicator.id)) indicators.push(JSON.parse(JSON.stringify(indicator)));
   const strategy: StrategyAST = JSON.parse(JSON.stringify(current));
-  strategy.name = ('Chart image setup: ' + sanitizeText(plan.summary, 150)).slice(0, 200);
+  strategy.name = truncateAtWord(plan.summary, 70);
   strategy.description = sanitizeText(plan.summary, 2_000);
   strategy.universe = { ...strategy.universe, timeframe: '1D' };
   strategy.indicators = indicators;

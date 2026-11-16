@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FileJson, LayoutTemplate, MessageSquare, Play, SlidersHorizontal } from 'lucide-react';
 import type { StrategyAST, IndicatorType, RuleNode, RiskControls } from '../../shared/strategy/types';
 import { INDICATOR_REGISTRY, legacyOutputNames, RESERVED_SERIES } from '../../shared/strategy/registry';
@@ -8,6 +8,8 @@ import type { SymbolMeta } from '../../shared/strategy/types';
 import { snapshotStrategy } from '../../client/workspace';
 import type { RunRequestOptions } from '../../client/api';
 import { plainRule } from '../../client/plainRules';
+import { PrefillNote } from '../common/PrefillNote';
+import type { TesterPrefill, UserPreferences } from '../../shared/contracts/featureRegistry';
 import { SymbolSearchSelector } from '../layout/SymbolSearchSelector';
 
 interface Props {
@@ -21,6 +23,12 @@ interface Props {
   showReferencePrices?: boolean;
   /** Hands the current draft to the copilot instead of editing fields here. */
   onDescribeInChat?: () => void;
+  /** A validated setup handed over by chat or another feature. */
+  prefill?: TesterPrefill | null;
+  onPrefillDismiss?: () => void;
+  /** Remembered default window from user preferences. */
+  initialWindow?: RunWindowKey;
+  onWindowChange?: (dateRange: UserPreferences['dateRange']) => void;
 }
 
 const control = 'w-full rounded-lg border border-white/15 bg-[#101012] p-2 text-sm text-[#ececed]';
@@ -151,7 +159,11 @@ function RuleRow({ rule, index, group, operands, change, remove }: {
   );
 }
 
-export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBacktest, isLoading, symbols, onSymbolChange, showReferencePrices = false, onDescribeInChat }) => {
+const WINDOW_PREFERENCE: Record<RunWindowKey, UserPreferences['dateRange']> = {
+  '1y': 'last-1y', '3y': 'last-3y', '5y': 'last-5y', max: 'custom',
+};
+
+export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBacktest, isLoading, symbols, onSymbolChange, showReferencePrices = false, onDescribeInChat, prefill: incomingPrefill, onPrefillDismiss, initialWindow, onWindowChange }) => {
   const [error, setError] = useState('');
   const [importError, setImportError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -160,14 +172,20 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
   const [fileName, setFileName] = useState('');
   const [preview, setPreview] = useState<{ strategy: StrategyAST; warnings: string[]; source: string } | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
-  const [runWindow, setRunWindow] = useState<RunWindowKey>('3y');
+  const [runWindow, setRunWindow] = useState<RunWindowKey>(initialWindow ?? '3y');
+  const [prefill, setPrefill] = useState<TesterPrefill | null>(incomingPrefill ?? null);
+  useEffect(() => { setPrefill(incomingPrefill ?? null); }, [incomingPrefill]);
   const fileGeneration = useRef(0);
   const importRef = useRef<HTMLTextAreaElement>(null);
 
   const validation = validateStrategy(strategy);
   const operands = [...RESERVED_SERIES, ...strategy.indicators.flatMap(indicator => Object.keys(legacyOutputNames(indicator)))];
   const selectedWindow = RUN_WINDOWS.find(item => item.key === runWindow) ?? RUN_WINDOWS[1];
-  const startIso = selectedWindow.years === null ? null : windowStartIso(selectedWindow.years);
+  const prefillWindow = prefill && (prefill.start || prefill.end) ? { start: prefill.start, end: prefill.end } : null;
+  const startIso = prefillWindow ? null : selectedWindow.years === null ? null : windowStartIso(selectedWindow.years);
+  const windowLabel = prefillWindow
+    ? 'Chat window · ' + (prefillWindow.start ? shortDate(prefillWindow.start) : 'earliest') + ' – ' + (prefillWindow.end ? shortDate(prefillWindow.end) : 'latest')
+    : selectedWindow.label;
   const togglePanel = (next: Exclude<Panel, null>) => setPanel(current => current === next ? null : next);
 
   const update = (patch: Partial<StrategyAST>) => {
@@ -202,6 +220,17 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
   };
 
   const run = () => {
+    if (prefill && (prefill.start || prefill.end || prefill.asOf || prefill.initialCapital !== 100_000 || prefill.seed !== undefined || prefill.robustness)) {
+      const options: RunRequestOptions = {};
+      if (prefill.start) options.start = prefill.start;
+      if (prefill.end) options.end = prefill.end;
+      if (prefill.asOf) options.asOf = prefill.asOf;
+      options.initialCapital = prefill.initialCapital;
+      if (prefill.seed !== undefined) options.seed = prefill.seed;
+      if (prefill.robustness) options.robustness = true;
+      onRunBacktest(options);
+      return;
+    }
     onRunBacktest(selectedWindow.years === null ? {} : { start: windowStartIso(selectedWindow.years) });
   };
 
@@ -272,7 +301,7 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
             <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
               <span>Daily bars</span>
               <span aria-hidden="true">·</span>
-              <span>{selectedWindow.label}{startIso ? ' · from ' + shortDate(startIso) : ''}</span>
+              <span>{windowLabel}{startIso ? ' · from ' + shortDate(startIso) : ''}</span>
             </p>
             {symbols && symbols.length > 0 && onSymbolChange && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -291,6 +320,15 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
             {isLoading ? 'Running research…' : 'Run backtest'}
           </button>
         </div>
+
+        {prefill && (
+          <div className="mt-4">
+            <PrefillNote
+              assumptions={prefill.assumptions}
+              onDismiss={() => { setPrefill(null); onPrefillDismiss?.(); }}
+            />
+          </div>
+        )}
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           {(['entry', 'exit'] as const).map(group => (
@@ -385,7 +423,17 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
               </label>
               <label className="text-xs">
                 Backtest window
-                <select aria-label="Backtest window" className={control} value={runWindow} onChange={event => setRunWindow(event.target.value as RunWindowKey)}>
+                <select
+                  aria-label="Backtest window"
+                  className={control}
+                  value={runWindow}
+                  onChange={event => {
+                    const next = event.target.value as RunWindowKey;
+                    setRunWindow(next);
+                    setPrefill(current => current ? { ...current, start: undefined, end: undefined, asOf: undefined, initialCapital: 100_000, seed: undefined, robustness: false } : current);
+                    onWindowChange?.(WINDOW_PREFERENCE[next]);
+                  }}
+                >
                   {RUN_WINDOWS.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
                 </select>
               </label>

@@ -36,6 +36,18 @@ describe('run data provenance summary', () => {
     expect(summary.warnings).toEqual(['Adjusted prices']);
   });
 
+  it('shows the evaluated window, not the longer input snapshot, when both are provided', () => {
+    const summary = summarizeRunData(response({
+      provenance: {
+        mode: 'real', source: 'ANGEL_SMARTAPI', asOf: '2026-11-16',
+        actualRange: { start: '2023-11-16', end: '2026-11-16' },
+        evaluationRange: { start: '2023-11-17', end: '2026-11-16' },
+      },
+      bars: [{ date: '2023-11-17' }, { date: '2026-11-16' }] as never,
+    }));
+    expect(summary.datasetRange).toBe('2023-11-17 to 2026-11-16');
+  });
+
   it('never relabels demo bars as observed', () => {
     const summary = summarizeRunData(response({
       provenance: { mode: 'demo', source: 'DEMO_MODEL', actualRange: { start: '2025-01-01', end: '2025-02-01' } },

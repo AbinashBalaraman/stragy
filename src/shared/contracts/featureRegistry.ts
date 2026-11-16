@@ -320,7 +320,7 @@ export const FEATURE_REGISTRY: FeatureDefinition[] = [
     ],
     limits: [NIFTY_ONLY, RATE_LIMITS, DELAYED_DATA_LIMIT, NO_ORDERS],
     api: { kind: 'route', method: 'POST', path: '/api/v2/scans' },
-    triggers: ['scan', 'screen', 'find stocks', 'which stocks', 'matching stocks', 'near matches'],
+    triggers: ['scan', 'screen', 'find stocks', 'find nifty 50', 'stocks where', 'which stocks', 'matching stocks', 'near matches'],
   },
   {
     id: 'strategy_tester',

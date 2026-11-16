@@ -62,7 +62,7 @@ export function createAngelProvider(
       signal.throwIfAborted();
       const at = now();
       const candles = await getAngelCandles(
-        { exchange: 'NSE', symbolToken: instrument.token, interval: 'ONE_DAY', fromDate: new Date(at - 730 * 86_400_000), toDate: new Date(at) },
+        { exchange: 'NSE', symbolToken: instrument.token, interval: 'ONE_DAY', fromDate: new Date(at - 1100 * 86_400_000), toDate: new Date(at) },
         { signal, fetch: fetcher }
       );
       const { bars, skipped, incomplete } = completedAngelBars(candles, at);

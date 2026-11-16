@@ -20,6 +20,9 @@ export function summarizeRunData(result: BacktestResponse): RunDataSummary {
   const direct = record(result.provenance);
   const data = Object.keys(direct).length ? direct : record(manifest.data);
   const range = record(data.actualRange);
+  const evaluation = record(data.evaluationRange);
+  const evaluationStart = text(evaluation.start);
+  const evaluationEnd = text(evaluation.end);
   const warnings = [...new Set([
     ...(result.warnings ?? []),
     ...(Array.isArray(data.warnings) ? data.warnings.filter((warning): warning is string => typeof warning === 'string') : []),
@@ -41,7 +44,9 @@ export function summarizeRunData(result: BacktestResponse): RunDataSummary {
         : 'Data mode unavailable — treat results as unverified',
     source: text(data.source),
     observedThrough,
-    datasetRange: start !== 'Unavailable' && end !== 'Unavailable' ? start + ' to ' + end : 'Unavailable',
+    datasetRange: evaluationStart !== 'Unavailable' && evaluationEnd !== 'Unavailable'
+      ? evaluationStart + ' to ' + evaluationEnd
+      : start !== 'Unavailable' && end !== 'Unavailable' ? start + ' to ' + end : 'Unavailable',
     warnings,
   };
 }
