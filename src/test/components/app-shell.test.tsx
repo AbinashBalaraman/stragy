@@ -83,4 +83,30 @@ describe('calm app shell', () => {
     expect(onNavigate).toHaveBeenCalledWith('chat');
     expect(onNewChat).not.toHaveBeenCalled();
   });
+
+  it('shows connected Angel One quotes only in real mode and keeps the delayed wording otherwise', () => {
+    const view = render(
+      <AppShell activeView="chat" onNavigate={vi.fn()} onNewChat={vi.fn()} dataMode="real" liveQuotes={{ connected: true, provider: 'angel' }}>
+        Chat content
+      </AppShell>
+    );
+    expect(screen.getByText('Live quotes · Angel One')).toBeTruthy();
+    expect(screen.getByText('Research bars remain delayed, not live')).toBeTruthy();
+    expect(screen.queryByText(/Observed public daily data/)).toBeNull();
+
+    view.rerender(
+      <AppShell activeView="chat" onNavigate={vi.fn()} onNewChat={vi.fn()} dataMode="real" liveQuotes={{ connected: false, provider: null }}>
+        Chat content
+      </AppShell>
+    );
+    expect(screen.getByText(/Observed public daily data · delayed, not live/)).toBeTruthy();
+
+    view.rerender(
+      <AppShell activeView="chat" onNavigate={vi.fn()} onNewChat={vi.fn()} dataMode="demo" liveQuotes={{ connected: true, provider: 'angel' }}>
+        Chat content
+      </AppShell>
+    );
+    expect(screen.getByText(/Demo research · generated bars, not observed/)).toBeTruthy();
+    expect(screen.queryByText('Live quotes · Angel One')).toBeNull();
+  });
 });

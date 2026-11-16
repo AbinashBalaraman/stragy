@@ -3,7 +3,7 @@ import type { InstrumentMetadataSchema } from '../contracts/strategy-v2';
 
 export type Timeframe = '1m' | '5m' | '15m' | '1H' | '1D' | '1W';
 
-export type IndicatorType = 'SMA' | 'EMA' | 'RSI' | 'BBANDS' | 'MACD' | 'SUPERTREND' | 'ATR' | 'VOLUME_SMA';
+export type IndicatorType = 'SMA' | 'EMA' | 'RSI' | 'RSI_SMA' | 'RSI_TRENDLINE' | 'PCT_ABOVE_LOW' | 'PCT_CHANGE' | 'BBANDS' | 'MACD' | 'SUPERTREND' | 'ATR' | 'VOLUME_SMA';
 
 export type PriceField = 'open' | 'high' | 'low' | 'close' | 'volume' | 'candleBody' | 'upperWick' | 'lowerWick';
 
@@ -89,6 +89,8 @@ export interface StrategyAST {
   name: string;
   description?: string;
   version: number;
+  /** True when this legacy-shaped AST was adapted from a canonical v2 strategy. */
+  canonicalOrigin?: boolean;
   universe: StrategyUniverse;
   indicators: IndicatorConfig[];
   rules: {

@@ -4,9 +4,10 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { parseConfig, redact, type RuntimeConfig } from './config';
 import { sourceCommit } from './buildInfo';
-import { ALL_SYMBOLS, NSE_SYMBOLS, UNIVERSE_OPTIONS, filterSymbolsByUniverse, getSymbolById } from './data/symbols';
+import { ALL_SYMBOLS, NSE_SYMBOLS, UNIVERSE_OPTIONS, filterSymbolsByUniverse, getSymbolById, UnknownSymbolError } from './data/symbols';
 import { loadMarketSeries, getAvailableTradingDates, findNearestTradingDate, MarketDataError } from './data/realMarketData';
 import { calculateStockTrends, calculateMarketMovers, getSmartApiStatus, getSmartApiRateLimitsAndSpecs, getOptionChainData, getVolumeProfileAndVWAP, calculateGttBracketOrder, getBasisAndCalendarSpreads } from './data/smartApi';
+import { getLiveQuotes } from './data/liveQuotes';
 import { scanUniverse } from './backtest/scanner';
 import { runBacktest } from './backtest/engine';
 import { STRATEGY_TEMPLATES } from '../shared/strategy/templates';
@@ -21,7 +22,10 @@ import { parseBacktestResult } from '../shared/contracts/research';
 import { SimulationInputError } from './backtest/engine';
 import type { BacktestResponse, StrategyAST } from '../shared/strategy/types';
 import { researchChat } from './ai/researchChat';
+import { analyzeChart, ChartImageError, parseChartImageDataUrl } from './ai/chartVision';
 import { resolveObservedUniverse } from './data/observedUniverse';
+import { getProvidersResponse, upsertProvider, deleteProvider, setChain, resetProviders, listProviderModels, testProvider, ProviderError, initializeProviderRegistry } from './ai/providerRegistry';
+import { initializeDatabase, getDbStatus } from './db/pool';
 
 export class ApiFailure extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) { super(message); }
@@ -37,13 +41,37 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T { const r = schema.sa
 function executable(raw: unknown): StrategyAST { const r = validateStrategy(raw); if (!r.success || !r.data) throw new ApiFailure(422, 'INVALID_STRATEGY', 'Strategy is invalid or unsupported', r.errors); return r.data; }
 function tokenMatches(actual: string, expected: string): boolean { const a = Buffer.from(actual), b = Buffer.from(expected); return a.length === b.length && timingSafeEqual(a, b); }
 const wrap = (fn: (req: Request, res: Response) => unknown) => (req: Request, res: Response, next: NextFunction) => { Promise.resolve().then(() => fn(req, res)).catch(next); };
+// Warm-up must never tell the user the catalog is missing. Wait a bounded time for the
+// official membership feed, then fall back to the bundled catalog for instrument ids.
+function symbolsWarmupBudgetMs(): number {
+  const raw = Number(process.env.SYMBOLS_WARMUP_BUDGET_MS ?? 20_000);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 20_000;
+}
+async function resolveSymbolMembership(): Promise<Awaited<ReturnType<typeof resolveObservedUniverse>>> {
+  const deadline = Date.now() + symbolsWarmupBudgetMs();
+  for (;;) {
+    try { return await resolveObservedUniverse('NIFTY_50'); }
+    catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise(resolve => setTimeout(resolve, 700));
+    }
+  }
+}
 
 export async function createApp(deps: AppDependencies = {}) {
   const config = deps.config ?? parseConfig();
   process.env.DATA_MODE = config.DATA_MODE;
   process.env.AI_PROVIDER = config.AI_PROVIDER;
   process.env.MARKET_PROVIDER = config.MARKET_PROVIDER;
+  process.env.QUOTES_PROVIDER = config.QUOTES_PROVIDER;
+  // Start the official NIFTY 50 fetch during boot so the first chat request joins an
+  // in-flight load instead of seeing an empty symbol catalog. Tests never warm.
+  if (config.NODE_ENV === 'production' && config.DATA_MODE === 'real') void resolveObservedUniverse('NIFTY_50').catch(() => undefined);
   process.env.AI_COST_POLICY = config.AI_COST_POLICY;
+  if (config.VISION_PROVIDER) process.env.VISION_PROVIDER = config.VISION_PROVIDER;
+  if (config.VISION_MODEL) process.env.VISION_MODEL = config.VISION_MODEL;
+  await initializeDatabase(process.env);
+  await initializeProviderRegistry(process.env);
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', false);
@@ -53,14 +81,49 @@ export async function createApp(deps: AppDependencies = {}) {
   app.use((req, res, next) => {
     res.locals.requestId = randomUUID(); res.setHeader('X-Request-ID', res.locals.requestId);
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY');
-    if (config.NODE_ENV === 'production') res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    if (config.NODE_ENV === 'production') res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; connect-src 'self'; font-src 'self' data: https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
     next();
   });
   app.get('/health/live', (_req, res) => res.json({ status: 'ok' }));
-  app.get('/health/ready', (_req, res) => res.json({ status: 'ready', mode: config.DATA_MODE, persistence: config.STORAGE_MODE }));
+  app.get('/health/ready', async (_req, res) => {
+    const db = await getDbStatus(process.env);
+    res.json({ status: 'ready', mode: config.DATA_MODE, persistence: config.STORAGE_MODE, db });
+  });
+  // Whole-site password gate for the owner's private deployment. Health probes stay open
+  // so Render (and local tooling) can verify liveness without credentials. A valid Bearer
+  // API token remains an alternative for API clients; browser sessions use Basic auth.
+  if (config.SITE_PASSWORD) {
+    const sitePassword = config.SITE_PASSWORD;
+    const siteUser = config.SITE_USER;
+    app.use((req, res, next) => {
+      if (req.path === '/health/live' || req.path === '/health/ready') return next();
+      const authorization = req.get('authorization') ?? '';
+      let authorized = false;
+      if (/^Basic\s+/i.test(authorization)) {
+        const decoded = Buffer.from(authorization.replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
+        const separator = decoded.indexOf(':');
+        if (separator >= 0) {
+          const userOk = tokenMatches(decoded.slice(0, separator), siteUser);
+          const passwordOk = tokenMatches(decoded.slice(separator + 1), sitePassword);
+          authorized = userOk && passwordOk;
+        }
+      }
+      if (!authorized && config.API_ACCESS_TOKEN && /^Bearer\s+/i.test(authorization)) {
+        authorized = tokenMatches(authorization.replace(/^Bearer\s+/i, ''), config.API_ACCESS_TOKEN);
+      }
+      if (!authorized) {
+        res.setHeader('WWW-Authenticate', 'Basic realm="Stragy", charset="UTF-8"');
+        res.setHeader('Cache-Control', 'no-store');
+        if (req.path.startsWith('/api/')) return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required.', requestId: res.locals.requestId, retryable: false } });
+        return res.status(401).type('html').send('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stragy · Authentication required</title></head><body style="margin:0;background:#101012;color:#ececec;font-family:Inter,system-ui,sans-serif;display:grid;min-height:100vh;place-items:center"><main style="max-width:32rem;padding:2rem"><h1 style="font-size:1.4rem;margin:0 0 .75rem">Stragy is private</h1><p style="color:#a1a1aa;line-height:1.6;margin:0">This research workspace requires the owner password. Your browser should show a sign-in prompt; reload after entering it.</p></main></body></html>');
+      }
+      res.locals.siteAuthenticated = true;
+      next();
+    });
+  }
   app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString(), platform: 'Stragy research', mode: config.DATA_MODE }));
   app.use('/api', (req, _res, next) => {
-    if (config.NODE_ENV === 'production' && config.EXPOSURE_MODE === 'private') {
+    if (config.NODE_ENV === 'production' && config.EXPOSURE_MODE === 'private' && !_res.locals.siteAuthenticated) {
       const authorization = req.get('authorization') ?? '';
       const match = /^Bearer ([^\s]+)$/i.exec(authorization);
       const value = match?.[1] ?? '';
@@ -75,18 +138,56 @@ export async function createApp(deps: AppDependencies = {}) {
     if (clients.size > 1024) clients.delete(clients.keys().next().value!);
     next();
   });
-  app.use(express.json({ limit: config.MAX_BODY_BYTES }));
-  app.get('/api/v2/capabilities', wrap(async (_req, res) => res.json({ schemaVersion: 2, mode: config.DATA_MODE, demo: config.DATA_MODE === 'demo', engineVersion: 'stragy-next-open-v2', executionPolicy: 'next_open_long_cash_v1', timeframes: ['1D'], directions: ['LONG'], orders: ['MARKET'], liveTrading: false, realDataConfigured: config.MARKET_PROVIDER === 'yahoo', marketProvider: config.MARKET_PROVIDER, dataDescription: config.DATA_MODE === 'real' ? 'Observed public daily OHLCV, delayed/end-of-day, not exchange tick streaming' : 'Generated demo data', persistence: config.STORAGE_MODE, jobs: !!deps.jobs, ai: getAIStatus(), limitations: ['Real data entitlement, instrument metadata, calendars, and fee schedules require verification.', 'Research only. No broker orders are submitted.'] })));
+  // Chart screenshots need a larger route-scoped JSON body than the global API limit.
+  const ChartAnalysisBody = z.object({ image: z.string().min(1), hint: z.string().max(1_000).optional(), currentStrategy: z.unknown().optional() }).strict();
+  app.post('/api/v2/chart-analysis', express.json({ limit: '8mb' }), wrap(async (req, res) => {
+    const p = parse(ChartAnalysisBody, req.body ?? {});
+    let image;
+    try { image = parseChartImageDataUrl(p.image); }
+    catch (error) { if (error instanceof ChartImageError) throw new ApiFailure(error.status, error.code, error.message); throw error; }
+    const current = p.currentStrategy === undefined ? undefined : executable(p.currentStrategy);
+    res.json(await analyzeChart({ image, hint: p.hint, currentStrategy: current }));
+  }));
+  app.use(express.json({ limit: config.MAX_BODY_BYTES }));  app.get('/api/v2/capabilities', wrap(async (_req, res) => res.json({ schemaVersion: 2, mode: config.DATA_MODE, demo: config.DATA_MODE === 'demo', engineVersion: 'stragy-next-open-v2', executionPolicy: 'next_open_long_cash_v1', timeframes: ['1D'], directions: ['LONG'], orders: ['MARKET'], liveTrading: false, realDataConfigured: ['yahoo', 'angel'].includes(config.MARKET_PROVIDER), marketProvider: config.MARKET_PROVIDER, quotesProvider: config.QUOTES_PROVIDER, liveQuotes: config.QUOTES_PROVIDER === 'angel', dataDescription: config.DATA_MODE === 'real' ? (config.MARKET_PROVIDER === 'angel' ? 'Angel One SmartAPI broker daily candles and live quotes (read-only), with provenance' : config.QUOTES_PROVIDER === 'angel' ? 'Delayed/end-of-day observed daily bars plus live Angel One quotes, labeled separately' : 'Observed public daily OHLCV, delayed/end-of-day, not exchange tick streaming') : 'Generated demo data', persistence: config.STORAGE_MODE, jobs: !!deps.jobs, ai: getAIStatus(), limitations: ['Real data entitlement, instrument metadata, calendars, and fee schedules require verification.', 'Research only. No broker orders are submitted.', 'Angel One redistribution terms apply to any public display of broker data.'] })));
   app.get('/api/symbols', wrap(async (_req, res) => {
     if (config.DATA_MODE === 'demo') return res.json({ success: true, symbols: ALL_SYMBOLS, mode: 'demo', membershipBasis: 'illustrative' });
-    const membership = await resolveObservedUniverse('NIFTY_50');
-    const symbols = [...ALL_SYMBOLS.filter(s => s.ticker.startsWith('^')), ...membership.symbols];
-    res.json({ success: true, symbols, mode: 'real', membershipBasis: 'official-current-feed; historical survivorship bias', membership: { source: membership.source, observedAt: membership.observedAt, requested: membership.requested, unmapped: membership.unmapped }, referencePricesObserved: false });
+    try {
+      const membership = await resolveSymbolMembership();
+      const symbols = [...ALL_SYMBOLS.filter(s => s.ticker.startsWith('^')), ...membership.symbols];
+      res.json({ success: true, symbols, mode: 'real', membershipBasis: 'official-current-feed; historical survivorship bias', membership: { source: membership.source, observedAt: membership.observedAt, requested: membership.requested, unmapped: membership.unmapped }, referencePricesObserved: false });
+    } catch {
+      // Last resort: identifiers, not membership evidence. Scans that require the
+      // official feed still fail honestly; chat can resolve a ticker immediately.
+      const bundled = filterSymbolsByUniverse('NIFTY_50').map(symbol => ({ ...symbol }));
+      const symbols = [...ALL_SYMBOLS.filter(s => s.ticker.startsWith('^')), ...bundled];
+      res.json({
+        success: true,
+        symbols,
+        mode: 'real',
+        membershipBasis: 'bundled-catalog-fallback; official NIFTY 50 membership unavailable',
+        membership: { source: 'BUNDLED_INSTRUMENT_CATALOG', observedAt: null, requested: 50, unmapped: [], unavailable: true },
+        referencePricesObserved: false,
+        warning: 'Official NIFTY 50 membership could not be loaded; showing bundled instrument ids only. Membership-dependent scans will report unavailable until the feed recovers.'
+      });
+    }
   }));
   app.get('/api/symbols/:id/bars', wrap(async (req, res) => { const id = parse(IdSchema, req.params.id); const series = await loadMarketSeries(id, { asOf: parse(DateSchema, req.query.date), mode: config.DATA_MODE }); res.json({ success: true, symbol: getSymbolById(id), count: series.bars.length, ...series }); }));
   app.get('/api/strategy/templates', (_req, res) => res.json({ success: true, templates: STRATEGY_TEMPLATES }));
   app.get('/api/patterns', (_req, res) => res.json({ success: true, patterns: PATTERN_LIBRARY, method: 'local_reference' }));
   app.get('/api/smartapi/status', wrap(async (_req, res) => res.json({ success: true, ...await getSmartApiStatus() })));
+  app.get('/api/v2/quotes', wrap(async (req, res) => {
+    const query = parse(z.object({ symbolIds: z.string().trim().min(1).max(160) }), req.query);
+    const parts = query.symbolIds.split(',').map(part => part.trim()).filter(Boolean);
+    if (!parts.length || parts.length > 10 || parts.some(part => !/^\d{1,9}$/.test(part))) throw new ApiFailure(422, 'VALIDATION_FAILED', 'symbolIds must be 1 to 10 comma-separated positive integer ids.', [{ path: 'symbolIds', message: 'Expected e.g. symbolIds=1,9' }]);
+    const ids = [...new Set(parts.map(Number))];
+    const symbols = ids.map(id => getSymbolById(id));
+    const result = await getLiveQuotes(ids);
+    res.json({
+      success: true,
+      ...result,
+      labels: symbols.map(symbol => ({ symbolId: symbol.id, ticker: symbol.ticker, name: symbol.name, exchange: symbol.exchange }))
+    });
+  }));
   app.get('/api/smartapi/rate-limits', (_req, res) => res.json({ success: true, ...getSmartApiRateLimitsAndSpecs() }));
   app.get('/api/market/universes', (_req, res) => res.json({ success: true, universes: UNIVERSE_OPTIONS }));
   app.get('/api/market/dates', wrap(async (_req, res) => { await loadMarketSeries(NSE_SYMBOLS[0].id,{mode:config.DATA_MODE});const dates = getAvailableTradingDates(250); res.json({ success: true, count: dates.length, dates, mode: config.DATA_MODE, warning: 'Calendar sessions are not evidence of observed price availability for every symbol.' }); }));
@@ -112,7 +213,8 @@ export async function createApp(deps: AppDependencies = {}) {
   app.get('/api/derivatives/option-chain', optionChain); app.get('/api/market/option-chain', optionChain);
   app.get('/api/market/volume-profile', wrap(async (req, res) => res.json({ success: true, ...getVolumeProfileAndVWAP(parse(IdSchema, req.query.symbolId ?? 4)), mode: config.DATA_MODE, model: true })));
   app.get('/api/market/basis-spreads', wrap(async (_req, res) => { const spreads = getBasisAndCalendarSpreads(); res.json({ success: true, count: spreads.length, spreads, mode: config.DATA_MODE, model: true }); }));
-  app.post('/api/orders/gtt-bracket', wrap(async (req, res) => { const p = parse(z.object({ symbolId: IdSchema.default(4), action: z.enum(['BUY', 'SELL']).default('BUY'), capitalAllocated: z.number().positive().max(1e8).default(100000), riskPct: z.number().positive().max(50).default(1.5), rewardRatio: z.number().positive().max(20).default(2.5), trailPct: z.number().positive().max(50).default(0.5) }), req.body); res.json({ success: true, ...calculateGttBracketOrder(p.symbolId, p.action, p.capitalAllocated, p.riskPct, p.rewardRatio, p.trailPct), previewOnly: true, mode: config.DATA_MODE }); }));
+  // Default preview symbol: RELIANCE (catalog id 9) is present in SMARTAPI_TOKEN_MAP.
+  app.post('/api/orders/gtt-bracket', wrap(async (req, res) => { const p = parse(z.object({ symbolId: IdSchema.default(9), action: z.enum(['BUY', 'SELL']).default('BUY'), capitalAllocated: z.number().positive().max(1e8).default(100000), riskPct: z.number().positive().max(50).default(1.5), rewardRatio: z.number().positive().max(20).default(2.5), trailPct: z.number().positive().max(50).default(0.5) }), req.body ?? {}); res.json({ success: true, ...calculateGttBracketOrder(p.symbolId, p.action, p.capitalAllocated, p.riskPct, p.rewardRatio, p.trailPct), previewOnly: true, mode: config.DATA_MODE }); }));
   async function remember(result: BacktestResponse) { await repository.putRun(result); }
   async function prepareRun(body: unknown) {
     const raw = body as Record<string, unknown>;
@@ -148,6 +250,23 @@ export async function createApp(deps: AppDependencies = {}) {
   app.post('/api/ai/optimize', (_req, _res, next) => next(new ApiFailure(503, 'OPTIMIZER_WORKER_REQUIRED', 'Legacy optimization is disabled. Review a draft proposal and run bounded research explicitly.')));
   app.post('/api/v2/ai/proposals', wrap(async (req, res) => { const p = parse(z.object({ prompt: z.string().min(1).max(4000), currentStrategy: z.unknown().optional(), originatingRevision: z.union([z.number().int().nonnegative(), z.string().max(100)]).optional(), allowLocalFallback: z.boolean().default(false), history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(4000) })).max(20).optional() }), req.body); const input = { ...p, currentStrategy: p.currentStrategy ? executable(p.currentStrategy) : undefined }; const result = await createProposal(input); res.status(result.ok ? 200 : 422).json(result); }));
   app.post('/api/v2/research-chat', wrap(async (req, res) => res.json(await researchChat(req.body))));
+
+  const providerRoute = (handler: (req: Request, res: Response) => Promise<void> | void) => wrap(async (req, res) => {
+    try { await handler(req, res); }
+    catch (error) {
+      if (error instanceof ProviderError) throw new ApiFailure(error.status, error.code, error.message);
+      if (error instanceof z.ZodError) throw new ApiFailure(400, 'INVALID_REQUEST', error.issues.map(issue => `${issue.path.join('.') || 'body'}: ${issue.message}`).join('; '));
+      throw error;
+    }
+  });
+  app.get('/api/v2/ai/providers', providerRoute(async (_req, res) => { res.json(getProvidersResponse()); }));
+  app.post('/api/v2/ai/providers', providerRoute(async (req, res) => { res.status(201).json({ provider: await upsertProvider(req.body) }); }));
+  app.put('/api/v2/ai/providers/:id', providerRoute(async (req, res) => { res.json({ provider: await upsertProvider({ ...req.body, id: req.params.id }) }); }));
+  app.delete('/api/v2/ai/providers/:id', providerRoute(async (req, res) => { await deleteProvider(req.params.id); res.status(204).end(); }));
+  app.get('/api/v2/ai/providers/:id/models', providerRoute(async (req, res) => { res.json({ models: await listProviderModels(req.params.id) }); }));
+  app.post('/api/v2/ai/providers/:id/test', providerRoute(async (req, res) => { res.json(await testProvider(req.params.id, req.body)); }));
+  app.put('/api/v2/ai/chain', providerRoute(async (req, res) => { res.json(await setChain(req.body)); }));
+  app.post('/api/v2/ai/reset', providerRoute(async (_req, res) => { res.json(await resetProviders()); }));
   app.post('/api/ai/scan-live', (_req, _res, next) => next(new ApiFailure(422, 'EXPLICIT_SCAN_REQUIRED', 'Build or select a validated strategy and request a scan explicitly.')));
   app.get('/api/web/search', (req, res) => { const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 200) : ''; const pattern = PATTERN_LIBRARY.find(p => p.keywords.some(k => q.toLowerCase().includes(k))); res.json({ query: q, method: 'local_reference', source: 'Bundled pattern library, not web search', abstract: pattern?.summary ?? 'No matching local reference.', details: pattern?.description ?? '', family: pattern?.family }); });
   app.get('/api/strategies', (_req, res) => res.json({ success: true, strategies: repository.listStrategies().map(r => ({ ...r.strategy, savedRevision: r.revision })), persistence: config.STORAGE_MODE }));
@@ -157,13 +276,13 @@ export async function createApp(deps: AppDependencies = {}) {
   app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     if (!req.path.startsWith('/api')) return next(err);
     const bodyError = err as { type?: string; status?: number };
-    const status = err instanceof ApiFailure || err instanceof JobError || err instanceof StorageError ? err.status : err instanceof SimulationInputError ? 422 : err instanceof MarketDataError ? (/^(UNKNOWN|INVALID|OUT_OF_COVERAGE)/.test(err.code) ? 422 : 503) : bodyError.type === 'entity.too.large' ? 413 : bodyError.type === 'entity.parse.failed' ? 400 : 500;
-    const code = err instanceof ApiFailure || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? err.code : status === 413 ? 'BODY_TOO_LARGE' : status === 400 ? 'MALFORMED_JSON' : 'INTERNAL_ERROR';
-    const message = err instanceof ApiFailure || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.';
+    const status = err instanceof ApiFailure || err instanceof JobError || err instanceof StorageError ? err.status : err instanceof UnknownSymbolError || err instanceof SimulationInputError ? 422 : err instanceof MarketDataError ? (/^(UNKNOWN|INVALID|OUT_OF_COVERAGE)/.test(err.code) ? 422 : 503) : bodyError.type === 'entity.too.large' ? 413 : bodyError.type === 'entity.parse.failed' ? 400 : 500;
+    const code = err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? err.code : status === 413 ? 'BODY_TOO_LARGE' : status === 400 ? 'MALFORMED_JSON' : 'INTERNAL_ERROR';
+    const message = err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.';
     res.status(status).json({ success: false, error: { code, message, requestId: res.locals.requestId, retryable: [429, 503, 504].includes(status), ...(err instanceof ApiFailure && err.details ? { fieldErrors: err.details } : {}) } });
   });
   app.use((req, res, next) => { if (/\.(?:cjs|map)$|(?:^|\/)\.env|(?:^|\/)server(?:\/|\.)/i.test(req.path)) return res.status(404).end(); next(); });
-  if (deps.enableVite && config.NODE_ENV !== 'production') { const { createServer } = await import('vite'); const vite = await createServer({ server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); }
+  if (deps.enableVite && config.NODE_ENV !== 'production') { const { createServer } = await import('vite'); const vite = await createServer({ configLoader: 'native', server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); }
   else if (config.NODE_ENV === 'production') { const client = path.join(process.cwd(), 'dist/client'); app.use(express.static(client, { dotfiles: 'deny', index: false })); app.get('*', (_req, res) => res.sendFile(path.join(client, 'index.html'))); }
   return app;
 }

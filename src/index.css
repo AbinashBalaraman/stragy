@@ -183,8 +183,8 @@ body {
 }
 
 .btn-ghost-quant:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(168, 199, 250, 0.06);
+  border-color: rgba(168, 199, 250, 0.35);
 }
 
 @layer utilities {

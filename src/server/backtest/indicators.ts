@@ -78,8 +78,96 @@ export function calcRSI(bars: OHLCVBar[], period: number = 14): (number | null)[
   return result;
 }
 
-export function calcATR(bars: OHLCVBar[], period: number = 14): (number | null)[] {
+/** SMA over arbitrary numeric series; any missing warmup value invalidates the window. */
+export function calcSeriesSMA(values: (number | null)[], period: number): (number | null)[] {
   validPeriod(period);
+  const result: (number | null)[] = new Array(values.length).fill(null);
+  for (let i = period - 1; i < values.length; i++) {
+    let sum = 0;
+    let complete = true;
+    for (let j = i - period + 1; j <= i; j++) {
+      const value = values[j];
+      if (typeof value !== 'number' || !Number.isFinite(value)) { complete = false; break; }
+      sum += value;
+    }
+    if (complete) result[i] = sum / period;
+  }
+  return result;
+}
+
+/** TradingView-style RSI signal line: simple moving average of Wilder RSI. */
+export function calcRSISMA(bars: OHLCVBar[], rsiPeriod: number = 14, period: number = 14): (number | null)[] {
+  return calcSeriesSMA(calcRSI(bars, rsiPeriod), period);
+}
+
+export interface RSITrendlineParams { minSpan?: number; maxSpan?: number; anchorMin?: number }
+
+/**
+ * Causal falling-resistance line on the RSI panel.
+ *
+ * At bar i the anchor is the highest RSI in [i-maxSpan, i-minSpan] that is at least
+ * anchorMin, using only RSI values from completed bars (indices <= i-1). The slope is
+ * the maximum (least negative) slope from the anchor to bars anchor+5 .. i-2. A missing
+ * anchor or a non-negative slope yields null, which no comparison can satisfy.
+ */
+export function calcRSITrendline(rsi: (number | null)[], params: RSITrendlineParams = {}): (number | null)[] {
+  const minSpan = Math.max(2, Math.trunc(params.minSpan ?? 30));
+  const maxSpan = Math.max(minSpan + 1, Math.trunc(params.maxSpan ?? 180));
+  const anchorMin = Number.isFinite(params.anchorMin) ? params.anchorMin! : 60;
+  const result: (number | null)[] = new Array(rsi.length).fill(null);
+  const finiteAt = (index: number): number | null => {
+    const value = rsi[index];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  };
+  for (let i = 0; i < rsi.length; i++) {
+    // Completed-bar-only window: never inspect RSI[i].
+    const start = Math.max(0, i - maxSpan);
+    const end = i - minSpan;
+    if (end < start) continue;
+    let anchor = -1;
+    let anchorValue = -Infinity;
+    for (let j = start; j <= end; j++) {
+      const value = finiteAt(j);
+      // Ties favour the most recent occurrence, matching a "latest highest" reading.
+      if (value !== null && value >= anchorMin && value >= anchorValue) { anchor = j; anchorValue = value; }
+    }
+    if (anchor < 0) continue;
+    let slope = -Infinity;
+    for (let j = anchor + 5; j <= i - 2; j++) {
+      const value = finiteAt(j);
+      if (value === null) continue;
+      slope = Math.max(slope, (value - anchorValue) / (j - anchor));
+    }
+    if (!Number.isFinite(slope) || slope >= 0) continue;
+    result[i] = anchorValue + slope * (i - anchor);
+  }
+  return result;
+}
+
+/** Close distance above the lowest low of the trailing window, in percent. */
+export function calcPctAboveLow(bars: OHLCVBar[], period: number = 250): (number | null)[] {
+  validPeriod(period);
+  const result: (number | null)[] = new Array(bars.length).fill(null);
+  for (let i = period - 1; i < bars.length; i++) {
+    let lowest = Infinity;
+    for (let j = i - period + 1; j <= i; j++) lowest = Math.min(lowest, bars[j].low);
+    if (Number.isFinite(lowest) && lowest > 0) result[i] = ((bars[i].close - lowest) / lowest) * 100;
+  }
+  return result;
+}
+
+/** Percentage change over the trailing window: (close / close[i-period] - 1) * 100. */
+export function calcPctChange(bars: OHLCVBar[], period: number = 126): (number | null)[] {
+  validPeriod(period);
+  const result: (number | null)[] = new Array(bars.length).fill(null);
+  for (let i = period; i < bars.length; i++) {
+    const base = bars[i - period].close;
+    if (Number.isFinite(base) && base > 0) result[i] = (bars[i].close / base - 1) * 100;
+  }
+  return result;
+}
+
+export function calcATR(bars: OHLCVBar[], period: number = 14): (number | null)[] {  validPeriod(period);
   const result: (number | null)[] = new Array(bars.length).fill(null);
   if (bars.length < period) return result;
 
@@ -290,6 +378,16 @@ export function calculateAllIndicators(
       series[id] = calcEMA(bars, ind.params.period || 20);
     } else if (ind.type === 'RSI') {
       series[id] = calcRSI(bars, ind.params.period || 14);
+    } else if (ind.type === 'RSI_SMA') {
+      series[id] = calcRSISMA(bars, ind.params.rsiPeriod ?? 14, ind.params.period ?? 14);
+    } else if (ind.type === 'RSI_TRENDLINE') {
+      const rsi = calcRSI(bars, ind.params.rsiPeriod ?? 14);
+      series[id] = calcRSITrendline(rsi, { minSpan: ind.params.minSpan ?? 30, maxSpan: ind.params.maxSpan ?? 180, anchorMin: ind.params.anchorMin ?? 60 });
+      series[`${id}_line`] = series[id];
+    } else if (ind.type === 'PCT_ABOVE_LOW') {
+      series[id] = calcPctAboveLow(bars, ind.params.period ?? 250);
+    } else if (ind.type === 'PCT_CHANGE') {
+      series[id] = calcPctChange(bars, ind.params.period ?? 126);
     } else if (ind.type === 'ATR') {
       series[id] = calcATR(bars, ind.params.period || 14);
     } else if (ind.type === 'SUPERTREND') {

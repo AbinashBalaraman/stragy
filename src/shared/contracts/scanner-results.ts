@@ -47,14 +47,19 @@ export const MarketSnapshotResultSchema = z.object({
   if (Object.values(value.sourceCoverage).reduce((sum, n) => sum + n, 0) !== value.coverage.succeeded)
     ctx.addIssue({ code: 'custom', message: 'Market source coverage does not reconcile' });
 });
+const scanRule = z.object({ rule: z.string(), ruleIndex: count.optional(), actualLeft: finite, actualRight: finite, matchedIndex: count.optional(), matchedDate: date.optional(), currentActualLeft: finite.optional(), currentActualRight: finite.optional() });
+const scanMatch = z.object({
+  symbolId: count.positive(), ticker: z.string(), name: z.string(), sector: z.string(), lastDate: date,
+  lastClose: finite.positive(), changePercent: finite,
+  score: z.number().min(0).max(1).optional(),
+  matchedRules: z.array(scanRule),
+  unmatchedRules: z.array(scanRule).optional(),
+  indicatorValues: z.record(z.string(), finite), provenance,
+});
 export const ScanResultSchema = z.object({
   universe: z.string(), scanned: count, matched: count, scannedAt: z.string().min(1), dataSource: z.string(),
-  matches: z.array(z.object({
-    symbolId: count.positive(), ticker: z.string(), name: z.string(), sector: z.string(), lastDate: date,
-    lastClose: finite.positive(), changePercent: finite,
-    matchedRules: z.array(z.object({ rule: z.string(), actualLeft: finite, actualRight: finite, matchedIndex: count.optional(), matchedDate: date.optional(), currentActualLeft: finite.optional(), currentActualRight: finite.optional() })),
-    indicatorValues: z.record(z.string(), finite), provenance,
-  })).max(500),
+  matches: z.array(scanMatch).max(500),
+  nearMatches: z.array(scanMatch).max(10).optional(),
   requested: count, attempted: count, succeeded: count, unavailable: count, failed: count,
   asOf: date.optional(), offset: count, limit: count.min(1).max(500),
   errors: z.array(z.object({ symbolId: count, code: z.string(), message: z.string(), ticker: z.string().optional() })).max(2500),

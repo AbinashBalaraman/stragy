@@ -7,7 +7,7 @@ export interface BacktestReview {
   symbol: SymbolMeta;
   asOf?: string;
   sourceLabel: string;
-  sourceType: 'screen' | 'draft';
+  sourceType: 'screen' | 'draft' | 'workspace';
   assumptions: string[];
   originSnapshot: string;
   /** Canonical reviewed strategy content, frozen at review preparation. */

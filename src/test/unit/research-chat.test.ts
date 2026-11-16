@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { researchChat } from '../../server/ai/researchChat';
 import { validStrategy } from '../../server/ai/testFixtures';
+import { fakeResponse, openAIBody } from '../../server/ai/testFixtures';
+import { createRequestBudget } from '../../server/ai/provider';
 import { validateStrategy } from '../../shared/strategy/schema';
 const prompt='Find Nifty 50 stocks with RSI in the oversold area but recently touched over bought area';
 describe('research chat plans',()=>{
@@ -28,4 +30,42 @@ it('does not treat a do-not-scan instruction as screening intent',async()=>{
  const fetch=vi.fn(),deps={env:{AI_PROVIDER:'none'},fetch};
  const edit=await researchChat({message:'Set stop loss to 3%. Verification only: return an unapplied draft. Do not scan, backtest, save, or place orders.',currentStrategy:validStrategy(),allowLocalFallback:true},deps);expect(edit.kind).toBe('proposal');if(edit.kind==='proposal'){expect(edit.proposal.applied).toBe(false);expect(edit.proposal.executes).toBe(false);}
  const forbidden=await researchChat({message:prompt+'. Do not run a scan.',currentStrategy:validStrategy()},deps);expect(forbidden.kind).not.toBe('screen');expect(fetch).not.toHaveBeenCalled();
+});
+
+it('keeps plain stock questions in conversation instead of hijacking them as screens',async()=>{
+ const fetch=vi.fn(),deps={env:{AI_PROVIDER:'none'},fetch};
+ for(const message of ['what are nifty 50 stocks?','explain how stocks move','why do nifty 50 stocks react to rates?']){
+  const out=await researchChat({message,currentStrategy:validStrategy()},deps);
+  expect(out.kind).toBe('conversation');
+  expect(out.method).toBe('unavailable');
+ }
+ expect(fetch).not.toHaveBeenCalled();
+});
+
+it('still treats an explicit screening verb plus stock topic as a screen request',async()=>{
+ for(const message of ['show me Nifty 50 stocks with RSI oversold after recently overbought','find Nifty 50 stocks with RSI 14 oversold after recently overbought']){
+  const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
+  expect(out.kind).toBe('screen');
+ }
+});
+
+it('keeps indicator questions conversational while explicit builds still draft',async()=>{
+ for(const message of ['What does RSI measure?','What is a strategy?','Explain the meaning of a breakout']){
+  const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
+  expect(out.kind).toBe('conversation');
+ }
+ const built=await researchChat({message:'Build an RSI strategy'},{env:{AI_PROVIDER:'none'}});
+ expect(built.kind).toBe('proposal');
+ if(built.kind==='proposal')expect(built.proposal.applied).toBe(false);
+});
+
+it('surfaces key-free field errors when an AI draft fails schema validation',async()=>{
+ const bad:any=validStrategy();delete bad.risk;delete bad.execution;
+ const fetch=vi.fn(async()=>fakeResponse({body:openAIBody(JSON.stringify({rationale:'bad draft',warnings:[],strategy:bad}))}));
+ const out=await researchChat({message:'set stop loss to 3%',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-warning-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ expect(fetch).toHaveBeenCalledTimes(2);
+ expect(out).toMatchObject({kind:'conversation',method:'unavailable'});
+ expect(out.warnings.join(' ')).toMatch(/schema validation/i);
+ expect(out.warnings.join(' ')).toMatch(/risk|execution/);
+ expect(JSON.stringify(out)).not.toContain('fixture-warning-key');
 });

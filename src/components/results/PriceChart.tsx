@@ -10,6 +10,7 @@ import {
   ReferenceDot
 } from 'recharts';
 import { OHLCVBar, TradeRecord, IndicatorConfig, SymbolMeta } from '../../shared/strategy/types';
+import { formatDate, formatINR } from '../../shared/format';
 
 interface PriceChartProps {
   bars?: OHLCVBar[];
@@ -76,23 +77,23 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     <div className="p-4 sm:p-6 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[rgba(236,236,237,0.08)] pb-3.5">
         <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="font-syne font-bold text-sm sm:text-base text-[#ececed]">Price Action & Execution Map</h3>
+          <h3 className="text-sm font-semibold text-[#ececed] sm:text-base">Price and executions</h3>
           <span className="text-xs text-[#a8c7fa] font-mono font-semibold px-2 py-0.5 rounded bg-[rgba(168,199,250,0.1)] border border-[rgba(168,199,250,0.25)]">
             {displayTicker}
           </span>
-          <span className="text-[11px] text-[rgba(236,236,237,0.5)] font-mono hidden sm:inline">
-            ({safeTrades.length} Signals • {profitableTrades} Profitable)
+          <span className="hidden font-mono text-[11px] text-[rgba(236,236,237,0.5)] sm:inline">
+            {safeTrades.length} signals · {profitableTrades} profitable
           </span>
         </div>
 
         <div className="flex items-center gap-3 text-xs text-[rgba(236,236,237,0.6)] shrink-0">
           <div className="flex items-center gap-1.5 font-mono">
             <span className="w-2.5 h-2.5 rounded-full bg-[#a8c7fa] shadow-sm shadow-[#a8c7fa]/50" />
-            <span className="text-[#a8c7fa] font-semibold">Buy Entry</span>
+            <span className="text-[#a8c7fa] font-semibold">Buy entry</span>
           </div>
           <div className="flex items-center gap-1.5 font-mono">
             <span className="w-2.5 h-2.5 rounded-full bg-[#ff4d4d] shadow-sm shadow-[#ff4d4d]/50" />
-            <span className="text-[#ff4d4d] font-semibold">Sell Exit</span>
+            <span className="text-[#ff4d4d] font-semibold">Sell exit</span>
           </div>
         </div>
       </div>
@@ -123,9 +124,10 @@ export const PriceChart: React.FC<PriceChartProps> = ({
                 color: '#ececed',
                 boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7)'
               }}
+              labelFormatter={label => formatDate(String(label))}
               formatter={(val: any, name: string) => [
-                typeof val === 'number' ? `₹${val.toFixed(2)}` : val ?? '-',
-                (name || '').toUpperCase()
+                typeof val === 'number' ? formatINR(val) : val ?? '-',
+                (name || '').toLowerCase()
               ]}
             />
             <Line

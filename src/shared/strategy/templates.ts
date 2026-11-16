@@ -274,8 +274,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
   {
     id: 'nr7_volatility_compression',
     name: 'NR7 Volatility Compression Breakout',
-    category: 'Institutional',
-    description: 'Toby Crabel Narrow Range 7 (NR7) daily compression proxy using Bollinger squeeze and breakout.',
+    category: 'Institutional',    description: 'Toby Crabel Narrow Range 7 (NR7) daily compression proxy using Bollinger squeeze and breakout.',
     suitability: 'NSE Intraday & Next-Day swing volatility expansion',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -303,6 +302,49 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
         trailingStop: { type: 'percent', value: 1.5 },
         positionSizing: { type: 'fixedFraction', fraction: 0.15 },
         maxDrawdownCutoff: 10
+      },
+      execution: { allowLong: true, allowShort: false, orderType: 'MARKET' },
+      costs: { slippageBps: 5, brokerageFlat: 20, tradeType: 'DELIVERY', applyIndianTaxes: true }
+    }
+  },
+  {
+    id: 'rsi_trendline_breakout_near_lows',
+    name: 'RSI Downtrend-Line Breakout Near Lows',
+    category: 'Mean Reversion',
+    description: 'Causal chart-reading setup: RSI(14) recovered from below 36, broke a falling RSI trendline and its 14-period signal SMA while price sits near its 250-bar low after a weak 126-bar change.',
+    suitability: 'Daily NIFTY 50 equities in a long downtrend showing an early RSI momentum turn',
+    expectedWinRate: 'Unverified; run an immutable data snapshot',
+    strategy: {
+      name: 'RSI Downtrend-Line Breakout Near Lows',
+      description: 'RSI(14) < 36 recently, then closes above a causal falling RSI trendline and above its RSI signal SMA, with price within 15% of its 250-bar low and a 126-bar change below 5%.',
+      version: 1,
+      universe: { symbolId: DEFAULT_SYMBOL_ID, timeframe: '1D' },
+      indicators: [
+        { id: 'rsi14', type: 'RSI', params: { period: 14 } },
+        { id: 'rsi_sma14', type: 'RSI_SMA', params: { rsiPeriod: 14, period: 14 } },
+        { id: 'rsi_tl', type: 'RSI_TRENDLINE', params: { rsiPeriod: 14, minSpan: 30, maxSpan: 180, anchorMin: 60 } },
+        { id: 'low250', type: 'PCT_ABOVE_LOW', params: { period: 250 } },
+        { id: 'chg126', type: 'PCT_CHANGE', params: { period: 126 } }
+      ],
+      rules: {
+        entry: [
+          { id: 'r1', leftIndicator: 'rsi14', operator: 'lt', rightValue: 36, lookback: { bars: 10, includeCurrent: false, match: 'any' } },
+          { id: 'r2', leftIndicator: 'rsi14', operator: 'crossesAbove', rightIndicator: 'rsi_tl_line' },
+          { id: 'r3', leftIndicator: 'rsi14', operator: 'lt', rightIndicator: 'rsi_tl_line', lookback: { bars: 3, includeCurrent: false, match: 'any' } },
+          { id: 'r4', leftIndicator: 'rsi14', operator: 'gt', rightIndicator: 'rsi_sma14' },
+          { id: 'r5', leftIndicator: 'low250', operator: 'lt', rightValue: 15 },
+          { id: 'r6', leftIndicator: 'chg126', operator: 'lt', rightValue: 5 }
+        ],
+        exit: [
+          { id: 'r7', leftIndicator: 'rsi14', operator: 'gt', rightValue: 65 }
+        ]
+      },
+      risk: {
+        stopLoss: { type: 'percent', value: 2.5 },
+        takeProfit: { type: 'percent', value: 7.0 },
+        trailingStop: null,
+        positionSizing: { type: 'fixedFraction', fraction: 0.15 },
+        maxDrawdownCutoff: 12
       },
       execution: { allowLong: true, allowShort: false, orderType: 'MARKET' },
       costs: { slippageBps: 5, brokerageFlat: 20, tradeType: 'DELIVERY', applyIndianTaxes: true }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import React from 'react';
+import React, {useState} from 'react';
 import {afterEach,it,expect,vi} from 'vitest';
-import {render,screen,fireEvent,cleanup} from '@testing-library/react';
+import {render,screen,fireEvent,cleanup,within} from '@testing-library/react';
 import {TradingCalendarModal,type TradingSessionDate} from '../../components/scanner/TradingCalendarModal';
 afterEach(cleanup);
 const sessions=(dates:string[]):TradingSessionDate[]=>dates.map((date,i)=>({date,label:date,isLatest:i===0}));
@@ -12,3 +12,26 @@ it('selects the previous available session for a missing weekday without inventi
 it('does not invent a latest date or enable fetching when no sessions exist',()=>{render(<TradingCalendarModal {...props([])}/>);expect(screen.getByText('0 Data Sessions Available')).toBeTruthy();expect((screen.getByRole('button',{name:/Latest session.*Unavailable/}) as HTMLButtonElement).disabled).toBe(true);expect((screen.getByRole('button',{name:/Apply & Fetch Data/}) as HTMLButtonElement).disabled).toBe(true);expect(document.body.textContent).not.toMatch(/14 Aug|13 Aug|2025 Assets/);});
 it('derives year and month navigation bounds from the dataset, including dates after 2026',()=>{render(<TradingCalendarModal {...props(sessions(['2027-01-08','2026-12-31']))}/>);expect((screen.getByTitle('Previous Month') as HTMLButtonElement).disabled).toBe(false);expect((screen.getByTitle('Next Month') as HTMLButtonElement).disabled).toBe(true);fireEvent.click(screen.getByTitle('Previous Month'));expect((screen.getByTitle('Previous Month') as HTMLButtonElement).disabled).toBe(true);expect((screen.getByTitle('Next Month') as HTMLButtonElement).disabled).toBe(false);expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe('11');expect((screen.getAllByRole('combobox')[1] as HTMLSelectElement).value).toBe('2026');});
 it('updates the latest label with incoming sessions and preserves reset callback semantics',()=>{const p=props();const view=render(<TradingCalendarModal {...p}/>);view.rerender(<TradingCalendarModal {...p} availableDates={sessions(['2026-10-26',...dates.map(d=>d.date)])}/>);expect(screen.getByRole('button',{name:/Latest session.*26 Oct/})).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Reset to Latest available session'}));expect(p.onSelectDate).toHaveBeenCalledWith('');expect(p.onClose).toHaveBeenCalledTimes(1);});
+it('is a labelled modal dialog that focuses inside, traps Tab, closes on Escape and restores focus',()=>{
+  function Harness(){
+    const [open,setOpen]=useState(false);
+    return <><button type="button" onClick={()=>setOpen(true)}>Open calendar</button><TradingCalendarModal {...props()} isOpen={open} onClose={()=>setOpen(false)}/></>;
+  }
+  render(<Harness/>);
+  const trigger=screen.getByRole('button',{name:'Open calendar'});
+  trigger.focus();
+  fireEvent.click(trigger);
+  const dialog=screen.getByRole('dialog',{name:'Available Data Session Calendar'});
+  expect(dialog.getAttribute('aria-modal')).toBe('true');
+  expect(dialog.getAttribute('aria-labelledby')).toBe('trading-calendar-title');
+  const initial=within(dialog).getByRole('button',{name:'Close calendar'});
+  expect(document.activeElement).toBe(initial);
+  const focusable=within(dialog).getAllByRole('button');
+  const last=focusable[focusable.length-1];
+  last.focus();
+  fireEvent.keyDown(document,{key:'Tab'});
+  expect(document.activeElement).toBe(focusable[0]);
+  fireEvent.keyDown(document,{key:'Escape'});
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+});

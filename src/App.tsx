@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StrategyAST, SymbolMeta, BacktestResponse } from './shared/strategy/types';
 import { STRATEGY_TEMPLATES } from './shared/strategy/templates';
-import { loadWorkspaceState, saveWorkspaceWithLock, snapshotStrategy, RequestOwner, WORKSPACE_KEY, type WorkspaceRevision } from './client/workspace';
+import { loadWorkspaceState, saveWorkspaceWithLock, snapshotStrategy, RequestOwner, WORKSPACE_KEY, WorkspaceConflictError, type WorkspaceRevision } from './client/workspace';
 import { readStrategyLibrary, commitStrategyLibrary } from './client/strategyLibrary';
 import { scannerBacktestOptions } from './components/scanner/scannerRequestContext';
 import { requestBacktest } from './client/api';
 import type { RunRequestOptions } from './client/api';
+import { rerunRequestOptions } from './client/rerun';
+import { useLiveQuoteStatus } from './client/liveQuotes';
 import { AppShell, type AppView } from './components/layout/AppShell';
 import { AiCopilotDock } from './components/chat/AiCopilotDock';
 import { StrategyBuilder } from './components/strategy/StrategyBuilder';
 import { ResultsDashboard } from './components/results/ResultsDashboard';
 import { MarketScannerView } from './components/scanner/MarketScannerView';
 import { StrategyLibraryView } from './components/library/StrategyLibraryView';
+import { ProviderSettings } from './components/settings/ProviderSettings';
 import { SymbolSearchSelector } from './components/layout/SymbolSearchSelector';
 
 export default function App() {
@@ -19,8 +22,12 @@ export default function App() {
   const [newConversationSignal, setNewConversationSignal] = useState(0);
   const [symbols, setSymbols] = useState<SymbolMeta[]>([]);
   const [dataMode, setDataMode] = useState<'real' | 'demo' | 'unknown'>('unknown');
+  const liveQuoteStatus = useLiveQuoteStatus(dataMode === 'real');
   const [initialWorkspace] = useState(() => loadWorkspaceState(() => localStorage, STRATEGY_TEMPLATES[0].strategy, { deferLegacyCommit: true }));
   const [strategy, setStrategy] = useState<StrategyAST>(initialWorkspace.strategy);
+  const initialStrategy = useRef(initialWorkspace.strategy);
+  const hasEdited = useRef(false);
+  const reloadedNotice = useRef(false);
   const savedRevision = useRef<WorkspaceRevision>(initialWorkspace.revision);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const saveGeneration = useRef(0);
@@ -32,10 +39,26 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [runError, setRunError] = useState('');
   const [saveStatus, setSaveStatus] = useState('Saving');
+  const [workspaceConflict, setWorkspaceConflict] = useState(false);
   const owner = useRef(new RequestOwner());
   const controller = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    // Reloading or mounting the persisted workspace is not an edit: saving it
+    // again would mint a new savedAt/revision and fabricate cross-tab conflicts.
+    // Only the first effect for that loaded object may skip; later changes,
+    // including an undo back to it, must still persist. The ref guard also keeps
+    // React StrictMode's double-invoked mount effect from saving.
+    if (!hasEdited.current && strategy === initialStrategy.current) {
+      setSaveStatus(reloadedNotice.current
+        ? 'Reloaded the workspace saved in this browser. Unsaved draft changes were discarded.'
+        : savedRevision.current === null
+          ? 'Workspace unchanged; no local save yet'
+          : 'Workspace unchanged; saved locally');
+      reloadedNotice.current = false;
+      return;
+    }
+    hasEdited.current = true;
     const generation = ++saveGeneration.current;
     let mounted = true;
     setSaveStatus('Saving locally');
@@ -43,16 +66,25 @@ export default function App() {
       if (generation !== saveGeneration.current) return;
       const saved = await saveWorkspaceWithLock(localStorage, strategy, savedRevision.current);
       savedRevision.current = saved.revision;
-      if (mounted && generation === saveGeneration.current) setSaveStatus(saved.recoveryRetained ? 'Saved locally; rejected workspace retained in a recovery backup' : 'Saved locally');
+      if (mounted && generation === saveGeneration.current) {
+        setWorkspaceConflict(false);
+        setSaveStatus(saved.recoveryRetained ? 'Saved locally; rejected workspace retained in a recovery backup' : 'Saved locally');
+      }
     }).catch(error => {
-      if (mounted && generation === saveGeneration.current) setSaveStatus('Not saved: ' + (error as Error).message);
+      if (mounted && generation === saveGeneration.current) {
+        setSaveStatus('Not saved: ' + (error as Error).message);
+        setWorkspaceConflict(error instanceof WorkspaceConflictError);
+      }
     });
     return () => { mounted = false; };
   }, [strategy]);
 
   useEffect(() => {
     const changed = (event: StorageEvent) => {
-      if (event.key === WORKSPACE_KEY && event.newValue !== savedRevision.current) setSaveStatus('Not saved: another browser tab changed this workspace. Your draft is retained; export it before replacing or reloading.');
+      if (event.key === WORKSPACE_KEY && event.newValue !== savedRevision.current) {
+        setWorkspaceConflict(true);
+        setSaveStatus('Not saved: another browser tab changed this workspace. Your draft is retained; export it before replacing or reloading.');
+      }
     };
     window.addEventListener('storage', changed);
     return () => window.removeEventListener('storage', changed);
@@ -132,6 +164,15 @@ export default function App() {
     try { await runSnapshot(strategy); } catch { /* Visible error is owned above. */ }
   };
 
+  /** Re-run the displayed immutable result and its stored request window, not the draft. */
+  const handleReSimulate = async (result?: BacktestResponse) => {
+    if (!result) {
+      await handleRunBacktest();
+      return;
+    }
+    try { await runSnapshot(result.strategy, true, rerunRequestOptions(result)); } catch { /* Visible error is owned above. */ }
+  };
+
   /** Library/template loads intentionally open the advanced builder. */
   const handleLoadStrategy = (input: StrategyAST) => {
     try {
@@ -183,6 +224,25 @@ export default function App() {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
+  const reloadWorkspace = () => {
+    saveGeneration.current++;
+    invalidateRun();
+    setWorkspaceConflict(false);
+    reloadedNotice.current = true;
+    // Wait for any in-flight save to settle before reading the stored bytes.
+    saveQueue.current = saveQueue.current.catch(() => {}).then(() => {
+      const loaded = loadWorkspaceState(() => localStorage, STRATEGY_TEMPLATES[0].strategy);
+      savedRevision.current = loaded.revision;
+      initialStrategy.current = loaded.strategy;
+      hasEdited.current = false;
+      setPreviousStrategy(null);
+      setStrategy(loaded.strategy);
+    }).catch(error => {
+      reloadedNotice.current = false;
+      setSaveStatus('Not saved: ' + (error as Error).message);
+    });
+  };
+
   const footer = (
     <div className="space-y-1.5">
       <p role="status" aria-live="polite">
@@ -194,6 +254,16 @@ export default function App() {
             : '')}
       </p>
       {previousStrategy && <button type="button" onClick={undoDraftChange} className="underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300">Undo last draft change</button>}
+      {workspaceConflict && (
+        <button
+          type="button"
+          onClick={reloadWorkspace}
+          title="Discard unsaved draft changes and load the workspace saved in this browser"
+          className="ml-3 underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300"
+        >
+          Reload workspace
+        </button>
+      )}
       {saveStatus.startsWith('Not saved:') && <button type="button" onClick={exportDraft} className="ml-3 underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300">Export unsaved draft</button>}
     </div>
   );
@@ -204,6 +274,7 @@ export default function App() {
       onNavigate={setActiveView}
       onNewChat={handleNewChat}
       dataMode={dataMode}
+      liveQuotes={liveQuoteStatus}
       footer={footer}
     >
       {runError && (
@@ -223,7 +294,14 @@ export default function App() {
           symbols={symbols}
           onApplyVariation={handleApplyVariation}
           onResearchBacktest={handleResearchBacktest}
-          onOpenDetails={() => setActiveView('results')}
+          onOpenDetails={result => {
+            invalidateRun();
+            setBacktestResult(result);
+            // The details view now shows the exact run retained by the chat,
+            // not the current builder draft.
+            setRunDraftSignature(null);
+            setActiveView('results');
+          }}
           onSaveStrategy={saveStrategyToLibrary}
           onCancelResearch={invalidateRun}
           newConversationSignal={newConversationSignal}
@@ -255,7 +333,7 @@ export default function App() {
           <ResultsDashboard
             result={backtestResult}
             comparisonResults={comparisonResults}
-            onReRun={handleRunBacktest}
+            onReRun={handleReSimulate}
             onApplyStrategy={handleLoadStrategy}
             onUpdateComparisonList={setComparisonResults}
             onSelectActiveResult={result => {
@@ -269,7 +347,7 @@ export default function App() {
       )}
 
       {activeView === 'scanner' && (
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <MarketScannerView
             strategy={strategy}
             onSelectStockAndBacktest={(symbolId, asOf) => {
@@ -285,6 +363,12 @@ export default function App() {
       {activeView === 'library' && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <StrategyLibraryView onLoadStrategy={handleLoadStrategy} currentStrategy={strategy} />
+        </div>
+      )}
+
+      {activeView === 'settings' && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ProviderSettings />
         </div>
       )}
     </AppShell>

@@ -14,15 +14,26 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: EXPOSURE_MODE
-        value: public-research
+        value: private
       - key: DATA_MODE
         value: real
       - key: MARKET_PROVIDER
-        value: yahoo
+        value: angel
+      # Owner's Angel One account, read-only live quotes and daily candle history.
+      - key: QUOTES_PROVIDER
+        value: angel
+      - key: SITE_USER
+        value: owner
+      - key: SITE_PASSWORD
+        sync: false
       - key: AI_PROVIDER
-        value: tokenrouter
+        value: opencode-go
       - key: AI_MODEL
-        value: stealth/union-alpha
+        value: hy4-flash-free
+      - key: AI_FALLBACK_MODELS
+        value: openrouter:openrouter/free,opencode-go:deepseek-v4.1-flash
+      - key: AI_APPROVED_PAID_MODELS
+        value: opencode-go:deepseek-v4.1-flash
       - key: AI_COST_POLICY
         value: free-only
       - key: AI_TIMEOUT_MS
@@ -37,3 +48,22 @@ services:
         value: 4
       - key: STORAGE_MODE
         value: ephemeral
+      - key: OPENCODE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_UNPOOLED
+        sync: false
+      - key: PROVIDER_SECRETS_KEY
+        sync: false
+      - key: ANGEL_API_KEY
+        sync: false
+      - key: ANGEL_CLIENT_CODE
+        sync: false
+      - key: ANGEL_PASSWORD
+        sync: false
+      - key: ANGEL_TOTP_SECRET
+        sync: false
+

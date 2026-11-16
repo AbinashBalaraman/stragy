@@ -134,6 +134,7 @@ export function describeBacktestAssumptions(strategy: StrategyAST, options: Back
       'Contract tick size, lot size, margins, settlement and statutory fee accuracy are not verified.',
       'Stops and targets are checked against daily OHLC: a gap through the stop fills at the open, and a bar that touches both stop and target is assumed to hit the stop first.',
       'Slippage and fees are charged on fills and can make realized losses exceed the configured stop or drawdown threshold.',
+      'RSI trendline conditions use only prior completed RSI values; the line is a causal projection, not a hand-drawn chart line.',
       'Simulated past performance does not predict future returns.',
     ],
   };

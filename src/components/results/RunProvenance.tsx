@@ -1,24 +1,93 @@
 import React from 'react';
 import type { BacktestResponse } from '../../shared/strategy/types';
-const record = (input: unknown): Record<string, unknown> => input !== null && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
-const text = (input: unknown): string => typeof input === 'string' && input.trim() ? input : 'Unavailable';
+import { formatDate, formatDateTime } from '../../shared/format';
+import { ChevronRight } from 'lucide-react';
+
+const record = (input: unknown): Record<string, unknown> =>
+  input !== null && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+const text = (input: unknown): string => (typeof input === 'string' && input.trim() ? input : 'Unavailable');
+
+const sourceLabel = (value: unknown): string => {
+  if (typeof value !== 'string' || !value.trim()) return 'Source unavailable';
+  if (value === 'YAHOO_PUBLIC_CHART') return 'Yahoo public chart';
+  if (value === 'ANGEL_SMARTAPI') return 'Angel One SmartAPI';
+  if (value === 'DETERMINISTIC_DEMO_V1') return 'Generated demo data';
+  return value.replace(/_/g, ' ');
+};
+
 export function RunProvenance({ result }: { result: BacktestResponse }) {
-  const manifest = record(result.manifest), direct = record(result.provenance);
+  const manifest = record(result.manifest);
+  const direct = record(result.provenance);
   const data = Object.keys(direct).length ? direct : record(manifest.data);
   const range = record(data.actualRange);
-  const warnings = [...new Set([...(result.warnings ?? []), ...(Array.isArray(data.warnings) ? data.warnings.filter((w): w is string => typeof w === 'string') : [])])];
-  const label = data.mode === 'demo' ? 'GENERATED DEMO DATA: not observed market prices' : data.mode === 'real' ? 'Provider data: verification and entitlement are not implied' : 'Data provenance unavailable: do not treat this as observed market data';
-  return <section aria-label="Run data provenance" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-xs space-y-2">
-    <p className="font-semibold text-amber-200">{label}</p>
-    <p>Source: {text(data.source)} · As of: {text(data.asOf)} · Dataset range: {text(range.start)} to {text(range.end)}</p>
-    <p>Evaluation bars: {result.bars[0]?.date ?? 'Unavailable'} to {result.bars.at(-1)?.date ?? 'Unavailable'} · Adjustment: {text(data.adjustment)} · Calendar: {text(data.calendarVersion)}</p>
-    {warnings.length > 0 && <ul className="list-disc pl-4 text-amber-100/80">{warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
-    <details><summary className="cursor-pointer">Immutable run identity and assumptions</summary><dl className="pt-2 break-all space-y-1">
-      <dt>Run ID</dt><dd>{result.backtestId}</dd>
-      <dt>Data checksum</dt><dd>{text(data.checksum)}</dd>
-      <dt>Engine and execution policy</dt><dd>{text(result.engineVersion ?? manifest.engineVersion)} · {text(result.executionPolicy ?? manifest.executionPolicy)}</dd>
-      <dt>Source revision</dt><dd>{text(manifest.sourceCommit)}</dd>
-      <dt>Seed</dt><dd>{String(manifest.seed ?? record(manifest.options).seed ?? 'Unavailable')}</dd>
-    </dl></details>
-  </section>;
+  const warnings = [
+    ...new Set([
+      ...(result.warnings ?? []),
+      ...(Array.isArray(data.warnings) ? data.warnings.filter((warning): warning is string => typeof warning === 'string') : []),
+    ]),
+  ];
+  const mode = data.mode === 'demo' ? 'demo' : data.mode === 'real' ? 'real' : 'unknown';
+  const datasetRange = `${formatDate(range.start as string | undefined)} – ${formatDate(range.end as string | undefined)}`;
+  const freshness = mode === 'real' ? 'delayed EOD, not live' : mode === 'demo' ? 'generated demo, not observed prices' : 'data mode unavailable';
+  const summary = `${sourceLabel(data.source)} · ${datasetRange} · ${freshness} · verification not implied`;
+
+  return (
+    <details className="group rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#171719]/60">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-2.5 text-xs [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" aria-hidden="true" />
+          <span className="truncate text-[rgba(236,236,237,0.7)]" title={summary}>{summary}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1 font-medium text-[#a8c7fa]">
+          Details
+          <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+        </span>
+      </summary>
+
+      <div className="space-y-3 border-t border-[rgba(236,236,237,0.08)] px-3.5 py-3 text-xs leading-relaxed text-[rgba(236,236,237,0.7)]">
+        <p>
+          <strong className="font-semibold text-[#ececed]">Source:</strong> {text(data.source)}
+          {' · '}<strong className="font-semibold text-[#ececed]">As of:</strong> {formatDate(data.asOf as string | undefined)}
+          {' · '}<strong className="font-semibold text-[#ececed]">Dataset:</strong> {datasetRange}
+          {' · '}<strong className="font-semibold text-[#ececed]">Fetched:</strong> {formatDateTime(data.fetchedAt as string | undefined)}
+        </p>
+        <p>
+          <strong className="font-semibold text-[#ececed]">Evaluation:</strong>{' '}
+          {formatDate(result.bars[0]?.date)} to {formatDate(result.bars.at(-1)?.date)}
+          {' · '}<strong className="font-semibold text-[#ececed]">Adjustment:</strong> {text(data.adjustment)}
+          {' · '}<strong className="font-semibold text-[#ececed]">Calendar:</strong> {text(data.calendarVersion)}
+        </p>
+        <p className="text-amber-200/90">
+          {mode === 'demo'
+            ? 'GENERATED DEMO DATA: these are not observed market prices.'
+            : mode === 'real'
+              ? 'Provider data: verification and entitlement are not implied, and this is not a live exchange feed.'
+              : 'Data provenance unavailable: do not treat this as observed market data.'}
+        </p>
+
+        {warnings.length > 0 && (
+          <details>
+            <summary className="cursor-pointer font-medium text-[rgba(236,236,237,0.8)]">
+              {warnings.length} data {warnings.length === 1 ? 'caveat' : 'caveats'}
+            </summary>
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-[rgba(236,236,237,0.62)]">
+              {warnings.map(warning => <li key={warning}>{warning}</li>)}
+            </ul>
+          </details>
+        )}
+
+        <details>
+          <summary className="cursor-pointer font-medium text-[rgba(236,236,237,0.8)]">Immutable run identity and assumptions</summary>
+          <dl className="space-y-1 break-all pt-2 text-[rgba(236,236,237,0.62)]">
+            <dt className="text-[rgba(236,236,237,0.45)]">Run ID</dt><dd>{result.backtestId}</dd>
+            <dt className="text-[rgba(236,236,237,0.45)]">Data checksum</dt><dd>{text(data.checksum)}</dd>
+            <dt className="text-[rgba(236,236,237,0.45)]">Dataset window (ISO)</dt><dd>{text(range.start)} to {text(range.end)}</dd>
+            <dt className="text-[rgba(236,236,237,0.45)]">Engine and execution policy</dt><dd>{text(result.engineVersion ?? manifest.engineVersion)} · {text(result.executionPolicy ?? manifest.executionPolicy)}</dd>
+            <dt className="text-[rgba(236,236,237,0.45)]">Source revision</dt><dd>{text(manifest.sourceCommit)}</dd>
+            <dt className="text-[rgba(236,236,237,0.45)]">Seed</dt><dd>{String(manifest.seed ?? record(manifest.options).seed ?? 'Unavailable')}</dd>
+          </dl>
+        </details>
+      </div>
+    </details>
+  );
 }

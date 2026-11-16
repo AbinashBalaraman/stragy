@@ -5,17 +5,23 @@ import { createProposal, describeConfigState, type AIServiceDeps } from './propo
 import { handleAIChat } from './copilot';
 import { callProvider, resolveAIConfig } from './provider';
 import { boundHistory, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
+import { isInformationalQuestion } from './intent';
+import { resolveActiveConfig } from './providerRegistry';
 
 /** One selected-provider request at most. Never scans, executes, saves or trades. */
 export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Promise<ResearchChatResponse> {
   const parsed=ResearchChatInputSchema.safeParse(raw);
-  const unavailable=(message:string, rev:number|string|null=null):ResearchChatResponse=>({schemaVersion:1,kind:'conversation',originatingRevision:rev,message,method:'unavailable',provider:{name:'none',model:null,aiGenerated:false},warnings:[]});
+  const unavailable=(message:string, rev:number|string|null=null, warnings:string[]=[]):ResearchChatResponse=>({schemaVersion:1,kind:'conversation',originatingRevision:rev,message,method:'unavailable',provider:{name:'none',model:null,aiGenerated:false},warnings});
   if(!parsed.success)return unavailable('Invalid research request: '+parsed.error.issues.map(i=>i.path.join('.')+': '+i.message).join('; '));
   const input=parsed.data, rev=input.originatingRevision??null, message=sanitizeText(input.message,4000).replace(/over[ -]+bought/gi,'overbought').replace(/over[ -]+sold/gi,'oversold');
-  const cfg=deps.config??resolveAIConfig(deps.env??process.env), d={...deps,config:cfg};
+  const cfg=deps.config??resolveActiveConfig(deps.env??process.env), d={...deps,config:cfg};
   const base={schemaVersion:1 as const,originatingRevision:rev,warnings:[] as string[]};
   const scanForbidden=/\b(?:do\s+not|don't|never)\s+(?:(?:run|execute)\s+)?(?:a\s+)?(?:stock\s+)?(?:scan|screen)\b/i.test(message);
-  const wantsScreen=!scanForbidden&&/\b(find|screen|scan|stocks|which stocks|nifty\s*50)\b/i.test(message);
+  // Screening requires both an explicit screening verb and a stock universe topic.
+  // Plain questions such as "what are nifty 50 stocks?" stay in conversation.
+  const screenVerb=/\b(?:find|screen|scan|show\s+me|list|which)\b/i.test(message);
+  const screenTopic=/\b(?:stocks?|nifty\s*50)\b/i.test(message);
+  const wantsScreen=!scanForbidden&&screenVerb&&screenTopic;
   if(wantsScreen){
     if(!/nifty\s*50/i.test(message)&&!input.screenContext)return unavailable('Please specify the Nifty 50 universe. Other screening universes are not supported in research chat yet.',rev);
     const current=input.currentStrategy;
@@ -61,9 +67,9 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
     const check=strictValidateStrategy(candidate); if(!check.success)return unavailable('Screen strategy is invalid: '+check.errors?.join('; '),rev);
     return parseResearchChatResponse({...base,kind:'screen',message:'Read-only screen plan. No workspace change or backtest has occurred.',method,provider,universe:'NIFTY_50',strategy:check.data,assumptions:[...assumptions,'Workspace exits, risk, sizing, execution and costs are unused placeholders for screening only.'],missingBacktestRules:['exits','positionSizing','executionAndCosts'],backtestReady:false});
   }
-  if(/\b(strategy|setup|backtest|stop[ -]?loss|take[ -]?profit|trailing|set|change|build|create)\b/i.test(message)){
+  if(!isInformationalQuestion(message)&&/\b(strategy|setup|backtest|stop[ -]?loss|take[ -]?profit|trailing|set|change|build|create)\b/i.test(message)){
     const result=await createProposal({prompt:message,history:input.history,currentStrategy:input.currentStrategy,originatingRevision:rev,allowLocalFallback:input.allowLocalFallback},d);
-    if(!result.ok)return unavailable(result.error.message,rev);
+    if(!result.ok){const fieldWarnings=result.error.code==='ai_invalid_schema'&&result.error.details?.length?['The model draft failed schema validation: '+result.error.details.slice(0,3).map(d=>sanitizeText(d,500)).join('; ')]:[];return unavailable(result.error.message,rev,[...result.warnings,...fieldWarnings]);}
     return parseResearchChatResponse({...base,kind:'proposal',message:result.proposal.rationale,method:result.proposal.method,provider:result.proposal.provider,warnings:result.proposal.warnings,proposal:result.proposal});
   }
   const chat=await handleAIChat({...input,message},d);

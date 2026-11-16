@@ -52,7 +52,14 @@ export const StrategyUniverseSchema = z.object({
 });
 export const StrategySchema = z.object({
   id: z.string().optional(), name: z.string().trim().min(1).max(200), description: z.string().max(10000).optional(),
-  version: z.number().int().positive(), universe: StrategyUniverseSchema,
+  version: z.number().int().positive(),
+  /**
+   * Marks an AST produced by toLegacyStrategy() from an already-canonical v2 strategy.
+   * Canonical revisions are not legacy versions, so migration must not apply the
+   * legacy v1 fixedRisk ambiguity guard to these round-tripped documents.
+   */
+  canonicalOrigin: z.literal(true).optional(),
+  universe: StrategyUniverseSchema,
   indicators: z.array(IndicatorConfigSchema).max(100),
   rules: z.object({ entry: z.array(RuleNodeSchema).min(1).max(100), exit: z.array(RuleNodeSchema).max(100) }).strict(),
   risk: RiskControlsSchema, execution: ExecutionConfigSchema, costs: CostModelConfigSchema,
@@ -111,7 +118,11 @@ export function migrateLegacyStrategy(raw: unknown) {
     if (!p.success) return { success: false as const, errors: errors(p.error), warnings: [] as string[] };
     const s = p.data as StrategyAST;
     const warnings = ['Legacy allocation fractions converted to percentages; AND entry/exit behavior preserved.'];
-    if (s.risk.positionSizing.type === 'fixedRisk' && s.version < 2) return { success: false as const, errors: ['Legacy fixedRisk was not implemented; choose explicit v2 riskPct.'], warnings: ['Legacy fixedRisk migration cannot claim behavioral equivalence.'] };
+    // Only genuinely legacy v1 documents are ambiguous. Canonical-origin ASTs carry an
+    // explicit riskPct that already survived a v2 schema check, even when revision is 1.
+    // Requiring the canonical execution policy keeps this a declaration of v2 semantics.
+    const canonicalOrigin = s.canonicalOrigin === true && s.execution.executionPolicy === 'next_open_long_cash_v1';
+    if (s.risk.positionSizing.type === 'fixedRisk' && s.version < 2 && !canonicalOrigin) return { success: false as const, errors: ['Legacy fixedRisk was not implemented; choose explicit v2 riskPct.'], warnings: ['Legacy fixedRisk migration cannot claim behavioral equivalence.'] };
     if (!s.execution.allowLong || s.execution.allowShort || s.execution.orderType !== 'MARKET' || s.execution.intradaySquareOffTime) return { success: false as const, errors: ['Only long cash-funded market orders without square-off are supported.'], warnings };
     const rule = (r: RuleNode): RuleV2 => ({
       ...(r.id ? { id: r.id } : {}), ...(r.lookback ? { lookback: { ...r.lookback } } : {}), left: operand(r.leftIndicator, s.indicators, r.leftValue),
@@ -150,7 +161,9 @@ export function toLegacyStrategy(v: StrategyV2): StrategyAST {
   });
   const sizing = s.risk.positionSizing;
   return {
-    id: s.id, name: s.name, description: s.description, version: Math.max(2, s.revision),
+    // Preserve the canonical revision exactly; canonicalOrigin prevents migration from
+    // reclassifying revision 1 as an ambiguous legacy document.
+    id: s.id, name: s.name, description: s.description, version: s.revision, canonicalOrigin: true as const,
     universe: { ...s.universe, symbolId: id }, indicators: s.indicators,
     rules: { entry: s.rules.entry.all.map(rule), exit: s.rules.exit.all.map(rule) },
     risk: { ...s.risk, positionSizing: sizing.type === 'fixedFraction' ? { type: sizing.type, fraction: sizing.allocationPct / 100 } : sizing.type === 'fixedRisk' ? { type: sizing.type, riskPerTrade: sizing.riskPct / 100 } : sizing },

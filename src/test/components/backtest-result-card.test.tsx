@@ -37,8 +37,21 @@ describe('inline backtest headline honesty', () => {
     expect(screen.queryByText('0.00%')).toBeNull();
     expect(values[0].getAttribute('title')).toMatch(/annualisation/i);
     expect(screen.getByText(/10\.00%/)).toBeTruthy();
-    expect(screen.getByText(/Observed public daily data/)).toBeTruthy();
-    expect(screen.getByTestId('run-source').textContent).toContain('Observed through: 2025-02-01');
+    expect(screen.getAllByText(/Yahoo daily data/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByTestId('run-source').textContent).toContain('Observed through: 01 Feb 2025');
+    expect(screen.getByText('+₹10,000.00')).toBeTruthy();
+    expect(screen.queryByText(/126\.7/)).toBeNull();
+  });
+
+  it('uses one human source label in both the badge and the source line', () => {
+    render(<BacktestResultCard result={result()} />);
+    expect(screen.getAllByText(/Yahoo daily data/).length).toBeGreaterThanOrEqual(2);
+    const angel = result({ provenance: { mode: 'real', source: 'ANGEL_SMARTAPI', asOf: '2025-02-01', actualRange: { start: '2025-01-01', end: '2025-02-01' } } });
+    cleanup();
+    render(<BacktestResultCard result={angel} />);
+    expect(screen.getAllByText(/Angel One daily data/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId('run-source').textContent).toContain('Source: Angel One daily data');
+    expect(screen.queryByText(/Observed public daily data/)).toBeNull();
   });
 
   it('labels demo bars as generated and never as observed', () => {

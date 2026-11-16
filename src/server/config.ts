@@ -13,9 +13,27 @@ const ConfigSchema = z.object({
   HOST: z.string().default('127.0.0.1'),
   PUBLIC_ORIGIN: PublicOriginSchema.optional(),
   DATA_MODE: z.enum(['demo', 'real']).default('demo'),
-  MARKET_PROVIDER: z.enum(['none', 'yahoo']).default('none'),
-  AI_PROVIDER: z.enum(['none', 'gemini', 'openai', 'openrouter', 'deepseek', 'tokenrouter']).default('none'),
+  MARKET_PROVIDER: z.enum(['none', 'yahoo', 'angel']).default('none'),
+  // Owner's Angel One SmartAPI broker account (read-only quotes/candles; no orders).
+  // Angel One's terms on redistributing market data apply to any public site, so
+  // public-research deployments must review that entitlement before enabling this.
+  QUOTES_PROVIDER: z.enum(['none', 'angel']).default('none'),
+  AI_PROVIDER: z.enum(['none', 'gemini', 'openai', 'openrouter', 'deepseek', 'tokenrouter', 'opencode-go']).default('none'),
+  AI_MODEL: z.string().trim().min(1).max(120).optional(),
+  /** Cross-provider fallbacks, e.g. opencode-go:deepseek-v4.1-flash,openrouter:openrouter/free. */
+  AI_FALLBACK_MODELS: z.string().optional(),
+  /** Explicit provider:model paid approvals under free-only. */
+  AI_APPROVED_PAID_MODELS: z.string().optional(),
+  DATABASE_URL: z.string().optional(),
+  DATABASE_URL_UNPOOLED: z.string().optional(),
+  /** AES-256-GCM key for stored provider keys (base64, 32 bytes). Never logged. */
+  PROVIDER_SECRETS_KEY: z.string().optional(),
+  VISION_PROVIDER: z.enum(['none', 'gemini', 'openai', 'openrouter', 'deepseek', 'tokenrouter', 'opencode-go']).optional(),
+  VISION_MODEL: z.string().trim().min(1).max(100).optional(),
   EXPOSURE_MODE: z.enum(['private', 'demo-public', 'public-research']).default('private'),
+  /** Browser Basic-auth gate for the whole private site. Never logged or echoed. */
+  SITE_PASSWORD: z.string().optional(),
+  SITE_USER: z.string().trim().min(1).max(100).default('owner'),
   AI_COST_POLICY: z.enum(['free-only', 'operator-approved']).default('free-only'),
   API_ACCESS_TOKEN: z.string().optional(),
   MAX_BODY_BYTES: z.coerce.number().int().min(1024).max(1_048_576).default(262_144),
@@ -32,10 +50,11 @@ export function parseConfig(env: Record<string, string | undefined> = process.en
   const parsed = ConfigSchema.safeParse({ ...env, PUBLIC_ORIGIN: env.PUBLIC_ORIGIN ?? env.RENDER_EXTERNAL_URL });
   if (!parsed.success) throw new Error('Invalid server configuration: ' + parsed.error.issues.map(i => i.path.join('.')).join(', '));
   const config = parsed.data;
-  if (config.EXPOSURE_MODE === 'demo-public' && (config.DATA_MODE !== 'demo' || config.AI_PROVIDER !== 'none')) throw new Error('Public demo mode cannot enable real data or external AI.');
-  if (config.EXPOSURE_MODE === 'public-research' && (config.DATA_MODE !== 'real' || config.MARKET_PROVIDER !== 'yahoo')) throw new Error('Public research requires the credential-free Yahoo observed-data adapter.');
-  if (config.EXPOSURE_MODE === 'public-research' && config.AI_PROVIDER !== 'none' && config.AI_COST_POLICY !== 'free-only') throw new Error('Public research cannot expose unapproved paid AI usage.');
-  if (config.NODE_ENV === 'production' && config.EXPOSURE_MODE === 'private' && !config.API_ACCESS_TOKEN) throw new Error('Private production API requires API_ACCESS_TOKEN or a separately verified authenticated deployment boundary.');
+  if (config.SITE_PASSWORD !== undefined && config.SITE_PASSWORD.length < 12) throw new Error('SITE_PASSWORD must be at least 12 characters. Use a long random passphrase; it is never logged.');
+  if (config.EXPOSURE_MODE === 'demo-public' && (config.DATA_MODE !== 'demo' || config.AI_PROVIDER !== 'none' || (config.VISION_PROVIDER !== undefined && config.VISION_PROVIDER !== 'none'))) throw new Error('Public demo mode cannot enable real data or external AI.');
+  if (config.EXPOSURE_MODE === 'public-research' && (config.DATA_MODE !== 'real' || !['yahoo', 'angel'].includes(config.MARKET_PROVIDER) || config.QUOTES_PROVIDER !== 'none' && config.QUOTES_PROVIDER !== 'angel')) throw new Error('Public research requires an observed-data provider (yahoo or the owner Angel One account) and no other live-quote source.');
+  if (config.EXPOSURE_MODE === 'public-research' && (config.AI_PROVIDER !== 'none' || (config.VISION_PROVIDER !== undefined && config.VISION_PROVIDER !== 'none')) && config.AI_COST_POLICY !== 'free-only') throw new Error('Public research cannot expose unapproved paid AI usage.');
+  if (config.NODE_ENV === 'production' && config.EXPOSURE_MODE === 'private' && !config.API_ACCESS_TOKEN && !config.SITE_PASSWORD) throw new Error('Private production API requires SITE_PASSWORD for the browser or API_ACCESS_TOKEN for API clients.');
   if (config.STORAGE_MODE === 'local-file' && !config.STORAGE_PATH) throw new Error('Local-file storage requires an explicit persistent STORAGE_PATH.');
   return config;
 }

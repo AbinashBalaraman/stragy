@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BacktestResponse, StrategyAST } from '../../shared/strategy/types';
+import { formatDateTime } from '../../shared/format';
 import { MetricsGrid } from './MetricsGrid';
 import { PriceChart } from './PriceChart';
 import { EquityCharts } from './EquityCharts';
@@ -7,19 +8,30 @@ import { RunProvenance } from './RunProvenance';
 import { RobustnessView } from './RobustnessView';
 import { IndianCostWaterfall } from './IndianCostWaterfall';
 import { TradeLogTable } from './TradeLogTable';
-import { StrategyComparisonView } from './StrategyComparisonView';
-import { Activity, ShieldCheck, Receipt, List, RefreshCw, Scale } from 'lucide-react';
+import { StrategyComparisonView, type ComparisonListUpdate } from './StrategyComparisonView';
+import { survivorshipBasis } from './survivorship';
+import { Activity, ShieldCheck, Receipt, List, RefreshCw, Scale, ChevronRight } from 'lucide-react';
 
 interface ResultsDashboardProps {
   result: BacktestResponse | null;
   comparisonResults?: BacktestResponse[];
-  onReRun: () => void;
+  onReRun: (result?: BacktestResponse) => void;
   onApplyStrategy?: (strategy: StrategyAST) => void;
-  onUpdateComparisonList?: (results: BacktestResponse[]) => void;
+  onUpdateComparisonList?: ComparisonListUpdate;
   onSelectActiveResult?: (result: BacktestResponse) => void;
   isLoading: boolean;
   initialTab?: 'overview' | 'compare' | 'robustness' | 'costs' | 'trades';
 }
+
+type TabId = NonNullable<ResultsDashboardProps['initialTab']>;
+
+const TABS: Array<{ id: TabId; label: string; short: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { id: 'overview', label: 'Overview & charts', short: 'Overview', icon: Activity },
+  { id: 'compare', label: 'Compare variations', short: 'Compare', icon: Scale },
+  { id: 'robustness', label: 'Robustness', short: 'Robustness', icon: ShieldCheck },
+  { id: 'costs', label: 'Costs', short: 'Costs', icon: Receipt },
+  { id: 'trades', label: 'Trade log', short: 'Trades', icon: List },
+];
 
 export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
   result,
@@ -31,23 +43,19 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
   isLoading,
   initialTab = 'overview'
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'compare' | 'robustness' | 'costs' | 'trades'>(initialTab);
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
 
   if (!result) {
     return (
-      <div className="p-8 sm:p-12 text-center max-w-lg mx-auto space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-[#a8c7fa]/10 border border-[#a8c7fa]/30 flex items-center justify-center mx-auto text-[#a8c7fa]">
-          <Activity className="w-6 h-6 animate-pulse" />
+      <div className="mx-auto max-w-lg space-y-4 p-8 text-center sm:p-12">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-[#a8c7fa]/30 bg-[#a8c7fa]/10 text-[#a8c7fa]">
+          <Activity className="h-6 w-6 animate-pulse" />
         </div>
-        <h3 className="text-base font-bold text-[#ececed]">No Simulation Results Yet</h3>
-        <p className="text-xs text-[rgba(236,236,237,0.6)]">
-          Configure your strategy rules and parameters in the Strategy Builder, then click &quot;RUN BACKTEST&quot; to execute simulation across historical NSE bars.
+        <h3 className="text-base font-semibold text-[#ececed]">No simulation results yet</h3>
+        <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.6)]">
+          Configure your strategy rules and parameters in the Strategy Builder, then run a backtest on historical NSE sessions.
         </p>
-        <button
-          onClick={onReRun}
-          disabled={isLoading}
-          className="btn-primary-mint"
-        >
+        <button onClick={() => onReRun()} disabled={isLoading} className="btn-primary-mint">
           Run Backtest Now
         </button>
       </div>
@@ -58,115 +66,95 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
     comparisonResults.length,
     comparisonResults.some(r => r.strategy.id === result.strategy.id) ? comparisonResults.length : comparisonResults.length + 1
   );
+  const survivorship = survivorshipBasis(result);
 
   return (
-    <div className="max-w-6xl mx-auto p-4 sm:p-8 space-y-6 pb-24">
-      {/* Top Title & Strategy Sub-Header matching Stragy Theme */}
-      <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <h2 className="font-syne font-extrabold text-xl sm:text-2xl text-[#ececed] tracking-[-0.03em]">
+    <div className="mx-auto max-w-6xl space-y-4 p-4 pb-24 sm:space-y-5 sm:p-8">
+      <div className="flex flex-col justify-between gap-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:flex-row sm:items-center sm:p-5">
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className="text-xl font-semibold tracking-[-0.02em] text-[#ececed] sm:text-2xl">
               {result.strategy.name}
             </h2>
-            <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-[rgba(168,199,250,0.1)] text-[#a8c7fa] border border-[rgba(168,199,250,0.25)]">
-              {result.symbol.ticker} • {result.strategy.universe.timeframe}
+            <span className="rounded border border-[rgba(168,199,250,0.25)] bg-[rgba(168,199,250,0.1)] px-2 py-0.5 font-mono text-[11px] font-semibold text-[#a8c7fa]">
+              {result.symbol.ticker} · {result.strategy.universe.timeframe}
             </span>
           </div>
-          <p className="text-xs text-[rgba(236,236,237,0.5)]">
-            Simulation executed on {result.bars.length} daily bars • Completed at {new Date(result.executedAt).toLocaleTimeString()}
+          <p className="text-xs text-[rgba(236,236,237,0.52)]">
+            {result.bars.length} sessions · completed {formatDateTime(result.executedAt)}
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
+        <div className="flex shrink-0 flex-wrap items-center gap-2.5">
           <button
             onClick={() => setActiveTab('compare')}
-            className="px-3.5 py-2 rounded-lg bg-[#1e1e21] hover:bg-[#151517] text-[#ececed] font-semibold text-xs border border-[rgba(236,236,237,0.08)] hover:border-[#a8c7fa] transition-all flex items-center gap-1.5"
+            className="flex items-center gap-1.5 rounded-lg border border-[rgba(236,236,237,0.1)] bg-[#1e1e21] px-3.5 py-2 text-xs font-medium text-[#ececed] transition-colors hover:border-[#a8c7fa]/50 hover:bg-[#232326]"
           >
-            <Scale className="w-3.5 h-3.5 text-[#a8c7fa]" />
-            <span>Compare Variations ({comparisonCount})</span>
+            <Scale className="h-3.5 w-3.5 text-[#a8c7fa]" />
+            <span>Compare variations <span className="text-[rgba(236,236,237,0.45)]">({comparisonCount})</span></span>
           </button>
           <button
-            onClick={onReRun}
+            onClick={() => onReRun(result)}
             disabled={isLoading}
-            className="btn-primary-mint !py-2 !px-3.5 text-xs flex items-center gap-1.5"
+            title="Re-run the displayed result's strategy and stored request window. This does not use the current builder draft."
+            className="btn-primary-mint !px-3.5 !py-2 text-xs"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Re-Simulate</span>
           </button>
         </div>
       </div>
 
       <RunProvenance result={result} />
-      {/* KPI Metrics Matrix in clean #171719 theme */}
+
+      {survivorship && (
+        <details className="group rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#171719]/60 px-3.5 py-2.5 text-xs">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0 text-[rgba(236,236,237,0.7)]">
+              Universe-based run: today&apos;s {survivorship.basis} members are used, which overstates past results.
+            </span>
+            <span className="flex shrink-0 items-center gap-1 font-medium text-[#a8c7fa]">
+              Details
+              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            </span>
+          </summary>
+          <p className="mt-2 leading-relaxed text-[rgba(236,236,237,0.58)]">
+            The screen is built from the current {survivorship.basis} constituent list. Companies removed from the index, or added after a past date, are not represented in that history. Treat this as a screen on surviving names, not a point-in-time universe study.
+          </p>
+        </details>
+      )}
+
       <MetricsGrid metrics={result.metrics} />
 
-      {/* Analytics Tabs in clean #1e1e21 bar */}
-      <div className="flex flex-wrap items-center gap-1 bg-[#1e1e21] p-1 rounded-xl border border-[rgba(236,236,237,0.08)] text-xs font-semibold">
-        <button
-          type="button"
-          onClick={() => setActiveTab('overview')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
-            activeTab === 'overview'
-              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
-              : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
-          }`}
-        >
-          <Activity className="w-3.5 h-3.5 text-[#a8c7fa]" />
-          <span>Overview & Charts</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('compare')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
-            activeTab === 'compare'
-              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
-              : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
-          }`}
-        >
-          <Scale className="w-3.5 h-3.5 text-[#a8c7fa]" />
-          <span>Multi-Strategy Matrix ({comparisonCount})</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('robustness')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
-            activeTab === 'robustness'
-              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
-              : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
-          }`}
-        >
-          <ShieldCheck className="w-3.5 h-3.5 text-[#a8c7fa]" />
-          <span>Robustness & Monte Carlo</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('costs')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
-            activeTab === 'costs'
-              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
-              : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
-          }`}
-        >
-          <Receipt className="w-3.5 h-3.5 text-[#a8c7fa]" />
-          <span>NSE Cost Waterfall</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('trades')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${
-            activeTab === 'trades'
-              ? 'bg-[#101012] text-[#ececed] shadow-md shadow-black/40 font-bold'
-              : 'text-[rgba(236,236,237,0.5)] hover:text-[#ececed]'
-          }`}
-        >
-          <List className="w-3.5 h-3.5 text-[#a8c7fa]" />
-          <span>Trade Log ({result.trades.length})</span>
-        </button>
+      <div className="sticky top-0 z-30 -mx-4 border-y border-[rgba(236,236,237,0.08)] bg-[#101012]/95 px-4 py-2 backdrop-blur sm:-mx-8 sm:px-8">
+        <nav aria-label="Result views" className="no-scrollbar flex items-center gap-1 overflow-x-auto text-xs font-medium">
+          {TABS.map(tab => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                aria-current={active ? 'page' : undefined}
+                aria-label={`${tab.label}${tab.id === 'trades' ? ` (${result.trades.length})` : ''}`}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 transition-colors sm:px-3 ${
+                  active
+                    ? 'bg-[#a8c7fa] font-semibold text-[#101012]'
+                    : 'text-[rgba(236,236,237,0.55)] hover:bg-[#1e1e21] hover:text-[#ececed]'
+                }`}
+              >
+                <Icon className={`hidden h-3.5 w-3.5 sm:block ${active ? 'text-[#101012]' : 'text-[#a8c7fa]'}`} />
+                <span className="sm:hidden">{tab.short}</span>
+                <span className="hidden sm:inline">{tab.label}{tab.id === 'trades' ? ` (${result.trades.length})` : ''}</span>
+              </button>
+            );
+          })}
+        </nav>
       </div>
 
-      {/* Tab Panels */}
       {activeTab === 'overview' && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           <PriceChart
             bars={result.bars}
             trades={result.trades}

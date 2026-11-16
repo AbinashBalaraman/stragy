@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, RotateCcw, X, Plus } from 'lucide-react';
+import { Send, X, Plus, ImagePlus } from 'lucide-react';
 import { z } from 'zod';
 import type { BacktestResponse, StrategyAST, SymbolMeta } from '../../shared/strategy/types';
 import { snapshotStrategy } from '../../client/workspace';
@@ -7,10 +7,13 @@ import { canonicalStrategySignature, exitRuleCompatibility } from '../../shared/
 import { assertProposalCurrent, parseStrategyProposal, type StrategyProposal } from '../../shared/contracts/ai-proposal';
 import { requestScan, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
+import { prepareChartImage, requestChartAnalysis, CHART_IMAGE_ACCEPT, type ChartAnalysisResponse, type ChartImageAttachment, type ChartImageReading } from '../../client/chartAnalysis';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import { ScreenResultCard } from './ScreenResultCard';
+import { ChartReadingCard } from './ChartReadingCard';
 import { BacktestResultCard } from './BacktestResultCard';
 import { BacktestReviewCard } from './BacktestReviewCard';
+import { MessageText } from './MessageText';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
 import {
@@ -27,7 +30,11 @@ export interface ChatMessage {
   timestamp: number;
   /** Honest source of the reply. Never labels a local parser as AI. */
   methodLabel?: string;
+  /** Full provider/model detail for the label's tooltip. */
+  methodTitle?: string;
   warnings?: string[];
+  /** Prompt to resend when a provider failure offers Retry. */
+  retryPrompt?: string;
 }
 
 export type CopilotVariant = 'full' | 'dock';
@@ -39,7 +46,7 @@ interface Props {
   onResearchBacktest?: (strategy: StrategyAST, asOf?: string) => Promise<BacktestResponse | null | void>;
   variant?: CopilotVariant;
   symbols?: SymbolMeta[];
-  onOpenDetails?: () => void;
+  onOpenDetails?: (result: BacktestResponse) => void;
   newConversationSignal?: number;
   onCancelResearch?: () => void;
   onSaveStrategy?: (strategy: StrategyAST) => Promise<{ name: string } | void>;
@@ -51,7 +58,9 @@ const MessageSchema = z.object({
   text: z.string().max(6000),
   timestamp: z.number().finite(),
   methodLabel: z.string().max(300).optional(),
+  methodTitle: z.string().max(300).optional(),
   warnings: z.array(z.string().max(2000)).max(20).optional(),
+  retryPrompt: z.string().max(4000).optional(),
 });
 const MessageListSchema = z.array(MessageSchema).max(40);
 const HISTORY_KEY = 'stragy_copilot_review_history_v2';
@@ -68,17 +77,61 @@ function saveMessages(key: string, messages: ChatMessage[]): boolean {
 type Proposal = StrategyProposal & { sourceSnapshot: string; validatedCandidate: StrategyAST };
 
 const STARTERS = [
-  { label: 'Find Nifty 50 RSI oversold stocks after being overbought recently', text: 'Find Nifty 50 RSI oversold stocks after recently overbought' },
+  { label: 'Nifty 50: RSI oversold after overbought', text: 'Find Nifty 50 RSI oversold stocks after recently overbought' },
   { label: 'Set my stop loss to 3%', text: 'Set my stop loss to 3%' },
   { label: 'Use a 2% trailing stop', text: 'Set my trailing stop to 2%' },
 ];
 
+function providerModel(provider: { name: string; model: string | null }): { providerName: string; model: string } {
+  const at = provider.name.indexOf(':');
+  if (at > 0) return { providerName: provider.name.slice(0, at), model: provider.name.slice(at + 1) };
+  return { providerName: provider.name, model: provider.model ?? '' };
+}
+
+const modelDisplayName = (providerName: string, model: string): string => {
+  if (providerName === 'openrouter') return `OpenRouter free (${model || 'routed model'})`;
+  if (model === 'hy4-flash-free') return 'HY4 Flash (free)';
+  if (model === 'deepseek-v4.1-flash') return 'DeepSeek V4.1 Flash (paid fallback)';
+  if (model === 'longcat-2.5-free') return 'LongCat 2.5 (free)';
+  if (model === 'beam-free') return 'Beam (free)';
+  return model || 'AI';
+};
+
 const methodLabel = (method: string, provider: { name: string; model: string | null; aiGenerated: boolean }): string => {
-  if (provider.aiGenerated) return 'AI-generated via ' + provider.name + (provider.model ? ' / ' + provider.model : '') + ' · verify factual claims with data';
+  if (provider.aiGenerated) {
+    const used = providerModel(provider);
+    return 'AI · ' + modelDisplayName(used.providerName, used.model);
+  }
   if (method === 'local_heuristic') return 'Local keyword rules · not AI';
   if (method === 'rule_parser') return 'Built-in rule parser · not AI';
   return 'Unavailable · no result was invented';
 };
+
+/** Turn a provider failure into one actionable bubble message; the raw detail stays under Warnings. */
+function providerFailureFor(message: string): { text: string; detail: string } | null {
+  if (!/External AI request failed/i.test(message)) return null;
+  const status = /HTTP (\d{3})/.exec(message)?.[1];
+  if (status === '429' || /rate limit/i.test(message)) {
+    return { text: 'The AI model is busy (rate limit). Try again in a minute.', detail: message };
+  }
+  if (status === '403' || /refused access/i.test(message)) {
+    return { text: 'The AI model refused the request.', detail: message };
+  }
+  if (/timed out|timeout/i.test(message)) {
+    return { text: 'The AI model took too long to respond. Try again.', detail: message };
+  }
+  return { text: 'The AI model is unavailable right now. Try again.', detail: message };
+}
+
+const fileSizeLabel = (bytes: number): string => bytes >= 1024 * 1024
+  ? (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  : Math.max(1, Math.round(bytes / 1024)) + ' KB';
+
+/** A screen response can carry the contract-validated chart fields directly. */
+function chartReadingFromScreen(plan: ResearchScreenPlan): ChartImageReading | null {
+  if (plan.source !== 'chart_image' || !plan.observations || plan.confidence === undefined || plan.summary === undefined) return null;
+  return { source: plan.source, observations: plan.observations, confidence: plan.confidence, summary: plan.summary };
+}
 
 /** A run may only complete the exact reviewed strategy on the same instrument and cutoff. */
 function isCurrentReviewResult(result: BacktestResponse | null | void | undefined, review: BacktestReview): result is BacktestResponse {
@@ -114,9 +167,15 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages(HISTORY_KEY));
   const [archivedMessages, setArchivedMessages] = useState<ChatMessage[]>(() => loadMessages(ARCHIVE_KEY));
   const [prompt, setPrompt] = useState('');
+  const [chartImage, setChartImage] = useState<ChartImageAttachment | null>(null);
+  const [chartReading, setChartReading] = useState<ChartImageReading | null>(null);
+  const [preparingImage, setPreparingImage] = useState(false);
+  const [imageError, setImageError] = useState('');
+  const [dragActive, setDragActive] = useState(false);
   const [screenPlan, setScreenPlan] = useState<ResearchScreenPlan | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanPending, setScanPending] = useState(false);
+  const scanPendingRef = useRef(false);
   const [scanError, setScanError] = useState('');
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [allowLocal, setAllowLocal] = useState(true);
@@ -131,7 +190,8 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [reviewStatus, setReviewStatus] = useState<'idle' | 'running' | 'complete' | 'cancelled'>('idle');
   const [reviewError, setReviewError] = useState('');
   const [validatedResult, setValidatedResult] = useState<BacktestResponse | null>(null);
-  const [awaitingSymbolFor, setAwaitingSymbolFor] = useState<'screen' | 'draft' | null>(null);
+  const [awaitingSymbolFor, setAwaitingSymbolFor] = useState<'screen' | 'draft' | 'workspace' | null>(null);
+  const [backtestChoice, setBacktestChoice] = useState<{ symbol: SymbolMeta; asOf?: string } | null>(null);
   const [lastContext, setLastContext] = useState<'screen' | 'draft' | null>(null);
   const pendingApply = useRef<{ id: string; snapshot: string } | null>(null);
   const clipboardGeneration = useRef(0);
@@ -142,9 +202,12 @@ export const AiCopilotDock: React.FC<Props> = ({
   const seenNewChat = useRef(newConversationSignal ?? 0);
   const reviewRef = useRef<BacktestReview | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageGeneration = useRef(0);
   const snapshot = JSON.stringify(strategy);
   const full = variant === 'full';
   const busy = loading || scanPending || reviewStatus === 'running';
+  const canSubmit = !loading && reviewStatus !== 'running' && !preparingImage && !pendingApply.current && (!!prompt.trim() || !!chartImage);
 
   useEffect(() => {
     reviewRef.current = review;
@@ -175,8 +238,10 @@ export const AiCopilotDock: React.FC<Props> = ({
       setError('The workspace changed, so the previous backtest review was set aside. Prepare a fresh review. Nothing was run.');
     }
     setValidatedResult(null);
+    setChartReading(null);
     abort.current?.abort();
     setLoading(false);
+    scanPendingRef.current = false;
     setScanPending(false);
     setScanError('');
     if (!pendingApply.current) setProposal(null);
@@ -188,6 +253,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     generation.current++;
     clipboardGeneration.current++;
     runGeneration.current++;
+    imageGeneration.current++;
     pendingApply.current = null;
     abort.current?.abort();
   }, []);
@@ -207,9 +273,14 @@ export const AiCopilotDock: React.FC<Props> = ({
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages, review, screenPlan, scanResult, proposal, validatedResult, scanError, error]);
+  }, [messages, review, screenPlan, proposal, validatedResult, scanError, error, chartReading]);
 
-  const append = (sender: ChatMessage['sender'], text: string, extras: Pick<ChatMessage, 'methodLabel' | 'warnings'> = {}) => {
+  useEffect(() => {
+    if (!scanResult) return;
+    document.querySelector('article[aria-label="Research screen"]')?.scrollIntoView?.({ block: 'start' });
+  }, [scanResult]);
+
+  const append = (sender: ChatMessage['sender'], text: string, extras: Pick<ChatMessage, 'methodLabel' | 'methodTitle' | 'warnings' | 'retryPrompt'> = {}) => {
     setMessages(old => [...old, {
       id: Date.now() + '-' + old.length,
       sender,
@@ -226,20 +297,31 @@ export const AiCopilotDock: React.FC<Props> = ({
     saveMessages(ARCHIVE_KEY, archived);
   };
 
+  const discardChartImage = () => {
+    imageGeneration.current++;
+    setChartImage(null);
+    setPreparingImage(false);
+    setImageError('');
+    setDragActive(false);
+  };
+
   const clearConversation = () => {
     generation.current++;
     runGeneration.current++;
     clipboardGeneration.current++;
     abort.current?.abort();
     onCancelResearch?.();
+    discardChartImage();
     rememberCurrentConversation(messages);
     setMessages([]);
     setPrompt('');
     setLoading(false);
+    scanPendingRef.current = false;
     setScanPending(false);
     setScanResult(null);
     setScanError('');
     setScreenPlan(null);
+    setChartReading(null);
     setProposal(null);
     setReview(null);
     setReviewStatus('idle');
@@ -247,6 +329,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     setValidatedResult(null);
     setAwaitingSymbolFor(null);
     setLastContext(null);
+    setBacktestChoice(null);
     setError('');
     setApplied(null);
     setApplyStatus('');
@@ -258,6 +341,17 @@ export const AiCopilotDock: React.FC<Props> = ({
   const restorePreviousConversation = () => {
     const current = messages;
     const previous = archivedMessages;
+    // Restoring is a conversation switch: any in-flight screen, draft, review or
+    // validated result belongs to the conversation being archived and must be
+    // discarded rather than attached to the restored one.
+    generation.current++;
+    runGeneration.current++;
+    clipboardGeneration.current++;
+    abort.current?.abort();
+    onCancelResearch?.();
+    discardChartImage();
+    reviewRef.current = null;
+    pendingApply.current = null;
     setMessages(previous);
     if (current.length) {
       setArchivedMessages(current);
@@ -266,17 +360,39 @@ export const AiCopilotDock: React.FC<Props> = ({
       setArchivedMessages([]);
       try { localStorage.removeItem(ARCHIVE_KEY); } catch { /* Storage may be unavailable. */ }
     }
+    setPrompt('');
+    setLoading(false);
+    scanPendingRef.current = false;
+    setScanPending(false);
+    setScanResult(null);
+    setScanError('');
+    setScreenPlan(null);
+    setChartReading(null);
+    setProposal(null);
+    setReview(null);
+    setReviewStatus('idle');
+    setReviewError('');
+    setValidatedResult(null);
+    setAwaitingSymbolFor(null);
+    setLastContext(null);
+    setBacktestChoice(null);
+    setError('');
+    setApplied(null);
+    setApplyStatus('');
+    setClipboardStatus('');
+    setSaveStatus('');
   };
 
   const cancelPendingRequest = () => {
     generation.current++;
     abort.current?.abort();
     setLoading(false);
+    scanPendingRef.current = false;
     setScanPending(false);
     setScanError('Cancelled. No results were confirmed.');
   };
 
-  function selectBaseContext(sourceType: 'screen' | 'draft'): { strategy: StrategyAST; asOf?: string; sourceLabel: string; assumptions: string[] } | null {
+  function selectBaseContext(sourceType: 'screen' | 'draft' | 'workspace'): { strategy: StrategyAST; asOf?: string; sourceLabel: string; assumptions: string[] } | null {
     if (sourceType === 'screen' && screenPlan) {
       return {
         strategy: screenPlan.strategy,
@@ -291,6 +407,9 @@ export const AiCopilotDock: React.FC<Props> = ({
         sourceLabel: 'Reviewed draft “' + proposal.validatedCandidate.name + '”',
         assumptions: [...proposal.changes, ...proposal.warnings],
       };
+    }
+    if (sourceType === 'workspace') {
+      return { strategy, sourceLabel: 'Your workspace strategy “' + strategy.name + '”', assumptions: [] };
     }
     return null;
   }
@@ -314,11 +433,11 @@ export const AiCopilotDock: React.FC<Props> = ({
     append('assistant', 'The previous backtest review was set aside because you started a new research request. Nothing was run.');
   };
 
-  const prepareReview = (sourceType: 'screen' | 'draft', symbol: SymbolMeta, asOfOverride?: string) => {
+  const prepareReview = (sourceType: 'screen' | 'draft' | 'workspace', symbol: SymbolMeta, asOfOverride?: string) => {
     supersedeReview();
     const base = selectBaseContext(sourceType);
     if (!base) {
-      append('assistant', 'There is no reviewed screen or draft to test. Describe a screen first, then ask to backtest it on a stock.');
+      append('assistant', sourceType === 'workspace' ? 'The workspace strategy is not available to review.' : 'There is no reviewed screen or draft to test. Describe a screen first, then ask to backtest it on a stock.');
       return;
     }
     try {
@@ -363,24 +482,32 @@ export const AiCopilotDock: React.FC<Props> = ({
     }
   };
 
-  const askForSymbol = (sourceType: 'screen' | 'draft', detail: string) => {
+  const askForSymbol = (sourceType: 'screen' | 'draft' | 'workspace', detail: string) => {
     setAwaitingSymbolFor(sourceType);
     append('assistant', detail);
   };
 
   const handleBacktestFollowUp = (text: string, stockQuery: string | null) => {
     supersedeReview();
-    const sourceType = currentBaseType();
-    if (!sourceType) {
-      append('assistant', 'I do not have a validated screen or draft to test yet. Describe a screen first (for example, “Find Nifty 50 RSI oversold stocks after recently overbought”), then say “backtest this on RELIANCE”.');
-      return;
-    }
+    const explicitWorkspace = /\b(?:my|the)\s+(?:current\s+)?(?:workspace\s+)?strategy\b|\bworkspace\s+strategy\b/i.test(text);
+    const explicitScreen = /\b(?:screen|screener)\b/i.test(text);
+    const sourceType: 'screen' | 'draft' | 'workspace' = explicitWorkspace
+      ? 'workspace'
+      : explicitScreen && screenPlan
+        ? 'screen'
+        : currentBaseType() ?? 'workspace';
     if (!symbols.length) {
       append('assistant', 'The NSE symbol list is unavailable, so I cannot safely identify that stock. Reload after the symbol service is available.');
       return;
     }
     const resolution = resolveStock(stockQuery, text, symbols);
     if (resolution.status === 'resolved') {
+      // An explicit "my strategy" must never be silently replaced by the last screen.
+      if (sourceType === 'workspace' && explicitWorkspace && screenPlan) {
+        setBacktestChoice({ symbol: resolution.symbol });
+        append('assistant', 'Choose which strategy to backtest on ' + resolution.symbol.ticker + ': the screen or your workspace strategy. Nothing has been run.');
+        return;
+      }
       prepareReview(sourceType, resolution.symbol);
       return;
     }
@@ -390,7 +517,8 @@ export const AiCopilotDock: React.FC<Props> = ({
         '. Reply with the exact NSE ticker to use. Nothing was run.');
       return;
     }
-    askForSymbol(sourceType, 'Which stock should I test “' + selectBaseContext(sourceType)?.strategy.name + '” on? Reply with an NSE ticker such as RELIANCE. Nothing was run.');
+    const label = sourceType === 'workspace' ? strategy.name : selectBaseContext(sourceType)?.strategy.name;
+    askForSymbol(sourceType, 'Which stock should I test “' + label + '” on? Reply with an NSE ticker such as RELIANCE. Nothing was run.');
   };
 
   const handleAwaitingSymbol = (text: string): boolean => {
@@ -495,33 +623,119 @@ export const AiCopilotDock: React.FC<Props> = ({
     return false;
   };
 
-  const submitText = async (raw: string) => {
+  const attachChartFile = async (file?: File | null) => {
+    if (!file) return;
+    const owned = ++imageGeneration.current;
+    setImageError('');
+    setPreparingImage(true);
+    try {
+      const prepared = await prepareChartImage(file);
+      if (imageGeneration.current !== owned) return;
+      setChartImage(prepared);
+    } catch (caught) {
+      if (imageGeneration.current === owned) setImageError((caught as Error).message);
+    } finally {
+      if (imageGeneration.current === owned) setPreparingImage(false);
+    }
+  };
+
+  const pasteChartImage = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    const item = Array.from(items).find(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
+    if (!item) return;
+    const file = item.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    void attachChartFile(file);
+  };
+
+  const dropChartImage = (event: React.DragEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (file) void attachChartFile(file);
+  };
+
+  async function runScreenScan(plan: ResearchScreenPlan, controller: AbortController, owned: number) {
+    const scanned = await requestScan({
+      universe: plan.universe,
+      strategy: plan.strategy,
+      limit: 100,
+      ...(plan.asOf ? { asOf: plan.asOf } : {}),
+    }, controller.signal);
+    if (generation.current !== owned) return;
+    if (scanned.mode === 'demo') {
+      throw new Error('Real current data is unavailable. Demo results were not presented as stock matches.');
+    }
+    if (scanned.mode !== 'real') {
+      throw new Error('Data source unverified: the scan did not confirm real observed data. Results were not presented as stock matches.');
+    }
+    if (scanned.matches.some(match => match.provenance.mode !== 'real') || /demo/i.test(scanned.dataSource)) {
+      throw new Error('Real current data is unavailable. Demo results were not presented as stock matches.');
+    }
+    setScanResult(scanned);
+  }
+
+  const retryScreenScan = async () => {
+    const plan = screenPlan;
+    if (!plan || scanPendingRef.current) return;
+    const owned = ++generation.current;
+    const controller = new AbortController();
+    abort.current = controller;
+    scanPendingRef.current = true;
+    setScanPending(true);
+    setScanError('');
+    setScanResult(null);
+    try {
+      await runScreenScan(plan, controller, owned);
+    } catch (caught) {
+      if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
+    } finally {
+      if (generation.current === owned) {
+        scanPendingRef.current = false;
+        setScanPending(false);
+      }
+    }
+  };
+
+  const submitText = async (raw: string, attachedImage: ChartImageAttachment | null = null) => {
     const text = raw.trim();
-    if (!text || loading || reviewStatus === 'running' || pendingApply.current) return;
-    append('user', text);
+    if ((!text && !attachedImage) || loading || reviewStatus === 'running' || pendingApply.current) return;
+    append('user', attachedImage ? '[chart image attached]' : text);
     setError('');
     setApplyStatus('');
     setSaveStatus('');
     setClipboardStatus('');
     clipboardGeneration.current++;
 
-    const reply = classifyReviewReply(text);
-    if (handleApproval(reply, text)) return;
-    if (handleAwaitingSymbol(text)) return;
+    if (!attachedImage) {
+      const reply = classifyReviewReply(text);
+      if (handleApproval(reply, text)) return;
+      if (handleAwaitingSymbol(text)) return;
 
-    const intent = parseBacktestIntent(text);
-    if (intent.kind === 'negated') {
-      append('assistant', 'Nothing was run. A negative instruction is never treated as approval.');
-      return;
-    }
-    if (intent.kind === 'backtest') {
-      handleBacktestFollowUp(text, intent.stockQuery);
-      return;
+      const intent = parseBacktestIntent(text);
+      if (intent.kind === 'negated') {
+        append('assistant', 'Nothing was run. A negative instruction is never treated as approval.');
+        return;
+      }
+      if (intent.kind === 'backtest') {
+        handleBacktestFollowUp(text, intent.stockQuery);
+        return;
+      }
     }
 
     // Clear an unapproved review before the request is sent, so a later failed
     // request can never leave an obsolete review available for approval.
     supersedeReview();
+
+    if (attachedImage) {
+      // A new image is a new screen, not a continuation of the previous one.
+      setChartReading(null);
+      setScreenPlan(null);
+      setLastContext(null);
+    setBacktestChoice(null);
+    }
 
     let current: StrategyAST;
     try { current = snapshotStrategy(strategy); } catch (caught) { setError((caught as Error).message); return; }
@@ -529,27 +743,61 @@ export const AiCopilotDock: React.FC<Props> = ({
     const originatingRevision = revision.current;
     const owned = ++generation.current;
     abort.current?.abort();
+    // A new request supersedes any in-flight scan. The old scan's finally block
+    // is generation-guarded, so explicitly clear its pending state here.
+    const hadPendingScan = scanPendingRef.current;
+    scanPendingRef.current = false;
+    setScanPending(false);
+    setScanError('');
+    if (hadPendingScan) {
+      setScanResult(null);
+      setScanError('The previous scan was superseded by your new request. No matches were confirmed.');
+    }
     const controller = new AbortController();
     abort.current = controller;
     setLoading(true);
-    setScanError('');
 
     try {
-      const data = await requestResearchChat({
-        message: text,
-        currentStrategy: current,
-        originatingRevision,
-        allowLocalFallback: allowLocal,
-        history: messages.slice(-20).map(message => ({ role: message.sender, text: message.text })),
-        ...(screenPlan ? { screenContext: { strategy: screenPlan.strategy, universe: screenPlan.universe } } : {}),
-      }, controller.signal);
+      const data = attachedImage
+        ? await requestChartAnalysis({
+          image: attachedImage.dataUrl,
+          ...(text ? { hint: text } : {}),
+          currentStrategy: current,
+        }, controller.signal)
+        : await requestResearchChat({
+          message: text,
+          currentStrategy: current,
+          originatingRevision,
+          allowLocalFallback: allowLocal,
+          history: messages.slice(-20).map(message => ({ role: message.sender, text: message.text })),
+          ...(screenPlan ? { screenContext: { strategy: screenPlan.strategy, universe: screenPlan.universe } } : {}),
+        }, controller.signal);
       if (generation.current !== owned) return;
-      if (data.originatingRevision !== originatingRevision) throw new Error('This research response is stale.');
-      append('assistant', data.message, {
-        methodLabel: methodLabel(data.method, data.provider),
-        warnings: data.warnings,
-      });
-      if (data.method === 'unavailable') setError(data.message);
+      // Chart analysis has no workspace revision handshake; its owner generation
+      // already discards results after a workspace change.
+      if (!attachedImage && data.originatingRevision !== originatingRevision) throw new Error('This research response is stale.');
+      const receivedChartReading: ChartImageReading | null =
+        (data as ChartAnalysisResponse).chartReading ?? (data.kind === 'screen' ? chartReadingFromScreen(data) : null);
+      // A deterministic market answer is a successful local result, not a provider failure.
+      const deterministicMarket = data.method === 'unavailable'
+        && data.warnings.some(warning => warning.startsWith('Deterministic answer'));
+      const providerFailure = data.method === 'unavailable' && !deterministicMarket ? providerFailureFor(data.message) : null;
+      if (providerFailure) {
+        append('assistant', providerFailure.text, {
+          methodLabel: 'AI unavailable',
+          warnings: [...(data.warnings ?? []), providerFailure.detail],
+          retryPrompt: text,
+        });
+      } else {
+        append('assistant', data.message, {
+          methodLabel: deterministicMarket ? 'Built-in market data · not AI' : methodLabel(data.method, data.provider),
+          methodTitle: data.provider.aiGenerated
+            ? `Answered by ${data.provider.name}. Verify factual claims with data.`
+            : undefined,
+          warnings: data.warnings,
+        });
+      }
+      if (data.method === 'unavailable' && !deterministicMarket && !providerFailure) setError(data.message);
 
       if (data.kind === 'proposal') {
         const parsed = parseStrategyProposal(data.proposal);
@@ -558,6 +806,9 @@ export const AiCopilotDock: React.FC<Props> = ({
         setScreenPlan(null);
         setScanResult(null);
         setScanError('');
+        setChartReading(null);
+        scanPendingRef.current = false;
+        setScanPending(false);
         setReview(null);
         setReviewStatus('idle');
         setAwaitingSymbolFor(null);
@@ -565,31 +816,32 @@ export const AiCopilotDock: React.FC<Props> = ({
         setApplied(null);
       } else if (data.kind === 'screen') {
         setScreenPlan(data);
+        setChartReading(receivedChartReading);
+        setApplied(null);
         setProposal(null);
         setReview(null);
         setReviewStatus('idle');
         setAwaitingSymbolFor(null);
         setLastContext('screen');
+        scanPendingRef.current = true;
         setScanPending(true);
         setScanResult(null);
         setScanError('');
         try {
-          const scanned = await requestScan({
-            universe: data.universe,
-            strategy: data.strategy,
-            limit: 100,
-            ...(data.asOf ? { asOf: data.asOf } : {}),
-          }, controller.signal);
-          if (generation.current !== owned) return;
-          if (scanned.mode !== 'real' || scanned.matches.some(match => match.provenance.mode !== 'real') || /demo/i.test(scanned.dataSource)) {
-            throw new Error('Real current data is unavailable. Demo results were not presented as stock matches.');
-          }
-          setScanResult(scanned);
+          await runScreenScan(data, controller, owned);
         } catch (caught) {
           if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
         } finally {
-          if (generation.current === owned) setScanPending(false);
+          if (generation.current === owned) {
+            scanPendingRef.current = false;
+            setScanPending(false);
+          }
         }
+      } else {
+        // A conversational reply cannot leave an earlier scan marked pending.
+        scanPendingRef.current = false;
+        setScanPending(false);
+        if (attachedImage) setChartReading(null);
       }
     } catch (caught) {
       if (generation.current === owned && !controller.signal.aborted) setError((caught as Error).message);
@@ -598,12 +850,18 @@ export const AiCopilotDock: React.FC<Props> = ({
     }
   };
 
-  const send = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!prompt.trim()) return;
+  const submitComposer = () => {
+    if (!canSubmit) return;
     const text = prompt;
+    const image = chartImage;
     setPrompt('');
-    await submitText(text);
+    if (image) discardChartImage();
+    void submitText(text, image);
+  };
+
+  const send = (event: React.FormEvent) => {
+    event.preventDefault();
+    submitComposer();
   };
 
   const onComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -611,30 +869,23 @@ export const AiCopilotDock: React.FC<Props> = ({
     if (event.key !== 'Enter' || event.shiftKey) return;
     if (native.isComposing || native.keyCode === 229) return;
     event.preventDefault();
-    if (!prompt.trim() || loading || reviewStatus === 'running') return;
-    const text = prompt;
-    setPrompt('');
-    void submitText(text);
+    submitComposer();
   };
 
-  const apply = async () => {
-    if (!proposal || !onApplyVariation || applied === proposal.id || pendingApply.current) return;
-    let candidate: StrategyAST;
-    try {
-      assertProposalCurrent(proposal, revision.current, proposal.sourceSnapshot, JSON.stringify(strategy));
-      candidate = snapshotStrategy(proposal.validatedCandidate);
-    } catch (caught) { setError((caught as Error).message); return; }
-    const pending = { id: proposal.id, snapshot: JSON.stringify(candidate) };
+  const confirmApply = async (candidate: StrategyAST, id: string, successMessage: string) => {
+    const applyToWorkspace = onApplyVariation;
+    if (!applyToWorkspace) return;
+    const pending = { id, snapshot: JSON.stringify(candidate) };
     pendingApply.current = pending;
     setError('');
     setApplyStatus('Apply requested. Waiting for workspace confirmation.');
     try {
-      const accepted = await onApplyVariation(candidate);
+      const accepted = await applyToWorkspace(candidate);
       if (accepted === false) throw new Error('The workspace rejected this draft. Nothing was confirmed as applied.');
       if (pendingApply.current === pending && accepted === true) {
         pendingApply.current = null;
         setApplied(pending.id);
-        setApplyStatus('Draft applied to the workspace. The assumptions are in the builder; no backtest or broker order was executed.');
+        setApplyStatus(successMessage);
       } else if (pendingApply.current === pending && pending.snapshot === JSON.stringify(snapshotStrategy(strategy))) {
         pendingApply.current = null;
         setApplied(pending.id);
@@ -647,6 +898,26 @@ export const AiCopilotDock: React.FC<Props> = ({
         setError((caught as Error).message);
       }
     }
+  };
+
+  const apply = async () => {
+    if (!proposal || !onApplyVariation || applied === proposal.id || pendingApply.current) return;
+    let candidate: StrategyAST;
+    try {
+      assertProposalCurrent(proposal, revision.current, proposal.sourceSnapshot, JSON.stringify(strategy));
+      candidate = snapshotStrategy(proposal.validatedCandidate);
+    } catch (caught) { setError((caught as Error).message); return; }
+    await confirmApply(candidate, proposal.id, 'Draft applied to the workspace. The assumptions are in the builder; no backtest or broker order was executed.');
+  };
+
+  const applyScreenDraft = async () => {
+    if (!screenPlan || !onApplyVariation || pendingApply.current) return;
+    if (applied?.startsWith('screen:')) return;
+    let candidate: StrategyAST;
+    try { candidate = snapshotStrategy(screenPlan.strategy); }
+    catch (caught) { setError((caught as Error).message); return; }
+    const id = 'screen:' + Date.now() + ':' + Math.random().toString(36).slice(2, 6);
+    await confirmApply(candidate, id, 'Screen strategy applied to the workspace draft. Review exits, risk, sizing and costs in the builder; no backtest or broker order was executed.');
   };
 
   const save = async () => {
@@ -708,24 +979,24 @@ export const AiCopilotDock: React.FC<Props> = ({
           {welcome && (
             <div className="mx-auto max-w-[680px] pt-6 sm:pt-16">
               <p className="text-sm text-neutral-400">Stragy research</p>
-              <h1 className="mt-3 text-3xl font-medium tracking-[-0.03em] text-neutral-100 sm:text-4xl">What would you like to research?</h1>
-              <p className="mt-4 max-w-[560px] text-sm leading-6 text-neutral-400">
-                Describe a goal in your own words. Stragy uses validated screens, drafts and backtests, shows its assumptions, and never places a broker order.
+              <h1 className="mt-3 max-w-[620px] text-3xl font-medium tracking-[-0.03em] text-neutral-100 sm:text-4xl">Test a trading idea before you trust it.</h1>
+              <p className="mt-4 max-w-[580px] text-sm leading-6 text-neutral-400">
+                Describe a setup or upload a chart. Stragy screens the Nifty 50 on real daily data, shows every assumption, and runs a backtest only after you approve.
               </p>
-              <div className="mt-7 flex flex-wrap gap-2">
+              <div className="mt-7 grid gap-2 sm:grid-cols-3">
                 {STARTERS.map(starter => (
                   <button
                     key={starter.label}
                     type="button"
                     onClick={() => { setPrompt(''); void submitText(starter.text); }}
-                    className="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-2 text-left text-xs text-neutral-300 transition hover:border-white/20 hover:text-neutral-100"
+                    className="flex min-h-12 items-center rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-left text-xs leading-5 text-neutral-300 transition hover:border-white/20 hover:text-neutral-100"
                   >
                     {starter.label}
                   </button>
                 ))}
               </div>
-              <p className="mt-6 text-[11px] leading-5 text-neutral-600">
-                Local rule parsers and keyword tools are labelled honestly. External AI is used only when the server reports a connected provider; if it is unavailable, Stragy says so and never invents an answer.
+              <p className="mt-6 text-xs leading-5 text-neutral-400">
+                Real NSE daily bars · assumptions shown before anything runs · no broker orders.
               </p>
             </div>
           )}
@@ -739,17 +1010,37 @@ export const AiCopilotDock: React.FC<Props> = ({
               </article>
             ) : (
               <article key={message.id} className="max-w-[92%] space-y-1.5">
-                <p className="text-[11px] uppercase tracking-wide text-neutral-500">Stragy</p>
-                <div className="text-sm leading-7 text-neutral-200 whitespace-pre-wrap break-words">{message.text}</div>
-                {message.methodLabel && <p className="text-[11px] text-neutral-500">{message.methodLabel}</p>}
+                <p className="text-xs uppercase tracking-wide text-neutral-400">Stragy</p>
+                <div className="text-sm leading-7 text-neutral-200 break-words"><MessageText text={message.text} /></div>
+                {message.methodLabel && <p title={message.methodTitle} className="text-xs text-neutral-400">{message.methodLabel}</p>}
                 {message.warnings && message.warnings.length > 0 && (
-                  <details className="text-[11px] text-neutral-500">
+                  <details className="text-xs text-neutral-400">
                     <summary className="cursor-pointer">Warnings ({message.warnings.length})</summary>
                     <ul className="mt-1 list-disc space-y-1 pl-4">{message.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
                   </details>
                 )}
+                {message.retryPrompt && (
+                  <button
+                    type="button"
+                    onClick={() => void submitText(message.retryPrompt!)}
+                    className="inline-flex min-h-8 items-center rounded-lg border border-white/15 px-3 py-1 text-xs text-neutral-200 transition hover:bg-white/5"
+                  >
+                    Retry
+                  </button>
+                )}
               </article>
             ))}
+
+            {chartReading && screenPlan && (
+              <ChartReadingCard
+                plan={screenPlan}
+                reading={chartReading}
+                busy={busy}
+                canApply={!!onApplyVariation}
+                applied={!!applied && applied.startsWith('screen:')}
+                onUseAsDraft={() => void applyScreenDraft()}
+              />
+            )}
 
             {screenPlan && (
               <ScreenResultCard
@@ -764,7 +1055,32 @@ export const AiCopilotDock: React.FC<Props> = ({
                   else append('assistant', 'The symbol list is unavailable, so I cannot prepare a backtest for that match.');
                 }}
                 onCancelScan={scanPending ? cancelPendingRequest : undefined}
+                onRetryScan={screenPlan && !scanPending ? retryScreenScan : undefined}
               />
+            )}
+
+            {backtestChoice && screenPlan && (
+              <div aria-label="Choose backtest strategy" className="rounded-xl border border-sky-300/25 bg-[#191b1f] p-4">
+                <p className="text-sm text-neutral-200">
+                  Which strategy should I backtest on {backtestChoice.symbol.ticker}?
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { const choice = backtestChoice; setBacktestChoice(null); prepareReview('screen', choice.symbol, choice.asOf); }}
+                    className="min-h-9 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-200 hover:bg-white/5"
+                  >
+                    Use screen: {screenPlan.strategy.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { const choice = backtestChoice; setBacktestChoice(null); prepareReview('workspace', choice.symbol, choice.asOf); }}
+                    className="min-h-9 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-200 hover:bg-white/5"
+                  >
+                    Use my strategy: {strategy.name}
+                  </button>
+                </div>
+              </div>
             )}
 
             {review && (
@@ -781,7 +1097,7 @@ export const AiCopilotDock: React.FC<Props> = ({
             {proposal && (
               <article aria-label="Draft proposal" className="rounded-2xl border border-white/10 bg-[#171719] p-4 sm:p-5 space-y-4">
                 <header>
-                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Draft · review before use</p>
+                  <p className="text-xs uppercase tracking-wide text-neutral-400">Draft · review before use</p>
                   <h3 className="mt-1 text-lg font-semibold text-neutral-100">{proposal.validatedCandidate.name}</h3>
                   <p className="mt-1 text-xs text-neutral-400">
                     {proposal.provider.aiGenerated
@@ -790,7 +1106,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                   </p>
                 </header>
                 <div>
-                  <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Changes</h4>
+                  <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-400">Changes</h4>
                   <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-neutral-300">
                     {proposal.changes.length ? proposal.changes.map((change, index) => <li key={index}>{change}</li>) : <li>No parameter changes proposed.</li>}
                   </ul>
@@ -802,7 +1118,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                   </ul>
                   <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-black/20 p-2">{JSON.stringify(proposal.validatedCandidate, null, 2)}</pre>
                 </details>
-                <p className="text-xs text-neutral-500">Apply changes the workspace draft only. Prepare a separate backtest review to run it. Nothing is saved automatically.</p>
+                <p className="text-xs text-neutral-400">Apply changes the workspace draft only. Prepare a separate backtest review to run it. Nothing is saved automatically.</p>
                 <div className="flex flex-wrap gap-2">
                   <button
                     className="rounded-lg bg-sky-200 px-3.5 py-2 text-sm font-semibold text-[#101012] hover:bg-sky-100 disabled:opacity-40"
@@ -840,7 +1156,7 @@ export const AiCopilotDock: React.FC<Props> = ({
               </article>
             )}
 
-            {validatedResult && <BacktestResultCard result={validatedResult} onOpenDetails={onOpenDetails} />}
+            {validatedResult && <BacktestResultCard result={validatedResult} onOpenDetails={() => onOpenDetails?.(validatedResult)} />}
             <div ref={endRef} />
           </div>
         </div>
@@ -855,9 +1171,45 @@ export const AiCopilotDock: React.FC<Props> = ({
             {loading && !scanPending && <p role="status" className="text-xs text-neutral-400">Preparing a response with validated tools…</p>}
             {reviewStatus === 'running' && <p role="status" className="text-xs text-neutral-400">Backtest running on the reviewed assumptions…</p>}
 
-            <form onSubmit={send}>
+            <form
+              onSubmit={send}
+              data-testid="research-composer"
+              onDragEnter={event => {
+                if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) setDragActive(true);
+              }}
+              onDragOver={event => {
+                if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) {
+                  event.preventDefault();
+                  setDragActive(true);
+                }
+              }}
+              onDragLeave={event => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false);
+              }}
+              onDrop={dropChartImage}
+            >
               <label htmlFor="copilot-prompt" className="sr-only">Research request</label>
-              <div className="rounded-2xl border border-white/12 bg-[#18181b] px-3 py-2 shadow-lg shadow-black/20 transition focus-within:border-sky-300/50">
+              <div className={(dragActive ? 'border-sky-300/60 bg-sky-400/5' : 'border-white/12 bg-[#18181b]') + ' rounded-2xl border px-3 py-2 shadow-lg shadow-black/20 transition focus-within:border-sky-300/50'}>
+                {chartImage && (
+                  <div className="mb-2 flex items-center gap-2 rounded-xl border border-white/10 bg-[#101012] p-2">
+                    <img src={chartImage.dataUrl} alt="Attached chart preview" className="h-12 w-16 shrink-0 rounded object-cover" />
+                    <div className="min-w-0 flex-1 text-xs leading-4">
+                      <p className="truncate text-neutral-300">{chartImage.name}</p>
+                      <p className="text-neutral-400">{fileSizeLabel(chartImage.bytes)}{chartImage.downscaled ? ' · resized for upload' : ''}</p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Remove attached chart image"
+                      onClick={discardChartImage}
+                      className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/5 hover:text-neutral-100"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )}
+                {preparingImage && <p role="status" className="mb-1 px-1 text-xs text-neutral-400">Preparing chart image…</p>}
+                {imageError && <p role="alert" className="mb-1 px-1 text-xs text-red-300">{imageError}</p>}
+                {dragActive && <p className="mb-1 px-1 text-xs text-sky-200">Drop a chart image to attach it.</p>}
                 <textarea
                   id="copilot-prompt"
                   rows={2}
@@ -867,30 +1219,56 @@ export const AiCopilotDock: React.FC<Props> = ({
                     setPrompt(event.target.value);
                     if (scanPending) cancelPendingRequest();
                   }}
+                  onPaste={pasteChartImage}
                   onKeyDown={onComposerKeyDown}
-                  placeholder="Describe what you want to research…"
-                  className="max-h-40 min-h-[48px] w-full resize-none bg-transparent px-1 py-1.5 text-sm leading-6 text-neutral-100 outline-none placeholder:text-neutral-600"
+                  placeholder={chartImage ? 'Optional hint for this chart…' : 'Describe what you want to research…'}
+                  className="max-h-40 min-h-[48px] w-full resize-none bg-transparent px-1 py-1.5 text-sm leading-6 text-neutral-100 outline-none placeholder:text-neutral-400"
                 />
                 <div className="flex items-center justify-between gap-2">
-                  <details className="relative text-[11px] text-neutral-500">
-                    <summary className="cursor-pointer select-none rounded px-1 py-1 hover:text-neutral-300">Request options</summary>
-                    <div className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-xl border border-white/10 bg-[#1d1d20] p-3 shadow-xl">
-                      <label className="flex gap-2 text-xs text-neutral-300">
-                        <input type="checkbox" checked={allowLocal} onChange={event => setAllowLocal(event.target.checked)} />
-                        Allow local keyword fallback (not AI)
-                      </label>
-                      <p className="mt-2 text-[11px] text-neutral-500">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>
-                    </div>
-                  </details>
+                  <div className="flex min-w-0 items-center gap-1">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={CHART_IMAGE_ACCEPT}
+                      aria-label="Chart image file"
+                      tabIndex={-1}
+                      className="sr-only"
+                      onChange={event => {
+                        const file = event.currentTarget.files?.[0];
+                        event.currentTarget.value = '';
+                        void attachChartFile(file);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Attach chart image"
+                      title="Attach a chart image (PNG, JPEG or WebP up to 5 MB)"
+                      disabled={loading || reviewStatus === 'running' || preparingImage || !!pendingApply.current}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex min-h-6 min-w-6 items-center justify-center rounded-lg p-1.5 text-neutral-400 hover:bg-white/5 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ImagePlus size={14} />
+                    </button>
+                    <details className="relative text-xs text-neutral-400">
+                      <summary className="flex min-h-6 cursor-pointer select-none items-center rounded px-1 py-1 hover:text-neutral-300">Request options</summary>
+                      <div className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-xl border border-white/10 bg-[#1d1d20] p-3 shadow-xl">
+                        <label className="flex gap-2 text-xs text-neutral-300">
+                          <input type="checkbox" checked={allowLocal} onChange={event => setAllowLocal(event.target.checked)} />
+                          Allow local keyword fallback (not AI)
+                        </label>
+                        <p className="mt-2 text-xs text-neutral-400">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>
+                      </div>
+                    </details>
+                  </div>
                   <div className="flex items-center gap-2">
                     {busy && (
-                      <button type="button" onClick={reviewStatus === 'running' ? cancelRun : cancelPendingRequest} className="rounded-lg px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-200">
+                      <button type="button" onClick={reviewStatus === 'running' ? cancelRun : cancelPendingRequest} className="min-h-6 rounded-lg px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200">
                         Cancel research
                       </button>
                     )}
                     <button
                       type="submit"
-                      disabled={loading || reviewStatus === 'running' || !!pendingApply.current || !prompt.trim()}
+                      disabled={!canSubmit}
                       className="flex items-center gap-1.5 rounded-xl bg-sky-200 px-3 py-1.5 text-xs font-semibold text-[#101012] hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <Send size={13} />
@@ -900,17 +1278,13 @@ export const AiCopilotDock: React.FC<Props> = ({
                 </div>
               </div>
             </form>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-600">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-400">
               <span>Enter to send · Shift+Enter for a new line · no broker orders</span>
-              <button type="button" onClick={clearConversation} className="flex items-center gap-1 hover:text-neutral-400">
-                <RotateCcw size={11} />
-                New chat
-              </button>
             </div>
-            <p className="text-[10px] text-neutral-700">{historyStatus} Research output is not investment advice.</p>
-            <div className="flex flex-wrap gap-3 text-[11px] text-neutral-500">
-              {onClose && <button type="button" onClick={onClose} className="flex items-center gap-1 hover:text-neutral-300"><X size={12} /> Close chat</button>}
-              {archivedMessages.length > 0 && <button type="button" onClick={restorePreviousConversation} className="flex items-center gap-1 hover:text-neutral-300"><Plus size={12} /> Restore previous</button>}
+            <p className="text-xs text-neutral-400">{historyStatus} Research output is not investment advice.</p>
+            <div className="flex flex-wrap gap-3 text-xs text-neutral-400">
+              {onClose && <button type="button" onClick={onClose} className="flex min-h-6 items-center gap-1 hover:text-neutral-300"><X size={12} /> Close chat</button>}
+              {archivedMessages.length > 0 && <button type="button" onClick={restorePreviousConversation} className="flex min-h-6 items-center gap-1 hover:text-neutral-300"><Plus size={12} /> Restore previous</button>}
             </div>
           </div>
         </div>

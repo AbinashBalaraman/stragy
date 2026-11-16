@@ -16,16 +16,34 @@ export function parseNifty50Constituents(text:string,observedAt:string,lastModif
  }
  return {symbols,unmapped,requested:50,source:NIFTY50_CSV_URL,observedAt,asOf:lastModified,freshness:'official-feed-observed; effective date not supplied',warnings:['Present-day membership creates survivorship bias for historical research','Official CSV retrieved at observedAt; publisher supplies no effective membership date',...(unmapped.length?[unmapped.length+' official members have no verified catalog ID']:[])]};
 }
-let cached:ObservedUniverse|undefined;let pending:Promise<ObservedUniverse>|undefined;
-export async function resolveObservedUniverse(name:string):Promise<ObservedUniverse> {
+let cached:ObservedUniverse|undefined;let cachedAt=0;let pending:Promise<ObservedUniverse>|undefined;
+const MEMBERSHIP_CACHE_MS=24*60*60*1000;
+export interface ObservedUniverseDeps {
+  fetchText?: (url: string, signal: AbortSignal, maxBytes: number) => Promise<{ text: string; lastModified?: string }>;
+  now?: () => number;
+}
+/** Test seam: clear the process-level 24 h membership cache. */
+export function resetObservedUniverseCacheForTests(): void { cached=undefined; cachedAt=0; pending=undefined; }
+async function fetchOfficialConstituents(deps: ObservedUniverseDeps): Promise<ObservedUniverse> {
+  const fetchText=deps.fetchText??boundedPublicText;
+  // One retry: a transient NSE blip must not make the starter screen a dead end.
+  for(let attempt=0;attempt<2;attempt++){
+    try{const signal=AbortSignal.timeout(5000);const r=await fetchText(NIFTY50_CSV_URL,signal,65536);return parseNifty50Constituents(r.text,new Date().toISOString(),r.lastModified);}
+    catch{/* retry once, then fail closed */}
+  }
+  throw new MarketDataError('MEMBERSHIP_UNAVAILABLE',"Couldn't load today's Nifty 50 member list (tried twice). No stocks were checked, so this is not a zero-match result.");
+}
+export async function resolveObservedUniverse(name:string,deps:ObservedUniverseDeps={}):Promise<ObservedUniverse> {
  const aliases:Record<string,string>={NIFTY50:'NIFTY_50',BANKNIFTY:'BANK_NIFTY',INDICES:'POPULAR_INDICES'};const id=aliases[name.toUpperCase()]||name.toUpperCase();
  if(!UNIVERSE_OPTIONS.some(x=>x.id===id))throw new MarketDataError('INVALID_UNIVERSE','Unknown universe');
  if(id!=='NIFTY_50'){
   if(!['ALL','NSE','BSE','POPULAR_INDICES'].includes(id))throw new MarketDataError('MEMBERSHIP_UNAVAILABLE','Verified current membership is available only for NIFTY_50; bundled index pools are illustrative');
   const symbols=filterSymbolsByUniverse(id as MarketUniverseType).map(s=>({...s}));if(symbols.length>100)throw new MarketDataError('SCAN_BUDGET_EXCEEDED','Broad unverified catalog scans are unavailable. Select NIFTY_50 for the official observed 50-stock universe.');return {symbols,requested:symbols.length,unmapped:[],source:'BUNDLED_INSTRUMENT_CATALOG',observedAt:new Date().toISOString(),freshness:'unverified-catalog',warnings:['Catalog instruments are not verified current exchange listings or index membership']};
  }
- if(cached&&Date.now()-Date.parse(cached.observedAt)<300000)return structuredClone(cached);
- if(!pending)pending=(async()=>{const signal=AbortSignal.timeout(5000);try{const r=await boundedPublicText(NIFTY50_CSV_URL,signal,65536);cached=parseNifty50Constituents(r.text,new Date().toISOString(),r.lastModified);return cached;}catch(e){throw new MarketDataError('MEMBERSHIP_UNAVAILABLE','Official NIFTY 50 constituents unavailable; no illustrative pool substituted'+(e instanceof MarketDataError?' ('+e.code+')':''));}})();
+ const now=deps.now??Date.now;
+ // A successful NIFTY 50 list is reused for 24 h and always carries its retrieval date.
+ if(cached&&now()-cachedAt<MEMBERSHIP_CACHE_MS){const copy=structuredClone(cached);const warning='Membership reused from the last successful NIFTY 50 retrieval at '+cached.observedAt+' (24 h cache).';if(!copy.warnings.includes(warning))copy.warnings.push(warning);return copy;}
+ if(!pending)pending=(async()=>{const fresh=await fetchOfficialConstituents(deps);cached=fresh;cachedAt=now();return fresh;})();
  try{return structuredClone(await pending);}finally{pending=undefined;}
 }
 /** Production observed data is sequential and provider-paced; offline/demo work remains bounded by four. */

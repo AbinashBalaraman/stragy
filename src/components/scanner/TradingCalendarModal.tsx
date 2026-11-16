@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -109,6 +109,51 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
 
   const [tempSelectedDate, setTempSelectedDate] = useState<string>(selectedDate);
   const [snapNotice, setSnapNotice] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef(onClose);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const restoreTo = previous && previous !== document.body && document.contains(previous) ? previous : null;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const panel = panelRef.current;
+    const focusable = () => panel
+      ? Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+      : [];
+    focusable()[0]?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = originalOverflow;
+      restoreTo?.focus();
+    };
+  }, [isOpen]);
 
   // Sync state when opened
   useEffect(() => {
@@ -275,7 +320,14 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#151517] backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-[#171719] border border-[rgba(236,236,237,0.12)]/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="trading-calendar-title"
+        aria-describedby="trading-calendar-description"
+        className="bg-[#171719] border border-[rgba(236,236,237,0.12)]/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
+      >
         {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-[rgba(236,236,237,0.08)] flex items-center justify-between bg-[#151517]">
           <div className="flex items-center gap-2.5">
@@ -284,18 +336,19 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                <span>Available Data Session Calendar</span>
+                <span id="trading-calendar-title">Available Data Session Calendar</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono font-semibold border border-cyan-500/30">
                   Dataset session dates
                 </span>
               </h2>
-              <p className="text-xs text-neutral-400">
+              <p id="trading-calendar-description" className="text-xs text-neutral-400">
                 Dates reflect available data, not a verified exchange holiday calendar.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close calendar"
             className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-[#1e1e21] transition-all"
             title="Close calendar"
           >

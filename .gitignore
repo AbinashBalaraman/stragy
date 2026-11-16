@@ -14,3 +14,8 @@ src/test/.tmp/
 
 .cache/
 .cache-test-*/
+
+# Provider manager secrets and saved settings (never commit keys)
+data/ai-providers.json
+data/.provider-secrets-key
+.neon

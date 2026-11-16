@@ -28,9 +28,11 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
     return `${parent ? parent.type : 'BB'} Middle Band (${parent?.params?.period || 20})`;
   }
   if (indId.endsWith('_line')) {
-    const parentId = indId.replace('_line', '');
+    const parentId = indId.replace(/_line$/, '');
     const parent = indicators.find(i => i.id === parentId);
-    return `MACD Line (${parent?.params?.fastPeriod || 12}, ${parent?.params?.slowPeriod || 26})`;
+    if (parent?.type === 'RSI_TRENDLINE') return `RSI Falling Trendline (${(parent.params as any).rsiPeriod ?? 14}, ${(parent.params as any).minSpan ?? 30}-${(parent.params as any).maxSpan ?? 180} bars)`;
+    if (parent?.type === 'SUPERTREND') return `Supertrend Line (${(parent.params as any).period ?? 10}, ${(parent.params as any).multiplier ?? 3}x)`;
+    return `MACD Line (${(parent?.params as any)?.fastPeriod || 12}, ${(parent?.params as any)?.slowPeriod || 26})`;
   }
   if (indId.endsWith('_signal')) {
     const parentId = indId.replace('_signal', '');
@@ -52,6 +54,14 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
       return `EMA (${ind.params.period || 20})`;
     case 'RSI':
       return `RSI (${ind.params.period || 14})`;
+    case 'RSI_SMA':
+      return `RSI Signal SMA (${(ind.params as any).rsiPeriod ?? 14}, ${(ind.params as any).period ?? 14})`;
+    case 'RSI_TRENDLINE':
+      return `RSI Falling Trendline (${(ind.params as any).rsiPeriod ?? 14}, ${(ind.params as any).minSpan ?? 30}-${(ind.params as any).maxSpan ?? 180} bars, anchor RSI ≥ ${(ind.params as any).anchorMin ?? 60})`;
+    case 'PCT_ABOVE_LOW':
+      return `Distance Above ${(ind.params as any).period ?? 250}-Bar Low (%)`;
+    case 'PCT_CHANGE':
+      return `${(ind.params as any).period ?? 126}-Bar Change (%)`;
     case 'SUPERTREND':
       return `Supertrend (${ind.params.period || 10}, ${ind.params.multiplier || 3}x)`;
     case 'ATR':
@@ -60,9 +70,94 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
       return `Bollinger Bands (${ind.params.period || 20}, ${ind.params.stdDev || 2}σ)`;
     case 'MACD':
       return `MACD (${ind.params.fastPeriod || 12}, ${ind.params.slowPeriod || 26}, ${ind.params.signalPeriod || 9})`;
+    case 'VOLUME_SMA':
+      return `Volume avg ${ind.params.period || 20}d`;
     default:
       return `${ind.type} (${ind.id})`;
   }
+}
+
+const ruleValue = (value: number): string => Number(value.toFixed(2)).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+/** Human value formatting for scan evidence: volumes compact, prices/oscillators to 2dp. */
+export function formatIndicatorValue(label: string, value: number): string {
+  if (!Number.isFinite(value)) return 'N/A';
+  if (/volume/i.test(label)) {
+    const absolute = Math.abs(value);
+    if (absolute >= 1e7) return (value / 1e7).toLocaleString('en-IN', { maximumFractionDigits: 1 }) + ' Cr';
+    if (absolute >= 1e5) return (value / 1e5).toLocaleString('en-IN', { maximumFractionDigits: 1 }) + ' L';
+  }
+  return value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  ANGEL_SMARTAPI: 'Angel One',
+  YAHOO_PUBLIC_CHART: 'Yahoo public daily',
+  DETERMINISTIC_DEMO_V1: 'Stragy demo',
+  DEMO_MODEL: 'Stragy demo',
+  PROVENANCE_PER_SYMBOL: 'Per-symbol provenance',
+};
+const FRESHNESS_LABELS: Record<string, string> = {
+  'last-completed-session': 'last completed session',
+  'fixed-demo': 'fixed demo',
+  'end-of-day': 'end of day',
+  'stale-observation': 'stale observed data',
+  'cached-observation': 'cached observed data',
+};
+export function humanSourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? source.replace(/_/g, ' ').toLowerCase().replace(/^./, character => character.toUpperCase());
+}
+export function humanFreshnessLabel(freshness: string): string {
+  return FRESHNESS_LABELS[freshness] ?? freshness.replace(/[-_]/g, ' ');
+}
+function businessSessionsBetween(from: string, to: string): number {
+  const start = new Date(from + 'T00:00:00Z');
+  const end = new Date(to + 'T00:00:00Z');
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return 0;
+  let sessions = 0;
+  for (let day = new Date(start); day < end;) {
+    day.setUTCDate(day.getUTCDate() + 1);
+    if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) sessions++;
+  }
+  return sessions;
+}
+/**
+ * The visible freshness must agree with the date beside it. A data row older than
+ * the scan's latest observation is described in completed-session terms; a row at
+ * that same latest date is never called stale merely because its HTTP fetch was cached.
+ */
+export function humanObservationFreshness(freshness: string, lastDate: string, latestObservedDate?: string): string {
+  if (latestObservedDate && lastDate < latestObservedDate) {
+    const sessions = businessSessionsBetween(lastDate, latestObservedDate);
+    if (sessions > 0) return `last bar ${sessions} session${sessions === 1 ? '' : 's'} old`;
+  }
+  if (freshness === 'stale-observation') return 'last completed session';
+  return humanFreshnessLabel(freshness);
+}
+
+const UNMATCHED_VERBS: Record<string, string> = {
+  lt: 'has not dropped below',
+  lte: 'has not moved to or below',
+  gt: 'has not risen above',
+  gte: 'has not moved to or above',
+  eq: 'is not yet equal to',
+  approxEq: 'is not yet approximately equal to',
+  crossesAbove: 'has not yet crossed above',
+  crossesBelow: 'has not yet crossed below',
+};
+
+/** Plain-language reason a near-match is missing one screen condition. */
+export function describeUnmatchedRule(rule: RuleNode, indicators: IndicatorConfig[], currentLeft?: number, currentRight?: number): string {
+  const left = getIndicatorLabel(rule.leftIndicator, indicators);
+  const right = rule.rightIndicator
+    ? getIndicatorLabel(rule.rightIndicator, indicators)
+    : rule.rightValue !== undefined
+      ? ruleValue(rule.rightValue)
+      : '';
+  const verb = UNMATCHED_VERBS[rule.operator] ?? 'does not yet satisfy';
+  const lookback = rule.lookback ? ` within the preceding ${rule.lookback.bars} completed bars` : '';
+  const current = typeof currentLeft === 'number' && Number.isFinite(currentLeft) ? ` (now ${ruleValue(currentLeft)})` : '';
+  void currentRight;
+  return `${left} ${verb} ${right} yet${lookback}${current}.`;
 }
 
 export function formatOperator(op: string): string {

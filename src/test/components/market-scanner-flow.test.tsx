@@ -71,6 +71,10 @@ describe('bounded lazy market scanner flow', () => {
   });
 
   it('passes actual matched-row dates to backtests, bounded by the requested cutoff', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url) === '/api/market/dates') return { ok: true, status: 200, json: async () => ({ success: true, dates: [{ date: '2025-01-01', label: '2025-01-01', isLatest: false }] }) };
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }));
     const match = (lastDate: string) => ({ symbolId: 7, ticker: 'TEST', name: 'Test equity', sector: 'IT', lastDate, lastClose: 100, changePercent: 1, matchedRules: [], indicatorValues: {}, provenance: { mode: 'real', actualRange: { end: lastDate } } });
     scan.mockResolvedValueOnce(scanResult({ matched: 1, matches: [match('2025-01-02')], sourceCoverage: { real: 84 }, dataSource: 'OHLCV_ANALYSIS' }))
       .mockResolvedValueOnce(scanResult({ matched: 1, matches: [match('2025-01-10')], sourceCoverage: { real: 84 }, dataSource: 'OHLCV_ANALYSIS' }));
@@ -79,10 +83,22 @@ describe('bounded lazy market scanner flow', () => {
     openMatches();
     fireEvent.click(await screen.findByRole('button', { name: 'Load & Run Backtest on TEST' }));
     expect(onBacktest).toHaveBeenLastCalledWith(7, '2025-01-02');
-    fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: '2025-01-05' } });
+    await screen.findByRole('option', { name: '2025-01-01' });
+    fireEvent.change(screen.getByLabelText('Trading session'), { target: { value: '2025-01-01' } });
     await waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
     fireEvent.click(await screen.findByRole('button', { name: 'Load & Run Backtest on TEST' }));
-    expect(onBacktest).toHaveBeenLastCalledWith(7, '2025-01-05');
+    expect(onBacktest).toHaveBeenLastCalledWith(7, '2025-01-01');
+  });
+
+  it('shows one loading skeleton instead of false unavailable copy before market data arrives', async () => {
+    const pending = deferred<Awaited<ReturnType<typeof requestMarketSnapshot>>>();
+    market.mockReturnValueOnce(pending.promise);
+    renderScanner();
+    expect(await screen.findByText(/Loading market snapshot/)).toBeTruthy();
+    expect(screen.queryByText(/Price source not yet reported/)).toBeNull();
+    expect(screen.queryByText(/Gainers unavailable/)).toBeNull();
+    await act(async () => { pending.resolve(snapshot()); });
+    expect(await screen.findByText(/Top Gainers & Losers Ranking/)).toBeTruthy();
   });
 
   it('defaults to the bounded labelled pool, loads only market and never refetches for an observed cutoff', async () => {
@@ -171,7 +187,8 @@ describe('bounded lazy market scanner flow', () => {
     renderScanner(); openMatches();
     expect(await screen.findByText('No matches in the 10 evaluated symbols. This does not establish no matches across the full universe.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Strategy Matches (0)' })).toBeTruthy();
-    expect(screen.getByText(/Evaluated: 10; unavailable: 70; failed: 4/)).toBeTruthy();
+    expect(screen.getByText(/Coverage: 10 of 84 symbols/)).toBeTruthy();
+    expect(screen.getByText(/10 of 84 evaluated; 70 unavailable; 4 failed/)).toBeTruthy();
     expect(screen.getByText(/Demo OHLCV · not observed market prices/)).toBeTruthy();
   });
 
@@ -219,3 +236,130 @@ it('shows official membership and actual observation dates after a real market r
   market.mockResolvedValueOnce({...snapshot(),mode:'real',sourceCoverage:{YAHOO_PUBLIC_CHART:50},membership:{requested:50,unmapped:[],source:'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv',observedAt:'2026-10-16T11:00:00.000Z',freshness:'official-feed-observed; effective date not supplied',warnings:[]},observationDates:{earliest:'2026-10-15',latest:'2026-10-16',staleSymbols:0}});
   renderScanner();await screen.findByText(/Observed sessions: 2026-10-15 to 2026-10-16/);expect(screen.getAllByText(/NIFTY 50 \(official constituent feed\)/).length).toBeGreaterThan(0);expect(screen.getByRole('option',{name:'NIFTY 50 (official 50-member feed)'})).toBeTruthy();
 });
+
+describe('live quotes and readable coverage in the scanner', () => {
+  const quotedIds = (url: string) => {
+    const query = new URL(String(url), 'http://local').searchParams.get('symbolIds') ?? '';
+    return query.split(',').filter(Boolean).map(Number);
+  };
+  const liveStock = (id: number, ticker: string, overrides: Record<string, unknown> = {}) => ({
+    id, ticker, name: ticker + ' Ltd.', sector: 'Energy', exchange: 'NSE',
+    ltp: 1000 + id, changePercent: 1.2, date: '2026-11-13', formattedDate: '13 Nov 2026',
+    trend: 'BULLISH', trendLabel: 'Bullish momentum', signal: 'PULLBACK_ENTRY', signalLabel: 'Pullback entry',
+    rsi: 55, ema20: 990, sma50: 980, fiftyTwoWeekHigh: 1200, fiftyTwoWeekLow: 800,
+    distFrom52WHigh: 5, distFrom52WLow: 20, volume: 100000, avg20Volume: 90000, volumeRatio: 1.1,
+    momentumScore: 60, openInterest: null, oiChangePercent: null, oiInterpretation: null, pcrRatio: null,
+    dataSource: 'OHLCV_ANALYSIS', high: 1010, low: 990, ...overrides,
+  });
+  const quoteResponse = (ids: number[]) => ({
+    success: true, source: 'ANGEL_SMARTAPI', available: true, delay: 'live',
+    fetchedAt: '2026-11-16T09:10:53.755Z', cached: false, configured: true,
+    quotes: ids.map(id => ({ symbolId: id, ticker: 'SYM' + id, ltp: 7000 + id, open: 7000, high: 7100, low: 6900, close: 7000, changePercent: 0.75, exchangeTimestamp: '2026-11-16T09:10:55Z', fetchedAt: '2026-11-16T09:10:53.755Z', source: 'ANGEL_SMARTAPI', delay: 'live' })),
+    unavailable: [], labels: [],
+  });
+  const q = () => {
+    const fetch = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/v2/quotes')) return { ok: true, status: 200, json: async () => quoteResponse(quotedIds(url)) };
+      return { ok: true, status: 200, json: async () => ({ success: true, dates: [] }) };
+    });
+    vi.stubGlobal('fetch', fetch);
+    return fetch;
+  };
+  const liveSnapshot = () => ({
+    ...snapshot(), mode: 'real', coverage: { requested: 50, succeeded: 50, unavailable: 0 }, sourceCoverage: { YAHOO_PUBLIC_CHART: 50 },
+    trends: [liveStock(31, 'TRENDCO')],
+    movers: {
+      asOfDate: '2026-11-13', formattedDate: '13 Nov 2026', totalFilteredCount: 50,
+      topGainers: [liveStock(11, 'GAINCO', { ltp: 7011 }), liveStock(12, 'WINCO')],
+      topLosers: [liveStock(21, 'LOSECO'), liveStock(22, 'DIPCO')],
+      volumeShockers: [], nearFiftyTwoWeekHigh: [], nearFiftyTwoWeekLow: [],
+      derivativesBuildup: { longBuildup: [], shortCovering: [], shortBuildup: [], longUnwinding: [] },
+      sectorHeatmap: [], marketBreadth: { advances: 20, declines: 20, unchanged: 10, advanceDeclineRatio: 1, bullishPercent: 40 },
+    },
+  });
+
+  it('shows live LTPs with time beside the 13 Nov EOD ranking and keeps the banner readable', async () => {
+    market.mockResolvedValueOnce(liveSnapshot() as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    const fetch = q();
+    renderScanner();
+    await screen.findByText(/Top Gainers & Losers Ranking/);
+    await waitFor(() => expect(screen.getAllByText('Live', { exact: true }).length).toBeGreaterThan(0));
+    expect(screen.getAllByText('Close (live feed)').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/IST/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Ranking: 13 Nov 2026 EOD/)).toBeTruthy();
+    expect(screen.getByText(/Coverage: 50 of 50 symbols/)).toBeTruthy();
+    expect(screen.getAllByText(/Source: Yahoo public chart \(50\)/).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain('{"requested"');
+    expect(document.body.textContent).not.toContain('{"YAHOO_PUBLIC_CHART"');
+    expect(screen.getByText('Details')).toBeTruthy();
+    expect(screen.getByText(/Coverage detail: 50 of 50 symbols evaluated/)).toBeTruthy();
+    expect(fetch.mock.calls.some(call => { const count = quotedIds(call[0]).length; return count > 0 && count <= 10; })).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: /Technical Regimes/ }));
+    await waitFor(() => expect(screen.getAllByText('TRENDCO').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText('Live', { exact: true }).length).toBeGreaterThan(0));
+    expect(screen.getByText(/Technical ranks use the 13 Nov 2026 EOD session/)).toBeTruthy();
+  });
+
+  it('renders latest-only model tabs at the latest session and offers recovery for a historical cutoff', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url) === '/api/market/dates') {
+        return { ok: true, status: 200, json: async () => ({ success: true, dates: [{ date: '2025-01-02', label: '2025-01-02', isLatest: true }, { date: '2025-01-01', label: '2025-01-01', isLatest: false }] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }));
+    renderScanner();
+    expect(await screen.findByText('Market scanner')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
+    expect(screen.queryByText(/do not support the selected historical cutoff/)).toBeNull();
+    expect(screen.getByText(/Latest-only/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Trading session'), { target: { value: '2025-01-01' } });
+    expect(await screen.findByText(/uses the latest model reference/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use latest session' }));
+    await waitFor(() => expect(screen.queryByText(/uses the latest model reference/)).toBeNull());
+  });
+
+  it('shows an honest model-disabled empty state under real market data', async () => {
+    market.mockResolvedValueOnce({ ...snapshot(), mode: 'real', provenance: { mode: 'real', actualRange: { end: '2025-01-02' } }, sourceCoverage: { real: 84 } } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    renderScanner();
+    await screen.findByText('Market scanner');
+    fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
+    expect(await screen.findByText(/is a fictional demo model/)).toBeTruthy();
+    expect(screen.getByText(/model-only derivatives are disabled/)).toBeTruthy();
+    expect(screen.queryByText(/HTTP 422/)).toBeNull();
+  });
+
+  it('uses one universe picker, one session picker and a mobile section select without emoji copy', async () => {
+    renderScanner();
+    expect(await screen.findByText('Market scanner')).toBeTruthy();
+    expect(screen.getByLabelText('Market universe')).toBeTruthy();
+    expect(screen.getByLabelText('Trading session')).toBeTruthy();
+    expect(screen.getByLabelText('Scanner section')).toBeTruthy();
+    expect(screen.queryByText(/Market Universe \/ Index/)).toBeNull();
+    expect(screen.queryByText(/Switch Universe/)).toBeNull();
+    expect(screen.queryByText(/Institutional Intelligence/)).toBeNull();
+    const emoji = ['🌐', '📈', '🏛️', '💎', '🏦', '💻', '🚗', '💊', '⛏️', '🛒', '📊', '🏢', '🔥', '🚀', '✨', '⚡'];
+    expect(emoji.some(char => document.body.textContent?.includes(char))).toBe(false);
+  });
+
+  it('rounds scanner match numbers instead of showing raw floats', async () => {
+    scan.mockResolvedValueOnce(scanResult({
+      matched: 1,
+      matches: [{
+        symbolId: 7, ticker: 'TEST', name: 'Test equity', sector: 'IT', lastDate: '2025-01-02',
+        lastClose: 1089.159426855896, changePercent: -0.5982512655315242, matchedRules: [{ rule: 'rsi', actualLeft: 1089.159426855896, actualRight: 0.5982512655315242 }],
+        indicatorValues: {}, provenance: { mode: 'real', actualRange: { end: '2025-01-02' } },
+      }],
+      sourceCoverage: { real: 84 }, dataSource: 'OHLCV_ANALYSIS',
+    }));
+    renderScanner();
+    openMatches();
+    expect(await screen.findByText('₹1,089.16')).toBeTruthy();
+    expect(screen.getByText('-0.60%')).toBeTruthy();
+    expect(screen.getByText('Actual: 1,089.16 vs 0.60')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('1089.159426855896');
+    expect(document.body.textContent).not.toContain('-0.5982512655315242');
+  });
+});
+

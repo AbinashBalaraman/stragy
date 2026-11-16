@@ -13,6 +13,7 @@ import {
   Command
 } from 'lucide-react';
 import { SymbolMeta } from '../../shared/strategy/types';
+import { useLiveQuotes, formatLivePrice, formatLiveChange, liveQuoteTimeTitle, type LiveQuote } from '../../client/liveQuotes';
 
 interface SymbolSearchSelectorProps {
   showReferencePrices?: boolean;
@@ -50,6 +51,16 @@ const POPULAR_TICKERS = [
   'SBIN',
   'ITC'
 ];
+
+const QuotePrice: React.FC<{ quote: LiveQuote; className?: string }> = ({ quote, className = '' }) => (
+  <span className={'items-center gap-1 ' + className} title={liveQuoteTimeTitle(quote)}>
+    <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+    <span className="font-mono font-semibold text-[#ececed]">{formatLivePrice(quote.ltp)}</span>
+    <span className={`font-mono text-[10px] font-bold ${quote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+      {formatLiveChange(quote.changePercent)}
+    </span>
+  </span>
+);
 
 export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
   symbols,
@@ -210,6 +221,20 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
     );
   }, [symbols, selectedCategory, searchQuery]);
 
+  // Selected symbol + the first visible dropdown rows, never more than 10.
+  const quoteSymbolIds = useMemo(() => {
+    const ids = [currentSymbolId];
+    if (isOpen) {
+      for (const symbol of filteredSymbols) {
+        if (!ids.includes(symbol.id)) ids.push(symbol.id);
+        if (ids.length >= 10) break;
+      }
+    }
+    return ids;
+  }, [currentSymbolId, isOpen, filteredSymbols]);
+  const liveQuotes = useLiveQuotes(quoteSymbolIds, { enabled: !showReferencePrices });
+  const quoteFor = (symbolId: number) => liveQuotes.quotes.find(quote => quote.symbolId === symbolId);
+
   // Handle keyboard navigation inside the list
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -247,6 +272,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
     currentSymbol.sector?.toLowerCase().includes('index') ||
     currentSymbol.ticker.includes('NIFTY') ||
     currentSymbol.ticker.includes('SENSEX');
+  const currentQuote = quoteFor(currentSymbolId);
 
   return (
     <div ref={containerRef} className={`relative flex items-center gap-1.5 shrink-0 ${className}`}>
@@ -256,7 +282,11 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         type="button"
         onClick={() => setIsOpen(prev => !prev)}
         className="group flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 rounded-xl bg-[#151517] hover:bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] hover:border-[#a8c7fa]/50 shadow-sm transition-all text-left focus:outline-none focus:border-[#a8c7fa] select-none shrink-0"
-        title={showReferencePrices ? 'Search demo instruments. Reference prices are illustrative, not live.' : 'Select an instrument. Observed prices are shown in scanner and backtest results.'}
+        title={showReferencePrices
+          ? 'Search demo instruments. Reference prices are illustrative, not live.'
+          : currentQuote
+            ? 'Live Angel One LTP; daily research bars remain delayed, not live.'
+            : 'Select an instrument. Live LTP appears when Angel One quotes are connected.'}
       >
         {/* Ticker & Exchange Badge */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -276,7 +306,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           </span>
         </div>
 
-        {/* Never show illustrative catalog prices as observed quotes. */}
+        {/* Live Angel quotes only in real mode; demo catalog references never claim to be live. */}
         {showReferencePrices && <div className="hidden md:flex items-center gap-1.5 shrink-0">
           <span className="text-xs font-mono font-semibold text-[#ececed]">
             ₹{currentSymbol.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -297,6 +327,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
             <span>{currentSymbol.changePercent >= 0 ? '+' : ''}{currentSymbol.changePercent}%</span>
           </span>
         </div>}
+        {!showReferencePrices && currentQuote && <QuotePrice quote={currentQuote} className="flex shrink-0 text-[11px] sm:text-xs" />}
 
         <Search className="w-3 h-3 text-neutral-400 group-hover:text-[#a8c7fa] transition-colors shrink-0 ml-0.5" />
       </button>
@@ -351,6 +382,22 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
               <X className="w-4 h-4" />
             </button>
           </div>
+
+          {!showReferencePrices && (
+            <div className="px-3 py-1.5 border-b border-[rgba(236,236,237,0.08)] bg-[#101012]/40 flex items-center justify-between gap-2 text-[10px]">
+              {liveQuotes.connected ? (
+                <span className="flex items-center gap-1 text-emerald-300/90">
+                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  Live LTP · Angel One
+                </span>
+              ) : (
+                <span className="text-neutral-500">
+                  {liveQuotes.loading ? 'Checking live quotes…' : 'Live LTP unavailable · delayed EOD is not substituted'}
+                </span>
+              )}
+              <span className="shrink-0 font-mono text-neutral-500">15s refresh</span>
+            </div>
+          )}
 
           {/* Category Filter Chips */}
           <div className="p-2.5 sm:p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#101012]/60 flex flex-wrap items-center gap-1.5 text-xs">
@@ -447,6 +494,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
               filteredSymbols.slice(0, 100).map((sym, index) => {
                 const isSelected = sym.id === currentSymbolId;
                 const isHighlighted = index === highlightedIndex;
+                const rowQuote = quoteFor(sym.id);
                 const symIsIndex =
                   sym.sector?.toLowerCase().includes('index') ||
                   sym.ticker.includes('NIFTY') ||
@@ -492,7 +540,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       </p>
                     </div>
 
-                    {/* Catalog reference prices are shown only in explicit demo mode. */}
+                    {/* Live Angel LTP in real mode; catalog references are demo-only. */}
                     <div className="text-right shrink-0 flex items-center gap-2.5">
                       {showReferencePrices && <div>
                         <div className="text-xs sm:text-sm font-bold font-mono text-white">
@@ -506,6 +554,20 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                           {sym.changePercent >= 0 ? '+' : ''}{sym.changePercent}%
                         </div>
                       </div>}
+                      {!showReferencePrices && liveQuotes.connected && (rowQuote ? (
+                        <div className="text-right" title={liveQuoteTimeTitle(rowQuote)}>
+                          <div className="text-xs sm:text-sm font-bold font-mono text-white">
+                            {formatLivePrice(rowQuote.ltp)}
+                          </div>
+                          <div className={`text-[10px] font-mono font-bold ${rowQuote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                            {formatLiveChange(rowQuote.changePercent)}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-right text-[10px] leading-4 text-neutral-500" title="No live Angel One quote for this instrument. A delayed close is not substituted.">
+                          LTP<br />unavailable
+                        </div>
+                      ))}
 
                       {isSelected && (
                         <div className="w-5 h-5 rounded-full bg-[#a8c7fa] text-[#101012] flex items-center justify-center shrink-0">

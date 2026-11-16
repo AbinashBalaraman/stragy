@@ -1,0 +1,231 @@
+// @vitest-environment jsdom
+import React from 'react';
+import { JSDOM } from 'jsdom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
+import { requestScan, type ScanResult } from '../../client/api';
+import { requestResearchChat } from '../../client/researchChat';
+import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
+import type { StrategyAST } from '../../shared/strategy/types';
+
+vi.mock('../../client/api', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../client/api')>();
+  return { ...actual, requestScan: vi.fn() };
+});
+vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+
+let dom: JSDOM;
+let fetchMock: ReturnType<typeof vi.fn>;
+let chartResponse: Record<string, unknown>;
+
+const chartTemplate = () => {
+  const template = STRATEGY_TEMPLATES.find(item => item.id === 'rsi_trendline_breakout_near_lows');
+  if (!template) throw new Error('Chart template missing');
+  return template.strategy;
+};
+const chartScreen = (overrides: Record<string, unknown> = {}) => ({
+  schemaVersion: 1,
+  kind: 'screen',
+  originatingRevision: null,
+  message: 'Chart read. I found testable conditions. Nothing has been run.',
+  method: 'external_ai',
+  provider: { name: 'test-vision', model: 'vision', aiGenerated: true },
+  warnings: [],
+  universe: 'NIFTY_50',
+  strategy: chartTemplate(),
+  assumptions: ['The image only proposes testable conditions.'],
+  missingBacktestRules: ['exits', 'positionSizing', 'executionAndCosts'],
+  backtestReady: false,
+  source: 'chart_image',
+  observations: {
+    timeframe: '1D',
+    indicators: [{ name: 'RSI', params: [14], legendValues: [42.5] }],
+    drawnLines: [{ panel: 'rsi', direction: 'down', description: 'Falling resistance line' }],
+    priceTrend: 'downtrend',
+    nearRange: 'low',
+    lastCandle: 'bullish',
+    events: ['RSI crossed above the falling trendline'],
+  },
+  confidence: 0.42,
+  summary: 'Price sits near a 250-bar low while RSI holds below a falling trendline.',
+  ...overrides,
+});
+const unavailable = () => ({
+  schemaVersion: 1,
+  kind: 'conversation',
+  originatingRevision: 1,
+  message: 'The chart image could not be analysed. Nothing was run.',
+  method: 'unavailable',
+  provider: { name: 'none', model: null, aiGenerated: false },
+  warnings: [],
+});
+const reliant = { id: 7, ticker: 'RELIANCE', name: 'Reliance Industries', exchange: 'NSE' as const, sector: 'Energy', currentPrice: 2900, changePercent: 0.5 };
+const scanBase = (overrides: Partial<ScanResult> = {}): ScanResult => ({
+  mode: 'real', universe: 'NIFTY_50', scanned: 50, matched: 0, scannedAt: '2026-10-15T12:00:00Z',
+  dataSource: 'PROVENANCE_PER_SYMBOL', matches: [], requested: 50, attempted: 50, succeeded: 50,
+  unavailable: 0, failed: 0, offset: 0, limit: 100, errors: [], sourceCoverage: { YAHOO_PUBLIC_CHART: 50 }, warnings: [],
+  ...overrides,
+});
+const match = (symbolId = 7) => ({
+  symbolId,
+  ticker: 'RELIANCE',
+  name: 'Reliance Industries',
+  sector: 'Energy',
+  lastDate: '2026-10-15',
+  lastClose: 2900,
+  changePercent: 0.5,
+  score: 0.8,
+  matchedRules: [],
+  indicatorValues: {},
+  provenance: {
+    mode: 'real' as const, source: 'YAHOO_PUBLIC_CHART', symbolId, asOf: '2026-10-15',
+    fetchedAt: '2026-10-15T12:00:00Z', requestedRange: {}, actualRange: { start: '2024-10-15', end: '2026-10-15' },
+    adjustment: 'split', checksum: 'fixture', coverage: 'full', freshness: 'FRESH', warnings: [], calendarVersion: 'v1',
+  },
+});
+const pngFile = (name = 'chart.png') => new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], name, { type: 'image/png' });
+const composer = () => screen.getByTestId('research-composer');
+const fileInput = () => screen.getByLabelText('Chart image file') as HTMLInputElement;
+const attachFile = (file: File) => fireEvent.change(fileInput(), { target: { files: [file] } });
+const historyValue = () => Array.from({ length: localStorage.length }, (_, index) => {
+  const key = localStorage.key(index)!;
+  return key + '=' + (localStorage.getItem(key) ?? '');
+}).join('\n');
+
+beforeEach(() => {
+  dom = new JSDOM('', { url: 'https://chart.test/' });
+  vi.stubGlobal('localStorage', dom.window.localStorage);
+  chartResponse = chartScreen();
+  fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => chartResponse }));
+  vi.stubGlobal('fetch', fetchMock);
+  vi.mocked(requestScan).mockResolvedValue(scanBase());
+});
+
+afterEach(() => {
+  cleanup();
+  dom.window.close();
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('chart image research flow', () => {
+  it('attaches from the button, renders the reading, scans, and never persists the image', async () => {
+    const applied: StrategyAST[] = [];
+    const apply = vi.fn(async (candidate: StrategyAST) => { applied.push(candidate); return true; });
+    const run = vi.fn();
+    render(<AiCopilotDock strategy={chartTemplate()} symbols={[reliant]} onApplyVariation={apply} onResearchBacktest={run} />);
+
+    const click = vi.spyOn(fileInput(), 'click').mockImplementation(() => {});
+    fireEvent.click(screen.getByRole('button', { name: 'Attach chart image' }));
+    expect(click).toHaveBeenCalledTimes(1);
+    attachFile(pngFile());
+
+    expect(await screen.findByAltText('Attached chart preview')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Focus on the RSI breakout' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+
+    const card = await screen.findByRole('article', { name: 'Chart reading' });
+    expect(within(card).getByText(/Price sits near a 250-bar low/)).toBeTruthy();
+    expect(within(card).getByText('Low confidence — check these conditions')).toBeTruthy();
+    expect(within(card).getByText('What the AI saw')).toBeTruthy();
+    expect(within(card).getAllByText(/RSI Falling Trendline/).length).toBeGreaterThan(0);
+    expect(await screen.findByText('[chart image attached]')).toBeTruthy();
+    await waitFor(() => expect(requestScan).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText('Screen results')).toBeTruthy();
+    expect(run).not.toHaveBeenCalled();
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.hint).toBe('Focus on the RSI breakout');
+    expect(body.image.startsWith('data:image/png;base64,')).toBe(true);
+    expect(requestResearchChat).not.toHaveBeenCalled();
+    await waitFor(() => expect(historyValue()).toContain('[chart image attached]'));
+    expect(historyValue()).not.toContain('data:image');
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Use as draft' }));
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+    expect(applied[0].rules.entry).toHaveLength(6);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('attaches a pasted image and a dropped image', async () => {
+    render(<AiCopilotDock strategy={chartTemplate()} />);
+    fireEvent.paste(screen.getByLabelText('Research request'), {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => pngFile('pasted.png') }] },
+    });
+    expect(await screen.findByAltText('Attached chart preview')).toBeTruthy();
+    expect(screen.getByText('pasted.png')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove attached chart image' }));
+    expect(screen.queryByAltText('Attached chart preview')).toBeNull();
+
+    fireEvent.drop(composer(), { dataTransfer: { files: [pngFile('dropped.png')], types: ['Files'] } });
+    expect(await screen.findByAltText('Attached chart preview')).toBeTruthy();
+    expect(screen.getByText('dropped.png')).toBeTruthy();
+  });
+
+  it('rejects an unsupported type and an oversized image with visible errors', async () => {
+    render(<AiCopilotDock strategy={chartTemplate()} />);
+    attachFile(new File(['gif'], 'chart.gif', { type: 'image/gif' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Attach a PNG, JPEG or WebP chart image.');
+
+    attachFile(new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'huge.png', { type: 'image/png' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Chart images must be 5 MB or smaller.'));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByAltText('Attached chart preview')).toBeNull();
+  });
+
+  it('shows an unavailable message without starting a scan or rendering a reading', async () => {
+    chartResponse = unavailable();
+    render(<AiCopilotDock strategy={chartTemplate()} />);
+    attachFile(pngFile());
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+
+    await waitFor(() => expect(screen.getAllByText(unavailable().message).length).toBeGreaterThan(0));
+    expect(requestScan).not.toHaveBeenCalled();
+    expect(screen.queryByRole('article', { name: 'Chart reading' })).toBeNull();
+    expect(screen.queryByLabelText('Screen results')).toBeNull();
+  });
+
+  it('shows close matches with scores and still requires explicit approval before a backtest', async () => {
+    const fiveRules: StrategyAST = {
+      ...chartTemplate(),
+      rules: { ...chartTemplate().rules, entry: chartTemplate().rules.entry.slice(0, 5) },
+    };
+    chartResponse = chartScreen({ strategy: fiveRules });
+    vi.mocked(requestScan).mockResolvedValue(scanBase({ nearMatches: [match()] }));
+    const run = vi.fn().mockResolvedValue(undefined);
+    render(<AiCopilotDock strategy={chartTemplate()} symbols={[reliant]} onResearchBacktest={run} />);
+    attachFile(pngFile());
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+
+    expect(await screen.findByText('Close matches (missing one condition)')).toBeTruthy();
+    expect(screen.getByText('4/5 conditions')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Prepare backtest for RELIANCE' }));
+    expect(await screen.findByRole('article', { name: 'Backtest review' })).toBeTruthy();
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Use these assumptions and run' }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  });
+
+  it('clears an attached image and the chart reading when a new chat starts', async () => {
+    const strategy = chartTemplate();
+    const view = render(<AiCopilotDock strategy={strategy} newConversationSignal={0} />);
+    attachFile(pngFile('first.png'));
+    await screen.findByAltText('Attached chart preview');
+    view.rerender(<AiCopilotDock strategy={strategy} newConversationSignal={1} />);
+    expect(screen.queryByAltText('Attached chart preview')).toBeNull();
+
+    attachFile(pngFile('second.png'));
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    expect(await screen.findByRole('article', { name: 'Chart reading' })).toBeTruthy();
+    expect(await screen.findByLabelText('Screen results')).toBeTruthy();
+
+    view.rerender(<AiCopilotDock strategy={strategy} newConversationSignal={2} />);
+    expect(screen.queryByRole('article', { name: 'Chart reading' })).toBeNull();
+    expect(screen.queryByLabelText('Screen results')).toBeNull();
+    expect(screen.queryByAltText('Attached chart preview')).toBeNull();
+  });
+});

@@ -20,7 +20,7 @@ export function generateComprehensiveStockUniverse(): SymbolMeta[] {
 
   // 1. BENCHMARK & SECTORAL INDICES
   const indices: Array<Omit<SymbolMeta, 'id'>> = [
-    { ticker: '^NSEI', name: 'NIFTY 50 Benchmark Index', exchange: 'NSE', sector: 'Benchmark Index', lotSize: 50, currentPrice: 24366.00, changePercent: -0.12, indices: ['POPULAR_INDICES', 'NIFTY_50'] },
+    { ticker: '^NSEI', name: 'NIFTY 50 Benchmark Index', exchange: 'NSE', sector: 'Benchmark Index', lotSize: 50, currentPrice: 24366.00, changePercent: -0.12, indices: ['POPULAR_INDICES'] },
     { ticker: '^NSEBANK', name: 'NIFTY Bank Index', exchange: 'NSE', sector: 'Banking Sectoral Index', lotSize: 15, currentPrice: 57491.10, changePercent: -0.25, indices: ['POPULAR_INDICES', 'BANK_NIFTY'] },
     { ticker: '^BSESN', name: 'BSE SENSEX 30 Benchmark Index', exchange: 'BSE', sector: 'Benchmark Index', lotSize: 10, currentPrice: 78009.25, changePercent: -0.15, indices: ['POPULAR_INDICES', 'BSE_SENSEX'] },
     { ticker: '^CNXIT', name: 'NIFTY IT Sectoral Index', exchange: 'NSE', sector: 'IT Sectoral Index', lotSize: 25, currentPrice: 31357.75, changePercent: 0.18, indices: ['POPULAR_INDICES', 'NIFTY_IT'] },
@@ -77,7 +77,7 @@ export function generateComprehensiveStockUniverse(): SymbolMeta[] {
     { ticker: 'TRENT', name: 'Trent Ltd. (Westside & Zudio)', exchange: 'NSE', sector: 'Retail & Fashion', lotSize: 100, currentPrice: 6940.00, changePercent: 2.45, indices: ['NIFTY_50'] },
     { ticker: 'BEL', name: 'Bharat Electronics Ltd.', exchange: 'NSE', sector: 'Defence & Aerospace', lotSize: 2850, currentPrice: 288.50, changePercent: 1.85, indices: ['NIFTY_50'] },
     { ticker: 'HAL', name: 'Hindustan Aeronautics Ltd.', exchange: 'NSE', sector: 'Defence & Aerospace', lotSize: 150, currentPrice: 4320.00, changePercent: 2.10, indices: ['NIFTY_50'] },
-    { ticker: 'ZOMATO', name: 'Zomato Ltd. (Swiggy / Blinkit)', exchange: 'NSE', sector: 'Internet & Quick Commerce', lotSize: 2000, currentPrice: 242.00, changePercent: 3.15, indices: ['NIFTY_50'] },
+    { ticker: 'ZOMATO', name: 'Eternal Ltd. (Zomato)', exchange: 'NSE', sector: 'Internet & Quick Commerce', lotSize: 2000, currentPrice: 242.00, changePercent: 3.15, indices: ['NIFTY_50'] },
     { ticker: 'JIOFIN', name: 'Jio Financial Services Ltd.', exchange: 'NSE', sector: 'NBFC & Financial Services', lotSize: 1500, currentPrice: 318.50, changePercent: 1.45, indices: ['NIFTY_50'] },
     { ticker: 'VBL', name: 'Varun Beverages Ltd. (Pepsi)', exchange: 'NSE', sector: 'FMCG & Beverages', lotSize: 500, currentPrice: 580.00, changePercent: 1.25, indices: ['NIFTY_FMCG'] },
     { ticker: 'POLYCAB', name: 'Polycab India Ltd.', exchange: 'NSE', sector: 'Wires & Cables', lotSize: 100, currentPrice: 6480.00, changePercent: 0.75, indices: ['NIFTY_50'] },
@@ -638,8 +638,8 @@ export function generateComprehensiveStockUniverse(): SymbolMeta[] {
     const chg = Number(((Math.sin(i * 31 + 2) * 5.2) + (Math.cos(i * 17) * 1.8)).toFixed(2));
     const lot = basePrice > 3000 ? 50 : basePrice > 1000 ? 150 : basePrice > 300 ? 500 : 2000;
 
+    // Never pad NIFTY_50 with generated tickers: demo membership is the curated equity list only.
     const indicesTag = ['ALL'];
-    if (i < 50 && !indicesTag.includes('NIFTY_50')) indicesTag.push('NIFTY_50');
     if (sector.includes('Bank')) indicesTag.push('BANK_NIFTY');
     if (sector.includes('Technology')) indicesTag.push('NIFTY_IT');
     if (sector.includes('Auto')) indicesTag.push('NIFTY_AUTO');

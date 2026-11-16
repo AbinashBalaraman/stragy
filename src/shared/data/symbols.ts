@@ -1,6 +1,15 @@
 import { SymbolMeta } from '../strategy/types';
 import { generateComprehensiveStockUniverse } from './nseSymbolsData';
 
+/** Thrown for any symbol id outside the bundled catalog; API maps it to 422 UNKNOWN_SYMBOL. */
+export class UnknownSymbolError extends Error {
+  readonly code = 'UNKNOWN_SYMBOL';
+  constructor(id: number) {
+    super('Unknown symbol ID: ' + id);
+    this.name = 'UnknownSymbolError';
+  }
+}
+
 export const ALL_SYMBOLS: SymbolMeta[] = generateComprehensiveStockUniverse();
 // Official NSE constituent CSV, observed 2026-10-16: INE155A01022.
 // A new stable identity avoids silently changing old TATAMOTORS strategies after the demerger.
@@ -11,7 +20,7 @@ export const NSE_SYMBOLS = ALL_SYMBOLS;
 
 export function getSymbolById(id: number): SymbolMeta {
   const symbol=Number.isSafeInteger(id)?ALL_SYMBOLS.find(s=>s.id===id):undefined;
-  if(!symbol)throw new Error('Unknown symbol ID: '+id);
+  if(!symbol)throw new UnknownSymbolError(id);
   return symbol;
 }
 
@@ -76,6 +85,11 @@ export function filterSymbolsByUniverse(universe: MarketUniverseType = 'ALL'): S
   }
   if (universe === 'POPULAR_INDICES') {
     return ALL_SYMBOLS.filter(s => s.indices?.includes('POPULAR_INDICES') || s.ticker.startsWith('^'));
+  }
+  if (universe === 'NIFTY_50') {
+    // Only curated equities belong to the tradable universe; the benchmark index ticker
+    // (^NSEI) is metadata and must never be scanned as a Nifty 50 constituent.
+    return ALL_SYMBOLS.filter(s => s.indices?.includes(universe) && !s.ticker.startsWith('^'));
   }
   return ALL_SYMBOLS.filter(s => s.indices?.includes(universe));
 }

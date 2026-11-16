@@ -9,11 +9,19 @@ import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { BacktestResponse, StrategyAST } from '../../shared/strategy/types';
 
 vi.mock('../../components/strategy/StrategyBuilder', () => ({
-  StrategyBuilder: () => <div data-testid="builder-view">Strategy builder view</div>,
+  StrategyBuilder: ({ onRunBacktest }: { onRunBacktest: () => void }) => (
+    <div data-testid="builder-view">
+      Strategy builder view
+      <button type="button" onClick={() => void onRunBacktest()}>Run builder backtest</button>
+    </div>
+  ),
 }));
 vi.mock('../../components/results/ResultsDashboard', () => ({
-  ResultsDashboard: ({ result }: { result: { backtestId?: string } | null }) => (
-    <div data-testid="results-view">Results view · <span data-testid="results-id">{result?.backtestId ?? 'none'}</span></div>
+  ResultsDashboard: ({ result, onReRun }: { result: BacktestResponse | null; onReRun: (result?: BacktestResponse) => void }) => (
+    <div data-testid="results-view">
+      Results view · <span data-testid="results-id">{result?.backtestId ?? 'none'}</span>
+      {result && <button type="button" onClick={() => void onReRun(result)}>Re-run displayed</button>}
+    </div>
   ),
 }));
 vi.mock('../../components/scanner/MarketScannerView', () => ({
@@ -99,7 +107,7 @@ const sidebar = () => within(screen.getByRole('complementary', { name: 'Workspac
 describe('chat-first application shell', () => {
   it('opens on the conversation with advanced build tools hidden', async () => {
     render(<App />);
-    expect(await screen.findByText('What would you like to research?')).toBeTruthy();
+    expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
     expect(screen.getByLabelText('Research conversation')).toBeTruthy();
     expect(sidebar().getByRole('button', { name: 'Conversation' })).toBeTruthy();
 
@@ -109,12 +117,13 @@ describe('chat-first application shell', () => {
     expect(screen.queryByTestId('scanner-view')).toBeNull();
     expect(screen.queryByRole('button', { name: /Run current workspace/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Open scanner/i })).toBeNull();
-    await screen.findByText('Saved locally');
+    // Mounting the unchanged initial workspace no longer writes a new revision.
+    await screen.findByText('Workspace unchanged; no local save yet');
   });
 
   it('keeps the conversation mounted and its history intact while advanced views are open', async () => {
     render(<App />);
-    await screen.findByText('What would you like to research?');
+    await screen.findByText('Test a trading idea before you trust it.');
 
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Which assumptions are you using?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
@@ -135,7 +144,7 @@ describe('chat-first application shell', () => {
     expect(screen.queryByText(/A previous conversation is saved/)).toBeNull();
 
     fireEvent.click(sidebar().getByRole('button', { name: 'New chat' }));
-    expect(await screen.findByText('What would you like to research?')).toBeTruthy();
+    expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
     const restore = await screen.findByRole('button', { name: /Restore previous conversation/ });
     fireEvent.click(restore);
     expect(await screen.findByText('Validated reply only.')).toBeTruthy();
@@ -160,7 +169,7 @@ describe('chat-first application shell', () => {
     });
 
     render(<App />);
-    await screen.findByText('What would you like to research?');
+    await screen.findByText('Test a trading idea before you trust it.');
     await waitFor(() => expect(fetch).toHaveBeenCalled());
 
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Find Nifty 50 RSI oversold now after recently overbought' } });
@@ -176,7 +185,7 @@ describe('chat-first application shell', () => {
     expect(await screen.findByRole('article', { name: 'Backtest result' })).toBeTruthy();
 
     fireEvent.click(sidebar().getByRole('button', { name: 'New chat' }));
-    expect(await screen.findByText('What would you like to research?')).toBeTruthy();
+    expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
     expect(screen.queryByRole('article', { name: 'Backtest result' })).toBeNull();
 
     fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
@@ -186,7 +195,68 @@ describe('chat-first application shell', () => {
 
     fireEvent.click(sidebar().getByRole('button', { name: 'Conversation' }));
     await waitFor(() => expect(screen.queryByTestId('results-view')).toBeNull());
-    expect(await screen.findByText('What would you like to research?')).toBeTruthy();
+    expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
     expect(screen.queryByRole('article', { name: 'Backtest result' })).toBeNull();
+  });
+
+  it('puts the market scanner inside a vertical scroll container', async () => {
+    render(<App />);
+    await screen.findByText('Test a trading idea before you trust it.');
+    fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Market scanner' }));
+    const scanner = await screen.findByTestId('scanner-view');
+    expect(scanner.parentElement?.className).toContain('overflow-y-auto');
+  });
+
+  it('opens analytics on the chat result retained in the conversation, not a later builder run', async () => {
+    const plan = await researchChat({
+      message: 'Find Nifty 50 RSI oversold now after recently overbought',
+      currentStrategy: STRATEGY_TEMPLATES[0].strategy,
+      originatingRevision: 1,
+      allowLocalFallback: true,
+      history: [],
+    }, { env: { AI_PROVIDER: 'none' } });
+    expect(plan.kind).toBe('screen');
+    vi.mocked(requestResearchChat).mockResolvedValueOnce(plan as never);
+    vi.mocked(requestScan).mockResolvedValue(matchedScan as never);
+    let runNumber = 0;
+    vi.mocked(requestBacktest).mockImplementation(async (input: StrategyAST) => ({
+      ...resultFor(input),
+      backtestId: 'run-' + (++runNumber),
+    } as BacktestResponse));
+
+    render(<App />);
+    await screen.findByText('Test a trading idea before you trust it.');
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Find Nifty 50 RSI oversold now after recently overbought' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    await screen.findByText('1 matches in successfully evaluated stocks.');
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'backtest this on RELIANCE' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    await screen.findByRole('article', { name: 'Backtest review' });
+    fireEvent.click(screen.getByRole('button', { name: 'Use these assumptions and run' }));
+    expect(await screen.findByText(/Backtest completed/)).toBeTruthy();
+
+    // A builder run replaces the App's selected result with a different run.
+    fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Strategy builder' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Run builder backtest' }));
+    expect(await screen.findByTestId('results-view')).toBeTruthy();
+    expect((await screen.findByTestId('results-id')).textContent).toBe('run-2');
+
+    // View details must select the conversation's validated run (run-1).
+    fireEvent.click(sidebar().getByRole('button', { name: 'Conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
+    expect(await screen.findByTestId('results-view')).toBeTruthy();
+    expect(screen.getByTestId('results-id').textContent).toBe('run-1');
+
+    // Re-Simulate must re-run that retained result and its request context,
+    // not the current builder draft.
+    fireEvent.click(screen.getByRole('button', { name: 'Re-run displayed' }));
+    await waitFor(() => expect(requestBacktest).toHaveBeenCalledTimes(3));
+    const calls = vi.mocked(requestBacktest).mock.calls;
+    expect(calls[2][0]).toEqual(calls[0][0]);
+    expect(calls[2][2]).toMatchObject({ initialCapital: 100000 });
   });
 });

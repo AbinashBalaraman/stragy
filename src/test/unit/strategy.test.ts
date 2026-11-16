@@ -13,6 +13,21 @@ describe('strict strategy contracts',()=>{
   it('S04 aliases are normalized but conflicting aliases are rejected',()=>{const s=strategy();s.indicators=[{id:'m',type:'MACD',params:{fast:3,slow:5,signal:2}}];expect(validateStrategy(s).data?.indicators[0].params).toEqual({fastPeriod:3,slowPeriod:5,signalPeriod:2});s.indicators[0].params.fastPeriod=4;expect(validateStrategy(s).success).toBe(false);});
   it('S05 rejects duplicates, dangling references, namespace collisions and extra parameters',()=>{const s=strategy();s.indicators=[{id:'a',type:'EMA',params:{period:2}},{id:'a',type:'SMA',params:{period:3}}];expect(validateStrategy(s).success).toBe(false);s.indicators=[{id:'close',type:'EMA',params:{period:2}}];expect(validateStrategy(s).success).toBe(false);s.indicators=[];s.rules.entry[0].leftIndicator='missing';expect(()=>repairStrategyAST(s)).toThrow();s.rules.entry[0].leftIndicator='volume';s.indicators=[{id:'a',type:'SMA',params:{period:2,unknown:4}}];expect(validateStrategy(s).success).toBe(false);});
   it('S06 rejects unsupported timeframes, shorting, limits and ambiguous legacy fixed risk',()=>{const s=strategy();s.universe.timeframe='5m';expect(validateStrategy(s).success).toBe(false);s.universe.timeframe='1D';s.execution.allowShort=true;expect(validateStrategy(s).success).toBe(false);s.execution.allowShort=false;s.execution.orderType='LIMIT';expect(validateStrategy(s).success).toBe(false);s.execution.orderType='MARKET';s.version=1;s.risk.positionSizing={type:'fixedRisk',riskPerTrade:.01};expect(validateStrategy(s).success).toBe(false);});
+  it('S07 preserves canonical revision 1 through the legacy adapter without weakening the legacy fixedRisk guard',()=>{
+    const parsed=readStrategy(strategy());if(!parsed.success)throw Error('failed');
+    const v=parsed.data;v.revision=1;v.risk.positionSizing={type:'fixedRisk',riskPct:25};
+    const legacy=toLegacyStrategy(v);
+    expect(legacy.version).toBe(1);
+    expect(legacy.canonicalOrigin).toBe(true);
+    const roundtrip=readStrategy(legacy);expect(roundtrip.success).toBe(true);if(!roundtrip.success)throw Error('roundtrip failed');
+    expect(roundtrip.data.revision).toBe(1);
+    expect(roundtrip.data.risk.positionSizing).toEqual({type:'fixedRisk',riskPct:25});
+    // A genuinely legacy v1 document (no canonical marker) is still rejected.
+    const ambiguous=strategy();ambiguous.version=1;ambiguous.risk.positionSizing={type:'fixedRisk',riskPerTrade:.01};
+    expect(readStrategy(ambiguous).success).toBe(false);
+    // Claiming the marker without declaring canonical execution semantics is not enough.
+    expect(readStrategy({...ambiguous,canonicalOrigin:true}).success).toBe(false);
+  });
 });
 describe('indicator and rule arithmetic',()=>{
   const data=bars([[1,2,.5,1],[2,3,1,2],[3,4,2,3],[4,5,3,4]]);

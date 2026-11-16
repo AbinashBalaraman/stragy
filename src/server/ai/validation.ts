@@ -1,4 +1,4 @@
-import { StrategySchema, PriceFieldSchema } from '../../shared/strategy/schema';
+import { StrategySchema, PriceFieldSchema, validateStrategy } from '../../shared/strategy/schema';
 import type { StrategyAST } from '../../shared/strategy/types';
 import { ALL_SYMBOLS } from '../data/symbols';
 
@@ -62,7 +62,7 @@ export function strictValidateStrategy(raw: unknown): StrictStrategyResult {
   for (const k of REQUIRED_TOP_LEVEL) if (obj[k] === undefined || obj[k] === null) errors.push(`${k}: required`);
   if (errors.length) return { success: false, errors };
 
-  const allowedKeys = [...REQUIRED_TOP_LEVEL, 'id', 'description'];
+  const allowedKeys = [...REQUIRED_TOP_LEVEL, 'id', 'description', 'canonicalOrigin'];
   const candidate = Object.fromEntries(allowedKeys.filter(key => Object.prototype.hasOwnProperty.call(obj, key)).map(key => [key, obj[key]]));
   const parsed = StrategySchema.safeParse(candidate);
   if (!parsed.success) return { success: false, errors: parsed.error.issues.map((i) => `${i.path.join('.') || 'strategy'}: ${i.message}`) };
@@ -90,6 +90,11 @@ export function strictValidateStrategy(raw: unknown): StrictStrategyResult {
   if (!ALL_SYMBOLS.some((x) => x.id === s.universe.symbolId)) errors.push(`universe.symbolId: unsupported symbol ${s.universe.symbolId}`);
   if (!s.execution.allowLong && !s.execution.allowShort) errors.push('execution: at least one of allowLong/allowShort must be true');
   if (errors.length) return { success: false, errors };
+  // A draft is only valid when it can actually run through the shared executable gate:
+  // daily timeframe, long-only, cash-funded MARKET orders. This does not repair or
+  // normalise the draft; it only surfaces the executable contract's own errors.
+  const executable = validateStrategy(s);
+  if (!executable.success) return { success: false, errors: executable.errors?.length ? executable.errors : ['strategy: is not executable'] };
   return { success: true, data: s };
 }
 

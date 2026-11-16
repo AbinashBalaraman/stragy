@@ -82,17 +82,29 @@ export const PATTERN_LIBRARY: PatternDefinition[] = [
     description: 'Captures momentum bursts with adaptive ATR trailing stop protections.',
     keywords: ['atr', 'atr breakout', 'keltner', 'volatility breakout'],
     templateId: 'atr_volatility_breakout'
+  },
+  {
+    key: 'rsi_trendline_breakout',
+    name: 'RSI Downtrend-Line Breakout Near Lows',
+    family: 'Momentum',
+    direction: 'BULLISH',
+    summary: 'RSI(14) turns up through a falling RSI trendline and its signal SMA after an oversold dip near the 250-bar low.',
+    description: 'Causal chart-reading setup: recent RSI below 36, a current break of a falling RSI resistance line, RSI above its 14-period signal SMA, price within 15% of its 250-bar low and a 126-bar change below 5%.',
+    keywords: ['rsi trendline', 'rsi trend line', 'trendline breakout', 'falling trendline', 'lower highs', 'rsi near low', 'rsi breakout', 'chart setup', 'chart image'],
+    templateId: 'rsi_trendline_breakout_near_lows'
   }
 ];
 
 export function detectPatternFromPrompt(prompt: string): PatternDefinition | null {
   const lower = prompt.toLowerCase();
+  // Prefer the most specific keyword so "rsi trendline breakout" does not fall into
+  // the generic "rsi" mean-reversion entry.
+  let best: PatternDefinition | null = null;
+  let bestLength = 0;
   for (const pattern of PATTERN_LIBRARY) {
     for (const kw of pattern.keywords) {
-      if (lower.includes(kw)) {
-        return pattern;
-      }
+      if (kw.length > bestLength && lower.includes(kw)) { best = pattern; bestLength = kw.length; }
     }
   }
-  return null;
+  return best;
 }

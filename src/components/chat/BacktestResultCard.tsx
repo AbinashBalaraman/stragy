@@ -1,6 +1,6 @@
 import React from 'react';
 import type { BacktestResponse } from '../../shared/strategy/types';
-import { formatCurrency, formatNumber } from '../../client/format';
+import { formatDate, formatINR, formatNumber, formatPercent } from '../../shared/format';
 import { summarizeRunData } from './runSummary';
 
 interface Props {
@@ -15,11 +15,26 @@ const metric = (label: string, value: string, hint?: string) => (
   </div>
 );
 
+/** A provider id is not a human sentence. Use the same label in the badge and the source line. */
+const humanSource = (source: string): string => {
+  if (source === 'ANGEL_SMARTAPI') return 'Angel One daily data';
+  if (source === 'YAHOO_PUBLIC_CHART') return 'Yahoo daily data';
+  if (source === 'DETERMINISTIC_DEMO_V1' || source === 'DEMO_MODEL') return 'Generated demo data';
+  if (!source || source === 'Unavailable') return 'Source unavailable';
+  const words = source.replace(/_/g, ' ').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+const humanRange = (range: string): string =>
+  range.replace(/\b\d{4}-\d{2}-\d{2}\b/g, date => formatDate(date));
+
 /** Null or non-finite metrics stay visibly unavailable; they are never rendered as zero. */
 const metricNumber = (value: number | null | undefined, digits = 2, suffix = '') =>
-  typeof value === 'number' && Number.isFinite(value) ? formatNumber(value, digits, suffix) : 'Unavailable';
+  typeof value === 'number' && Number.isFinite(value) ? formatNumber(value, digits) + suffix : 'Unavailable';
 const metricCurrency = (value: number | null | undefined) =>
-  typeof value === 'number' && Number.isFinite(value) ? formatCurrency(value) : 'Unavailable';
+  typeof value === 'number' && Number.isFinite(value) ? formatINR(value, { signed: true }) : 'Unavailable';
+const metricPercent = (value: number | null | undefined, digits = 2) =>
+  typeof value === 'number' && Number.isFinite(value) ? formatPercent(value, { decimals: digits }) : 'Unavailable';
 
 
 /** Headline backtest output derived only from the validated BacktestResponse. */
@@ -29,6 +44,12 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
   const unavailable = metrics.unavailableReasons ?? {};
   const demo = data.mode === 'demo';
   const unknown = data.mode === 'unknown';
+  const sourceLabel = humanSource(data.source);
+  const badge = demo || unknown
+    ? data.modeLabel
+    : data.source === 'Unavailable'
+      ? 'Observed daily data'
+      : sourceLabel;
 
   return (
     <article aria-label="Backtest result" className="rounded-2xl border border-white/10 bg-[#171719] p-4 sm:p-5 space-y-4">
@@ -39,12 +60,12 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
           <p className="text-sm text-neutral-400">{result.symbol.ticker} · {result.symbol.name}</p>
         </div>
         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${demo ? 'border-amber-400/40 text-amber-200' : unknown ? 'border-amber-400/40 text-amber-200' : 'border-emerald-400/30 text-emerald-200'}`}>
-          {data.modeLabel}
+          {badge}
         </span>
       </header>
 
       <p className="text-xs text-neutral-400" data-testid="run-source">
-        Source: {data.source} · Observed through: {data.observedThrough} · Dataset: {data.datasetRange}
+        Source: {sourceLabel} · Observed through: {humanRange(data.observedThrough)} · Dataset: {humanRange(data.datasetRange)}
       </p>
       {(demo || unknown) && (
         <p role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-amber-100">
@@ -55,11 +76,11 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
       )}
 
       <dl className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-3">
-        {metric('Total return', metricNumber(metrics.totalReturnPercent, 2, '%'))}
+        {metric('Total return', metricPercent(metrics.totalReturnPercent, 2))}
         {metric('Net P&L', metricCurrency(metrics.netPnl))}
-        {metric('CAGR', metricNumber(metrics.cagr, 2, '%'), unavailable.cagr)}
+        {metric('CAGR', metricPercent(metrics.cagr, 2), unavailable.cagr)}
         {metric('Sharpe', metricNumber(metrics.sharpeRatio), unavailable.sharpeRatio)}
-        {metric('Max drawdown', metricNumber(metrics.maxDrawdownPercent, 2, '%'))}
+        {metric('Max drawdown', metricPercent(Math.abs(metrics.maxDrawdownPercent), 2))}
         {metric('Trades', String(metrics.totalTrades))}
       </dl>
 
@@ -70,7 +91,7 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
           </button>
         )}
         <span className="text-[11px] text-neutral-500">
-          {result.trades.length} executed trades · {result.bars[0]?.date ?? 'Unavailable'} to {result.bars.at(-1)?.date ?? 'Unavailable'}
+          {result.trades.length} executed {result.trades.length === 1 ? 'trade' : 'trades'} · {formatDate(result.bars[0]?.date)} to {formatDate(result.bars.at(-1)?.date)}
         </span>
       </div>
 

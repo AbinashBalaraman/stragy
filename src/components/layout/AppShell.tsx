@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BookMarked, ChartNoAxesCombined, ChevronDown, Menu, MessageSquare, Plus, Radio, Settings2, Sparkles, X } from 'lucide-react';
+import { BookMarked, ChartNoAxesCombined, ChevronDown, KeyRound, Menu, MessageSquare, Plus, Radio, Settings2, Sparkles, X } from 'lucide-react';
 
-export type AppView = 'chat' | 'builder' | 'results' | 'scanner' | 'library';
+export type AppView = 'chat' | 'builder' | 'results' | 'scanner' | 'library' | 'settings';
 
 interface Props {
   activeView: AppView;
   onNavigate: (view: AppView) => void;
   onNewChat: () => void;
   dataMode: 'real' | 'demo' | 'unknown';
+  /** Only set `connected` after an actual Angel One quote has arrived. */
+  liveQuotes?: { connected: boolean; provider: 'angel' | null };
   children: React.ReactNode;
   footer?: React.ReactNode;
 }
@@ -24,6 +26,7 @@ const viewLabel: Record<AppView, string> = {
   results: 'Analytics',
   scanner: 'Scanner',
   library: 'Saved strategies',
+  settings: 'Settings',
 };
 
 const NavItems: React.FC<{
@@ -68,6 +71,17 @@ const NavItems: React.FC<{
         Saved strategies
       </button>
 
+      <p className="mt-3 px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-600">Settings</p>
+      <button
+        type="button"
+        onClick={() => onNavigate('settings')}
+        aria-current={activeView === 'settings' ? 'page' : undefined}
+        className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm ${activeView === 'settings' ? 'bg-white/[0.08] text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200'}`}
+      >
+        <KeyRound className="h-4 w-4 shrink-0" aria-hidden="true" />
+        AI providers
+      </button>
+
       <button
         type="button"
         id={idPrefix + '-advanced-tools'}
@@ -107,7 +121,7 @@ const NavItems: React.FC<{
  * A quiet, responsive shell. Chat is the product; builder/scanner/analytics live
  * behind an explicit Advanced tools disclosure and remain fully reachable.
  */
-export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, dataMode, children, footer }) => {
+export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, dataMode, liveQuotes, children, footer }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [drawerAdvancedOpen, setDrawerAdvancedOpen] = useState(false);
@@ -169,6 +183,20 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
       ? 'text-amber-300/80'
       : 'text-neutral-500';
 
+  const live = dataMode === 'real' && liveQuotes?.connected === true;
+  const liveProvider = liveQuotes?.provider === 'angel' ? 'Angel One' : 'broker';
+  const statusFooter = live ? (
+    <div className="space-y-0.5">
+      <p className="flex items-center gap-1.5 text-[11px] leading-4 text-emerald-300/90">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+        Live quotes · {liveProvider}
+      </p>
+      <p className="text-[10px] leading-4 text-neutral-400">Research bars remain delayed, not live</p>
+    </div>
+  ) : (
+    <p className={`text-[11px] leading-4 ${modeTone}`}>{dataModeCopy[dataMode]}</p>
+  );
+
   return (
     <div className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-[#101012] text-neutral-200">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/8 px-3 lg:hidden">
@@ -210,7 +238,7 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
             idPrefix="desktop"
           />
           <div className="mt-auto space-y-3 px-2 pt-6">
-            <p className={`text-[11px] leading-4 ${modeTone}`}>{dataModeCopy[dataMode]}</p>
+            {statusFooter}
             {footer && <div className="text-[11px] leading-4 text-neutral-500">{footer}</div>}
           </div>
         </aside>
@@ -246,7 +274,7 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
               idPrefix="mobile"
             />
             <div className="mt-auto space-y-2 pt-6 text-[11px] text-neutral-500">
-              <p className={modeTone}>{dataModeCopy[dataMode]}</p>
+              {statusFooter}
               {footer}
             </div>
           </div>

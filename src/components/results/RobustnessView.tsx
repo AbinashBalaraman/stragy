@@ -1,4 +1,3 @@
-import { formatCurrency, formatNumber } from '../../client/format';
 import React, { useState } from 'react';
 import {
   ResponsiveContainer,
@@ -11,6 +10,7 @@ import {
   Legend
 } from 'recharts';
 import { RobustnessSuite, BacktestResponse } from '../../shared/strategy/types';
+import { formatDate, formatINR, formatNumber, formatPercent } from '../../shared/format';
 import { ShieldCheck, Dice5, SplitSquareVertical, Grid3X3 } from 'lucide-react';
 
 interface RobustnessViewProps {
@@ -19,21 +19,20 @@ interface RobustnessViewProps {
   onRunNewSimulation?: () => void;
 }
 
-export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, result, onRunNewSimulation }) => {
+export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, result }) => {
   const [activeTab, setActiveTab] = useState<'monteCarlo' | 'trainTest' | 'sensitivity'>('monteCarlo');
   const suite = robustness || result?.robustness;
 
   if (!suite) {
     return (
-      <div className="p-8 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl text-center text-neutral-400 text-xs">
-        No robustness data available.
+      <div className="rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-8 text-center text-xs text-[rgba(236,236,237,0.55)]">
+        No robustness data is available for this run.
       </div>
     );
   }
 
   const { monteCarlo, trainTestSplit, sensitivityHeatmap } = suite;
 
-  // Prepare Monte Carlo percentile points
   const mcChartData = monteCarlo.percentileCurves.p50.map((_, idx) => ({
     step: `Step ${idx}`,
     p10: monteCarlo.percentileCurves.p10[idx],
@@ -43,83 +42,63 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
     p90: monteCarlo.percentileCurves.p90[idx]
   }));
 
+  const tabButton = (id: typeof activeTab, label: string, Icon: React.ComponentType<{ className?: string }>) => (
+    <button
+      type="button"
+      onClick={() => setActiveTab(id)}
+      aria-current={activeTab === id ? 'page' : undefined}
+      className={`flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors sm:w-auto sm:px-3 ${
+        activeTab === id ? 'bg-[#a8c7fa] font-semibold text-[#101012]' : 'text-[rgba(236,236,237,0.55)] hover:text-[#ececed]'
+      }`}
+    >
+      <Icon className={`h-3.5 w-3.5 ${activeTab === id ? 'text-[#101012]' : 'text-[#a8c7fa]'}`} />
+      <span>{label}</span>
+    </button>
+  );
+
   return (
-    <div className="p-4 sm:p-6 bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl space-y-4">
-      {/* Tab Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(236,236,237,0.08)] pb-3.5">
+    <div className="space-y-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:p-5">
+      <div className="flex flex-col justify-between gap-3 border-b border-[rgba(236,236,237,0.08)] pb-3.5 sm:flex-row sm:items-center">
         <div className="flex items-center gap-2.5">
-          <ShieldCheck className="w-5 h-5 text-[#a8c7fa]" />
+          <ShieldCheck className="h-5 w-5 text-[#a8c7fa]" />
           <div>
-            <h3 className="font-syne font-bold text-sm text-[#ececed]">Institutional Robustness & Overfitting Suite</h3>
-            <p className="text-[11px] text-[rgba(236,236,237,0.5)]">Monte Carlo (500 Runs), 70/30 OOS Validation & Parameter Sensitivity</p>
+            <h3 className="text-sm font-semibold text-[#ececed]">Robustness checks</h3>
+            <p className="mt-0.5 text-[11px] text-[rgba(236,236,237,0.52)]">
+              500-run Monte Carlo · 70/30 out-of-sample split · parameter sensitivity
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center bg-[#1e1e21] p-1 rounded-xl border border-[rgba(236,236,237,0.08)]">
-          <button
-            type="button"
-            onClick={() => setActiveTab('monteCarlo')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === 'monteCarlo' ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Dice5 className="w-3.5 h-3.5" />
-            <span>Monte Carlo (500)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('trainTest')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === 'trainTest' ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <SplitSquareVertical className="w-3.5 h-3.5" />
-            <span>70/30 Train/Test</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('sensitivity')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === 'sensitivity' ? 'bg-[#a8c7fa] text-[#101012] font-bold shadow-sm' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Grid3X3 className="w-3.5 h-3.5" />
-            <span>Sensitivity Grid</span>
-          </button>
+        <div className="grid grid-cols-3 items-center gap-1 rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#1e1e21] p-1 sm:flex">
+          {tabButton('monteCarlo', 'Monte Carlo', Dice5)}
+          {tabButton('trainTest', '70/30 holdout', SplitSquareVertical)}
+          {tabButton('sensitivity', 'Sensitivity', Grid3X3)}
         </div>
       </div>
 
-      {/* Tab 1: Monte Carlo Simulation */}
-      <p className="text-xs text-neutral-400">IID daily net-equity return resampling, seed {monteCarlo.seed ?? 'N/A'}. Observed horizon only. This is not a forecast and ignores serial dependence. {monteCarlo.reason}</p>
       {activeTab === 'monteCarlo' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
-              <span className="text-neutral-400 block mb-1">P10 Conservative Equity</span>
-              <span className="text-rose-400 font-mono font-bold text-sm">
-                {formatCurrency(monteCarlo.p10TerminalEquity)}
-              </span>
+          <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.58)]">
+            IID daily net-equity return resampling with seed {monteCarlo.seed ?? 'N/A'}. Observed horizon only; this is not a forecast and ignores serial dependence.
+            {monteCarlo.reason ? ` ${monteCarlo.reason}` : ''}
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#151517] p-3">
+              <span className="block text-[11px] text-[rgba(236,236,237,0.55)]">P10 conservative equity</span>
+              <span className="mt-1 block font-mono text-sm font-semibold text-rose-300">{formatINR(monteCarlo.p10TerminalEquity)}</span>
             </div>
-            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
-              <span className="text-neutral-400 block mb-1">P50 Median Equity</span>
-              <span className="text-[#a8c7fa] font-mono font-bold text-sm">
-                {formatCurrency(monteCarlo.p50TerminalEquity)}
-              </span>
+            <div className="rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#151517] p-3">
+              <span className="block text-[11px] text-[rgba(236,236,237,0.55)]">P50 median equity</span>
+              <span className="mt-1 block font-mono text-sm font-semibold text-[#a8c7fa]">{formatINR(monteCarlo.p50TerminalEquity)}</span>
             </div>
-            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
-              <span className="text-neutral-400 block mb-1">P90 Optimistic Equity</span>
-              <span className="text-[#a8c7fa] font-mono font-bold text-sm">
-                {formatCurrency(monteCarlo.p90TerminalEquity)}
-              </span>
+            <div className="rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#151517] p-3">
+              <span className="block text-[11px] text-[rgba(236,236,237,0.55)]">P90 optimistic equity</span>
+              <span className="mt-1 block font-mono text-sm font-semibold text-[#a8c7fa]">{formatINR(monteCarlo.p90TerminalEquity)}</span>
             </div>
-            <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
-              <span className="text-neutral-400 block mb-1">Prob of Drawdown ≥ 15%</span>
-              <span
-                className={`font-mono font-bold text-sm ${
-                  (monteCarlo.probDrawdownOver15 ?? 0) > 30 ? 'text-rose-400' : 'text-[#a8c7fa]'
-                }`}
-              >
-                {formatNumber(monteCarlo.probDrawdownOver15, 1, '%')}
+            <div className="rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#151517] p-3">
+              <span className="block text-[11px] text-[rgba(236,236,237,0.55)]">P(drawdown ≥ 15%)</span>
+              <span className={`mt-1 block font-mono text-sm font-semibold ${(monteCarlo.probDrawdownOver15 ?? 0) > 30 ? 'text-rose-300' : 'text-[#a8c7fa]'}`}>
+                {formatPercent(monteCarlo.probDrawdownOver15, { decimals: 1 })}
               </span>
             </div>
           </div>
@@ -129,7 +108,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
               <LineChart data={mcChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(236, 236, 237, 0.05)" />
                 <XAxis dataKey="step" stroke="#6b7280" fontSize={10} minTickGap={30} />
-                <YAxis stroke="#6b7280" fontSize={10} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
+                <YAxis stroke="#6b7280" fontSize={10} tickFormatter={value => `₹${(value / 1000).toFixed(0)}k`} />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: '#151517',
@@ -138,141 +117,133 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                     fontSize: '0.75rem',
                     color: '#ececed'
                   }}
-                  formatter={(val: any) => [`₹${Number(val).toLocaleString('en-IN')}`]}
+                  formatter={(value: number) => [formatINR(Number(value))]}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                <Line type="monotone" dataKey="p90" stroke="#a8c7fa" strokeWidth={1.5} dot={false} name="90th Percentile" />
-                <Line type="monotone" dataKey="p50" stroke="#ececed" strokeWidth={2} dot={false} name="50th Percentile (Median)" />
-                <Line type="monotone" dataKey="p10" stroke="#ff4d4d" strokeWidth={1.5} dot={false} name="10th Percentile, not worst case" />
+                <Line type="monotone" dataKey="p90" stroke="#a8c7fa" strokeWidth={1.5} dot={false} name="90th percentile" />
+                <Line type="monotone" dataKey="p50" stroke="#ececed" strokeWidth={2} dot={false} name="50th percentile (median)" />
+                <Line type="monotone" dataKey="p10" stroke="#ff4d4d" strokeWidth={1.5} dot={false} name="10th percentile, not worst case" />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
       )}
 
-      {/* Tab 2: 70/30 Train/Test Split */}
       {activeTab === 'trainTest' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between p-3.5 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#151517] p-3.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-300 font-semibold">Overfitting Classification:</span>
+              <span className="text-xs font-medium text-[rgba(236,236,237,0.7)]">Overfitting classification:</span>
               <span
-                className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${
+                className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
                   trainTestSplit.overfittingRisk === 'LOW'
-                    ? 'bg-[#a8c7fa]/10 text-[#a8c7fa] border-[#a8c7fa]/30'
+                    ? 'border-[#a8c7fa]/30 bg-[#a8c7fa]/10 text-[#a8c7fa]'
                     : trainTestSplit.overfittingRisk === 'MODERATE'
-                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                    : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                      : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
                 }`}
               >
-                {trainTestSplit.overfittingRisk} OVERFITTING RISK
+                {trainTestSplit.overfittingRisk}
               </span>
             </div>
-            <span className="text-xs text-neutral-400 font-mono">Split Date: {trainTestSplit.splitDate}</span>
+            <span className="font-mono text-xs text-[rgba(236,236,237,0.55)]">Split {formatDate(trainTestSplit.splitDate)}</span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* In-Sample (70%) */}
-            <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-3 rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#151517] p-4">
               <div className="flex items-center justify-between border-b border-[rgba(236,236,237,0.08)] pb-2">
-                <span className="text-xs font-bold text-[#a8c7fa] uppercase tracking-wider">
-                  In-Sample (Train 70%)
-                </span>
-                <span className="text-xs text-neutral-400">{trainTestSplit.trainMetrics.tradesCount} Trades</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#a8c7fa]">In-sample (train 70%)</span>
+                <span className="text-xs text-[rgba(236,236,237,0.55)]">{trainTestSplit.trainMetrics.tradesCount} trades</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div>
-                  <span className="text-neutral-400">CAGR:</span>
-                  <div className="font-mono font-bold text-white text-sm">{trainTestSplit.trainMetrics.cagr}%</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">CAGR</span>
+                  <div className="font-mono text-sm font-semibold text-white">{formatPercent(trainTestSplit.trainMetrics.cagr, { decimals: 2 })}</div>
                 </div>
                 <div>
-                  <span className="text-neutral-400">Sharpe Ratio:</span>
-                  <div className="font-mono font-bold text-white text-sm">{trainTestSplit.trainMetrics.sharpe}</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">Sharpe</span>
+                  <div className="font-mono text-sm font-semibold text-white">{formatNumber(trainTestSplit.trainMetrics.sharpe)}</div>
                 </div>
                 <div>
-                  <span className="text-neutral-400">Win Rate:</span>
-                  <div className="font-mono font-bold text-white text-sm">{trainTestSplit.trainMetrics.winRate}%</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">Win rate</span>
+                  <div className="font-mono text-sm font-semibold text-white">{formatPercent(trainTestSplit.trainMetrics.winRate, { decimals: 1 })}</div>
                 </div>
                 <div>
-                  <span className="text-neutral-400">Max Drawdown:</span>
-                  <div className="font-mono font-bold text-rose-400 text-sm">{trainTestSplit.trainMetrics.maxDrawdown}%</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">Max drawdown</span>
+                  <div className="font-mono text-sm font-semibold text-rose-300">{formatPercent(Math.abs(trainTestSplit.trainMetrics.maxDrawdown), { decimals: 2 })}</div>
                 </div>
               </div>
             </div>
 
-            {/* Out-of-Sample (30%) */}
-            <div className="p-4 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl space-y-3">
+            <div className="space-y-3 rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#151517] p-4">
               <div className="flex items-center justify-between border-b border-[rgba(236,236,237,0.08)] pb-2">
-                <span className="text-xs font-bold text-[#a8c7fa] uppercase tracking-wider">
-                  Out-of-Sample (Test 30%)
-                </span>
-                <span className="text-xs text-neutral-400">{trainTestSplit.testMetrics.tradesCount} Trades</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#a8c7fa]">Out-of-sample (test 30%)</span>
+                <span className="text-xs text-[rgba(236,236,237,0.55)]">{trainTestSplit.testMetrics.tradesCount} trades</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div>
-                  <span className="text-neutral-400">CAGR (Decay {trainTestSplit.cagrDecayRatio}x):</span>
-                  <div className="font-mono font-bold text-white text-sm">{trainTestSplit.testMetrics.cagr}%</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">CAGR</span>
+                  <div className="font-mono text-sm font-semibold text-white">{formatPercent(trainTestSplit.testMetrics.cagr, { decimals: 2 })}</div>
                 </div>
                 <div>
-                  <span className="text-neutral-400">Sharpe Ratio:</span>
-                  <div className="font-mono font-bold text-white text-sm">{trainTestSplit.testMetrics.sharpe}</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">Sharpe</span>
+                  <div className="font-mono text-sm font-semibold text-white">{formatNumber(trainTestSplit.testMetrics.sharpe)}</div>
                 </div>
                 <div>
-                  <span className="text-neutral-400">Win Rate:</span>
-                  <div className="font-mono font-bold text-white text-sm">{trainTestSplit.testMetrics.winRate}%</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">Win rate</span>
+                  <div className="font-mono text-sm font-semibold text-white">{formatPercent(trainTestSplit.testMetrics.winRate, { decimals: 1 })}</div>
                 </div>
                 <div>
-                  <span className="text-neutral-400">Max Drawdown:</span>
-                  <div className="font-mono font-bold text-rose-400 text-sm">{trainTestSplit.testMetrics.maxDrawdown}%</div>
+                  <span className="text-[rgba(236,236,237,0.55)]">Max drawdown</span>
+                  <div className="font-mono text-sm font-semibold text-rose-300">{formatPercent(Math.abs(trainTestSplit.testMetrics.maxDrawdown), { decimals: 2 })}</div>
                 </div>
               </div>
+              <p className="text-[11px] text-[rgba(236,236,237,0.5)]">
+                CAGR decay {formatNumber(trainTestSplit.cagrDecayRatio, 2)}× from train to test.
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Tab 3: Parameter Sensitivity Heatmap */}
       {activeTab === 'sensitivity' && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-xs text-neutral-400">
-            <span>2D Grid: {sensitivityHeatmap.param1Name} (Rows) vs {sensitivityHeatmap.param2Name} (Columns)</span>
-            <span className="text-[#a8c7fa] font-semibold">Metric: Net return (%)</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[rgba(236,236,237,0.55)]">
+            <span>{sensitivityHeatmap.param1Name} (rows) vs {sensitivityHeatmap.param2Name} (columns)</span>
+            <span className="font-medium text-[#a8c7fa]">Net return</span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
+            <table className="w-full border-collapse text-center text-xs">
               <thead>
                 <tr>
-                  <th className="p-2 text-neutral-500 font-mono text-[10px] text-left">SL \ TP</th>
+                  <th className="p-2 text-left font-mono text-[10px] text-[rgba(236,236,237,0.45)]">SL \ TP</th>
                   {sensitivityHeatmap.param2Values.map(tp => (
-                    <th key={tp} className="p-2 font-mono text-neutral-300 font-semibold">
-                      {tp}%
-                    </th>
+                    <th key={tp} className="p-2 font-mono font-semibold text-[rgba(236,236,237,0.7)]">{tp}%</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {sensitivityHeatmap.matrix.map((row, rIdx) => {
-                  const sl = sensitivityHeatmap.param1Values[rIdx];
+                {sensitivityHeatmap.matrix.map((row, rowIndex) => {
+                  const stopLoss = sensitivityHeatmap.param1Values[rowIndex];
                   return (
-                    <tr key={sl} className="border-t border-[rgba(236,236,237,0.06)]">
-                      <td className="p-2 font-mono text-neutral-400 font-semibold text-left">{sl}%</td>
-                      {row.map((cell, cIdx) => {
-                        const val = cell.metricValue;
-                        const bgColor =
-                          (val ?? -Infinity) >= 1.5
+                    <tr key={stopLoss} className="border-t border-[rgba(236,236,237,0.06)]">
+                      <td className="p-2 text-left font-mono font-semibold text-[rgba(236,236,237,0.55)]">{stopLoss}%</td>
+                      {row.map((cell, columnIndex) => {
+                        const value = cell.metricValue;
+                        const background =
+                          (value ?? -Infinity) >= 1.5
                             ? 'bg-[#a8c7fa]/30 text-[#a8c7fa]'
-                            : (val ?? -Infinity) >= 1.0
-                            ? 'bg-[#a8c7fa]/15 text-[#a8c7fa]'
-                            : (val ?? -Infinity) >= 0.5
-                            ? 'bg-[#a8c7fa]/10 text-neutral-200'
-                            : (val ?? -Infinity) >= 0
-                            ? 'bg-[#1e1e21] text-neutral-300'
-                            : 'bg-rose-500/20 text-rose-300';
-
+                            : (value ?? -Infinity) >= 1.0
+                              ? 'bg-[#a8c7fa]/15 text-[#a8c7fa]'
+                              : (value ?? -Infinity) >= 0.5
+                                ? 'bg-[#a8c7fa]/10 text-[#ececed]'
+                                : (value ?? -Infinity) >= 0
+                                  ? 'bg-[#1e1e21] text-[rgba(236,236,237,0.7)]'
+                                  : 'bg-rose-500/15 text-rose-300';
                         return (
-                          <td key={cIdx} className={`p-2.5 font-mono font-bold rounded m-0.5 ${bgColor}`}>
-                            {formatNumber(val)}
+                          <td key={columnIndex} className={`m-0.5 rounded p-2.5 font-mono font-semibold ${background}`}>
+                            {formatPercent(value, { decimals: 2 })}
                           </td>
                         );
                       })}
@@ -287,3 +258,4 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
     </div>
   );
 };
+

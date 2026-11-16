@@ -9,10 +9,9 @@ interface OptionChainScannerProps {
 }
 
 export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
-  const [selectedTicker, setSelectedTicker] = useState<string>('^NSEI');
-  const { data, isLoading, error, invalidate, refresh } = useDerivativeRequest(selectedTicker, '/api/derivatives/option-chain?symbolId=' + encodeURIComponent(selectedTicker), parseOptionChain);
-
   const fnoSymbols = NSE_SYMBOLS.filter(s => s.lotSize && s.lotSize > 0);
+  const [selectedSymbolId, setSelectedSymbolId] = useState<number>(() => fnoSymbols[0]?.id ?? 1);
+  const { data, isLoading, error, invalidate, refresh } = useDerivativeRequest(String(selectedSymbolId), '/api/derivatives/option-chain?symbolId=' + selectedSymbolId, parseOptionChain);
 
   return (
     <div className="space-y-4">
@@ -44,12 +43,12 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
           <div className="flex items-center gap-2">
             <select
               aria-label="Model symbol"
-              value={selectedTicker}
-              onChange={e => { invalidate(); setSelectedTicker(e.target.value); }}
+              value={selectedSymbolId}
+              onChange={e => { invalidate(); setSelectedSymbolId(Number(e.target.value)); }}
               className="bg-[#151517] border border-[rgba(236,236,237,0.12)] text-white text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-cyan-500"
             >
               {fnoSymbols.map(s => (
-                <option key={s.ticker} value={s.ticker}>
+                <option key={s.id} value={s.id}>
                   {s.ticker} - {s.name.slice(0, 20)}
                 </option>
               ))}

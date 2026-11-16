@@ -109,6 +109,69 @@ describe('bounded offline API contracts', () => {
     expect(enqueue).not.toHaveBeenCalled();
     expect(executor).not.toHaveBeenCalled();
   });
+  it('allows only the Google Fonts origins in production CSP while keeping every other directive strict', async () => {
+    const { app } = await setup({ NODE_ENV: 'production', EXPOSURE_MODE: 'demo-public' });
+    const response = await bounded(request(app).get('/health/live'));
+    expect(response.status).toBe(200);
+    const csp = String(response.headers['content-security-policy']);
+    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+    expect(csp).toContain("font-src 'self' data: https://fonts.gstatic.com");
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("base-uri 'self'");
+    expect(csp).not.toContain('*');
+  });
+  it('previews the default GTT bracket on a mapped demo equity', async () => {
+    const { app, executor } = await setup();
+    const response = await bounded(request(app).post('/api/orders/gtt-bracket').send({}));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ success: true, previewOnly: true, ticker: 'RELIANCE', action: 'BUY', mode: 'demo' });
+    expect(response.body.smartApiPayload.tradingsymbol).toBe('RELIANCE-EQ');
+    expect(executor).not.toHaveBeenCalled();
+  });
+  it('rejects unknown symbol IDs as 422 UNKNOWN_SYMBOL for bars and backtests', async () => {
+    const { app, enqueue, executor } = await setup();
+    errorContract(await bounded(request(app).get('/api/symbols/999999/bars')), 422, 'UNKNOWN_SYMBOL');
+    const unknownSymbolBody = { ...body(), strategy: { ...strategy(), universe: { symbolId: 999999, timeframe: '1D' } } };
+    errorContract(await bounded(request(app).post('/api/v2/backtests').send(unknownSymbolBody)), 422, 'UNKNOWN_SYMBOL');
+    errorContract(await bounded(request(app).post('/api/backtests').send(unknownSymbolBody)), 422, 'UNKNOWN_SYMBOL');
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(executor).not.toHaveBeenCalled();
+  });
+  it('validates chart image types and the route-scoped body limit', async () => {
+    const { app, executor } = await setup();
+    const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString('base64');
+    const badMime = 'data:image/gif;base64,' + png.split(',')[1];
+    errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: badMime, currentStrategy: strategy() })), 422, 'INVALID_IMAGE');
+    const jpeg = 'data:image/png;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString('base64');
+    errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: jpeg, currentStrategy: strategy() })), 422, 'IMAGE_TYPE_MISMATCH');
+    errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: 'data:image/png;base64,' + Buffer.alloc(6_400_000).toString('base64') })), 413, 'BODY_TOO_LARGE');
+    expect(executor).not.toHaveBeenCalled();
+  });
+  it('accepts a 4.9 MB decoded chart image through the raised 8 MB route parser', async () => {
+    const { app, executor } = await setup();
+    const header = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+    const image = 'data:image/png;base64,' + Buffer.concat([header, Buffer.alloc(4_900_000)]).toString('base64');
+    const response = await bounded(request(app).post('/api/v2/chart-analysis').send({ image, hint: 'RSI trendline break', currentStrategy: strategy() }));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ kind: 'conversation', method: 'unavailable' });
+    expect(executor).not.toHaveBeenCalled();
+
+    // The explicit decoded-image check still returns IMAGE_TOO_LARGE (413), not a generic body error.
+    const tooBig = 'data:image/png;base64,' + Buffer.concat([header, Buffer.alloc(5_100_000)]).toString('base64');
+    errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: tooBig, currentStrategy: strategy() })), 413, 'IMAGE_TOO_LARGE');
+  });
+  it('returns an explicit unavailable reading for a valid chart when no vision provider is configured', async () => {
+    const { app, executor } = await setup();
+    const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString('base64');
+    const response = await bounded(request(app).post('/api/v2/chart-analysis').send({ image: png, hint: 'RSI trendline break', currentStrategy: strategy() }));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ schemaVersion: 1, kind: 'conversation', method: 'unavailable', provider: { name: 'none', aiGenerated: false } });
+    expect(response.body.message).toMatch(/disabled|unavailable/i);
+    expect(executor).not.toHaveBeenCalled();
+  });
   it('rejects invalid strategy, numeric input and unknown input before enqueue', async () => {
     const { app, enqueue } = await setup();
     errorContract(await bounded(request(app).post('/api/v2/backtests').send({ strategy: {} })), 422, 'INVALID_STRATEGY');

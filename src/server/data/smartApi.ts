@@ -1,411 +1,13 @@
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import { OHLCVBar } from '../../shared/strategy/types';
 import { getSymbolById, NSE_SYMBOLS } from './symbols';
 import { tradingSessionsFromDates } from './realMarketData';
 import { getDataMode,getMarketSeries,validateDate,MarketDataError } from './marketSeries';
+import { getAngelCredentialStatus, getAngelSessionInfo } from './angelClient';
+import { getAngelMasterInfo } from './angelSymbols';
 
-// Angel One NSE Symbol to Token Mapping for Nifty 50, Indices & Top Equities
-export const SMARTAPI_TOKEN_MAP: Record<string, { token: string; exchange: string; symbol: string }> = {
-  'RELIANCE': { token: '2885', exchange: 'NSE', symbol: 'RELIANCE-EQ' },
-  'HDFCBANK': { token: '1333', exchange: 'NSE', symbol: 'HDFCBANK-EQ' },
-  'TCS': { token: '11536', exchange: 'NSE', symbol: 'TCS-EQ' },
-  'INFY': { token: '1594', exchange: 'NSE', symbol: 'INFY-EQ' },
-  'ICICIBANK': { token: '4963', exchange: 'NSE', symbol: 'ICICIBANK-EQ' },
-  'TATAMOTORS': { token: '3456', exchange: 'NSE', symbol: 'TATAMOTORS-EQ' },
-  'SBIN': { token: '3045', exchange: 'NSE', symbol: 'SBIN-EQ' },
-  'BHARTIARTL': { token: '10604', exchange: 'NSE', symbol: 'BHARTIARTL-EQ' },
-  'ITC': { token: '1660', exchange: 'NSE', symbol: 'ITC-EQ' },
-  'LT': { token: '11483', exchange: 'NSE', symbol: 'LT-EQ' },
-  'KOTAKBANK': { token: '1922', exchange: 'NSE', symbol: 'KOTAKBANK-EQ' },
-  'AXISBANK': { token: '5900', exchange: 'NSE', symbol: 'AXISBANK-EQ' },
-  'MARUTI': { token: '10999', exchange: 'NSE', symbol: 'MARUTI-EQ' },
-  'SUNPHARMA': { token: '3351', exchange: 'NSE', symbol: 'SUNPHARMA-EQ' },
-  'TITAN': { token: '3506', exchange: 'NSE', symbol: 'TITAN-EQ' },
-  'BAJFINANCE': { token: '317', exchange: 'NSE', symbol: 'BAJFINANCE-EQ' },
-  'TATASTEEL': { token: '3499', exchange: 'NSE', symbol: 'TATASTEEL-EQ' },
-  'NTPC': { token: '11630', exchange: 'NSE', symbol: 'NTPC-EQ' },
-  'ADANIPORTS': { token: '15083', exchange: 'NSE', symbol: 'ADANIPORTS-EQ' },
-  'WIPRO': { token: '3787', exchange: 'NSE', symbol: 'WIPRO-EQ' },
-  'POWERGRID': { token: '14977', exchange: 'NSE', symbol: 'POWERGRID-EQ' },
-  'COALINDIA': { token: '20374', exchange: 'NSE', symbol: 'COALINDIA-EQ' },
-  'ONGC': { token: '2475', exchange: 'NSE', symbol: 'ONGC-EQ' },
-  'JSWSTEEL': { token: '11723', exchange: 'NSE', symbol: 'JSWSTEEL-EQ' },
-  'HINDALCO': { token: '1363', exchange: 'NSE', symbol: 'HINDALCO-EQ' },
-  'DRREDDY': { token: '881', exchange: 'NSE', symbol: 'DRREDDY-EQ' },
-  'CIPLA': { token: '694', exchange: 'NSE', symbol: 'CIPLA-EQ' },
-  'M&M': { token: '2031', exchange: 'NSE', symbol: 'M&M-EQ' },
-  'ZOMATO': { token: '5097', exchange: 'NSE', symbol: 'ZOMATO-EQ' },
-  'HAL': { token: '2303', exchange: 'NSE', symbol: 'HAL-EQ' },
-  '^NSEI': { token: '99926000', exchange: 'NSE', symbol: 'Nifty 50' },
-  '^NSEBANK': { token: '99926009', exchange: 'NSE', symbol: 'Nifty Bank' }
-};
-
-interface SmartApiSession {
-  jwtToken: string;
-  refreshToken: string;
-  feedToken: string;
-  expiresAt: number;
-}
-
-let cachedSession: SmartApiSession | null = null;
-let isAuthenticating = false;
-let lastAuthAttemptTime = 0;
-let lastAuthErrorMessage = '';
-const AUTH_COOLDOWN_MS = 60000; // 1 minute cooldown
-
-/**
- * Loads credentials from process.env or fallback to .env / .env.example
- */
-export function getSmartApiCredentials() {
-  let apiKey = process.env.SMARTAPI_API_KEY || '';
-  let clientCode = process.env.SMARTAPI_CLIENT_CODE || '';
-  let password = process.env.SMARTAPI_PASSWORD || '';
-  let totpKey = process.env.SMARTAPI_TOTP_KEY || '';
-
-  const isPlaceholder = (val: string) =>
-    !val ||
-    val.includes('your_') ||
-    val.startsWith('MY_') ||
-    val.includes('MY_SMARTAPI') ||
-    val.trim() === '';
-
-  if (isPlaceholder(apiKey) || isPlaceholder(clientCode) || isPlaceholder(password) || isPlaceholder(totpKey)) {
-    const filesToTry = ['.env', '.env.local', '.env.example'];
-    for (const file of filesToTry) {
-      try {
-        const filePath = path.resolve(process.cwd(), file);
-        if (fs.existsSync(filePath)) {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          const lines = content.split('\n');
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#')) continue;
-            const match = trimmed.match(/^([^=]+)=(.*)$/);
-            if (match) {
-              const key = match[1].trim();
-              let val = match[2].trim().replace(/^["']|["']$/g, '');
-              if (key === 'SMARTAPI_API_KEY' && isPlaceholder(apiKey) && !isPlaceholder(val)) apiKey = val;
-              if (key === 'SMARTAPI_CLIENT_CODE' && isPlaceholder(clientCode) && !isPlaceholder(val)) clientCode = val;
-              if (key === 'SMARTAPI_PASSWORD' && isPlaceholder(password) && !isPlaceholder(val)) password = val;
-              if (key === 'SMARTAPI_TOTP_KEY' && isPlaceholder(totpKey) && !isPlaceholder(val)) totpKey = val;
-            }
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  return {
-    apiKey: apiKey.trim(),
-    clientCode: clientCode.trim(),
-    password: password.trim(),
-    totpKey: totpKey.trim()
-  };
-}
-
-/**
- * Base32 decoder for Authenticator TOTP secrets
- */
-function base32Decode(base32: string): Buffer {
-  const clean = base32.replace(/=+$/, '').toUpperCase().replace(/[\s-]/g, '');
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = 0;
-  let value = 0;
-  const bytes: number[] = [];
-
-  for (let i = 0; i < clean.length; i++) {
-    const val = alphabet.indexOf(clean.charAt(i));
-    if (val === -1) continue;
-    value = (value << 5) | val;
-    bits += 5;
-
-    if (bits >= 8) {
-      bytes.push((value >>> (bits - 8)) & 255);
-      bits -= 8;
-    }
-  }
-
-  return Buffer.from(bytes);
-}
-
-/**
- * Generates RFC 6238 compliant 6-digit TOTP code
- */
-export function generateTOTP(secret: string, timeStep: number = 30): string {
-  try {
-    const key = base32Decode(secret);
-    const epoch = Math.floor(Date.now() / 1000);
-    const counter = Math.floor(epoch / timeStep);
-
-    const buf = Buffer.alloc(8);
-    buf.writeBigUInt64BE(BigInt(counter), 0);
-
-    const hmac = crypto.createHmac('sha1', key);
-    hmac.update(buf);
-    const digest = hmac.digest();
-
-    const offset = digest[digest.length - 1] & 0xf;
-    const code =
-      ((digest[offset] & 0x7f) << 24) |
-      ((digest[offset + 1] & 0xff) << 16) |
-      ((digest[offset + 2] & 0xff) << 8) |
-      (digest[offset + 3] & 0xff);
-
-    const strCode = (code % 1000000).toString().padStart(6, '0');
-    return strCode;
-  } catch (err) {
-    return '000000';
-  }
-}
-
-/**
- * Safely executes HTTP requests and parses JSON, preventing HTML / WAF Access Denied syntax errors
- */
-async function safeFetchJson(url: string, options: any): Promise<{ ok: boolean; status: number; data: any; error?: string }> {
-  try {
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        ...(options.headers || {})
-      }
-    });
-
-    const text = await res.text();
-    if (!text || text.trim() === '') {
-      return { ok: false, status: res.status, data: null, error: 'Empty response received' };
-    }
-
-    try {
-      const data = JSON.parse(text);
-      return { ok: res.ok, status: res.status, data };
-    } catch {
-      const cleanSnippet = text.replace(/<[^>]*>?/gm, '').slice(0, 120).trim();
-      return {
-        ok: false,
-        status: res.status,
-        data: null,
-        error: cleanSnippet || 'Non-JSON response received'
-      };
-    }
-  } catch (err: any) {
-    return { ok: false, status: 0, data: null, error: err?.message || 'Network request failed' };
-  }
-}
-
-/**
- * Checks if Angel One SmartAPI environment credentials are present
- */
-export function isSmartApiConfigured(): boolean {
-  const creds = getSmartApiCredentials();
-  return !!(
-    creds.apiKey && !creds.apiKey.includes('your_smartapi_key') &&
-    creds.clientCode && !creds.clientCode.includes('your_client_code') &&
-    creds.password && !creds.password.includes('your_password') &&
-    creds.totpKey && !creds.totpKey.includes('your_authenticator')
-  );
-}
-
-/**
- * Authenticates with Angel One SmartAPI and obtains a valid JWT token safely
- */
-export async function getSmartApiSession(): Promise<SmartApiSession | null> {
-  if (getDataMode()==='demo' || !isSmartApiConfigured()) {
-    return null;
-  }
-
-  if (cachedSession && cachedSession.expiresAt > Date.now() + 60000) {
-    return cachedSession;
-  }
-
-  if (Date.now() - lastAuthAttemptTime < AUTH_COOLDOWN_MS && !cachedSession) {
-    return null;
-  }
-
-  if (isAuthenticating) {
-    await new Promise(r => setTimeout(r, 600));
-    if (cachedSession) return cachedSession;
-  }
-
-  isAuthenticating = true;
-  lastAuthAttemptTime = Date.now();
-
-  try {
-    const creds = getSmartApiCredentials();
-    const totp = generateTOTP(creds.totpKey);
-
-    const payload = {
-      clientcode: creds.clientCode,
-      password: creds.password,
-      totp: totp
-    };
-
-    const res = await safeFetchJson('https://apiconnect.angelbroking.com/rest/auth/angelbroking/user/v1/loginByPassword', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-UserType': 'USER',
-        'X-SourceID': 'WEB',
-        'X-ClientLocalIP': '192.168.1.1',
-        'X-ClientPublicIP': '106.193.147.98',
-        'X-MACAddress': 'fe80::1',
-        'X-PrivateKey': creds.apiKey
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (res.ok && res.data && res.data.status && res.data.data && res.data.data.jwtToken) {
-      cachedSession = {
-        jwtToken: res.data.data.jwtToken,
-        refreshToken: res.data.data.refreshToken || '',
-        feedToken: res.data.data.feedToken || '',
-        expiresAt: Date.now() + 10 * 3600 * 1000 // 10 hours
-      };
-      lastAuthErrorMessage = '';
-      console.log('✅ Angel One SmartAPI authenticated for client:', creds.clientCode);
-      return cachedSession;
-    } else {
-      lastAuthErrorMessage = res.error || (res.data ? (res.data.message || 'Authentication rejected') : 'Broker login failed');
-      return null;
-    }
-  } catch (err: any) {
-    lastAuthErrorMessage = err?.message || 'Login exception';
-    return null;
-  } finally {
-    isAuthenticating = false;
-  }
-}
-
-/**
- * Fetches real historical OHLCV candle data from Angel One SmartAPI
- */
-export async function fetchSmartApiCandles(ticker: string, days: number = 365): Promise<OHLCVBar[] | null> {
-  const session = await getSmartApiSession();
-  if (!session) return null;
-
-  const mapping = SMARTAPI_TOKEN_MAP[ticker];
-  if (!mapping) return null;
-
-  const creds = getSmartApiCredentials();
-
-  const toDate = new Date();
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - days);
-
-  const formatSmartDate = (d: Date) => {
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd} 09:15`;
-  };
-
-  const formatToDate = (d: Date) => {
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd} 15:30`;
-  };
-
-  try {
-    const res = await safeFetchJson('https://apiconnect.angelbroking.com/rest/secure/angelbroking/historical/v1/getCandleData', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${session.jwtToken}`,
-        'Content-Type': 'application/json',
-        'X-UserType': 'USER',
-        'X-SourceID': 'WEB',
-        'X-ClientLocalIP': '192.168.1.1',
-        'X-ClientPublicIP': '106.193.147.98',
-        'X-MACAddress': 'fe80::1',
-        'X-PrivateKey': creds.apiKey
-      },
-      body: JSON.stringify({
-        exchange: mapping.exchange,
-        symboltoken: mapping.token,
-        interval: 'ONE_DAY',
-        fromdate: formatSmartDate(fromDate),
-        todate: formatToDate(toDate)
-      })
-    });
-
-    if (res.ok && res.data && res.data.status && Array.isArray(res.data.data) && res.data.data.length > 0) {
-      const bars: OHLCVBar[] = res.data.data.map((c: any[]) => {
-        const dateStr = String(c[0]).split('T')[0];
-        const timestamp = new Date(c[0]).getTime();
-        return {
-          date: dateStr,
-          timestamp,
-          open: Number(c[1]),
-          high: Number(c[2]),
-          low: Number(c[3]),
-          close: Number(c[4]),
-          volume: Number(c[5])
-        };
-      });
-
-      return bars;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Fetches LTP quotes for symbols from Angel One SmartAPI
- */
-export async function fetchSmartApiLtp(ticker: string): Promise<{ ltp: number; changePercent: number; high?: number; low?: number } | null> {
-  const session = await getSmartApiSession();
-  if (!session) return null;
-
-  const mapping = SMARTAPI_TOKEN_MAP[ticker];
-  if (!mapping) return null;
-
-  const creds = getSmartApiCredentials();
-
-  try {
-    const res = await safeFetchJson('https://apiconnect.angelbroking.com/rest/secure/angelbroking/market/v1/quote', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${session.jwtToken}`,
-        'Content-Type': 'application/json',
-        'X-UserType': 'USER',
-        'X-SourceID': 'WEB',
-        'X-ClientLocalIP': '192.168.1.1',
-        'X-ClientPublicIP': '106.193.147.98',
-        'X-MACAddress': 'fe80::1',
-        'X-PrivateKey': creds.apiKey
-      },
-      body: JSON.stringify({
-        mode: 'FULL',
-        exchangeTokens: {
-          [mapping.exchange]: [mapping.token]
-        }
-      })
-    });
-
-    if (res.ok && res.data && res.data.status && res.data.data && res.data.data.fetched && res.data.data.fetched.length > 0) {
-      const q = res.data.data.fetched[0];
-      const ltp = Number(q.ltp || q.close || 0);
-      const close = Number(q.close || ltp);
-      const changePercent = close > 0 ? Number((((ltp - close) / close) * 100).toFixed(2)) : 0;
-      return {
-        ltp,
-        changePercent: Number(q.percentChange || changePercent),
-        high: Number(q.high || ltp),
-        low: Number(q.low || ltp)
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+import { SMARTAPI_TOKEN_MAP } from './angelSymbols';
+// Verified ticker -> token map lives with the live-data adapter.
+export { SMARTAPI_TOKEN_MAP };
 
 export interface StockTrendData {
   id: number;
@@ -769,10 +371,55 @@ export function calculateMarketMovers(trends: StockTrendData[], universe: string
 }
 
 /**
- * Returns Angel One SmartAPI Rate Limits, Quota specs, and Architectural capabilities
+ * Documented Angel One SmartAPI limits and read-only capabilities.
+ * Source: https://smartapi.angelone.in/docs/RateLimit and /docs/Historical (checked 2026-11-16).
  */
-export function getSmartApiRateLimitsAndSpecs(){return{rateLimits:[],architectureInnovations:[],verified:false,capabilities:{streaming:false,orders:false,gttPreview:true,observedDerivatives:false},warnings:['Licensing, fees, entitlements and provider quotas unverified']};}
-export async function getSmartApiStatus(){const configured=isSmartApiConfigured();return{configured,connected:!!cachedSession,provider:'Angel One SmartAPI',streamState:'NOT_IMPLEMENTED',exchange:'NSE/BSE (India)',activeSymbolsTracked:0,latencyMs:null,authStatus:cachedSession?'CACHED_SESSION':'NOT_AUTHENTICATED',clientCode:'Not disclosed',mode:getDataMode(),message:'Status never authenticates. Streaming, licensing, fee schedules and entitlements unverified.'};}
+export function getSmartApiRateLimitsAndSpecs(){
+  const credentials=getAngelCredentialStatus();
+  const quotesEnabled=(process.env.QUOTES_PROVIDER??'none')==='angel';
+  const candlesEnabled=process.env.MARKET_PROVIDER==='angel';
+  return {
+    verified:true,
+    source:'https://smartapi.angelone.in/docs',
+    rateLimits:[
+      {endpoint:'Login',method:'POST /rest/auth/angelbroking/user/v1/loginByPassword',limit:'1 request/second'},
+      {endpoint:'Market quote',method:'POST /rest/secure/angelbroking/market/v1/quote',limit:'10 requests/second, 500/minute, 5000/hour',modes:['LTP','OHLC','FULL'],maxTokensPerRequest:50},
+      {endpoint:'Historical candles',method:'POST /rest/secure/angelbroking/historical/v1/getCandleData',limit:'2 requests/second, 80/minute, 5000/hour',intervals:['ONE_MINUTE','THREE_MINUTE','FIVE_MINUTE','TEN_MINUTE','FIFTEEN_MINUTE','THIRTY_MINUTE','ONE_HOUR','ONE_DAY'],maxDaysPerRequest:{ONE_MINUTE:30,THREE_MINUTE:60,FIVE_MINUTE:100,TEN_MINUTE:100,FIFTEEN_MINUTE:200,THIRTY_MINUTE:200,ONE_HOUR:400,ONE_DAY:2000}}
+    ],
+    architectureInnovations:[],
+    capabilities:{streaming:false,orders:false,gttPreview:true,observedDerivatives:false,liveQuotes:quotesEnabled&&credentials.configured,historicalCandles:candlesEnabled&&credentials.configured},
+    warnings:['Read-only market data only; order placement is not implemented.','Angel One redistribution terms apply to any public display.','Session tokens are held in memory and never returned by the API.']
+  };
+}
+/** Observational status. Never authenticates, so status polling cannot burn login quotas. */
+export async function getSmartApiStatus(){
+  const credentials=getAngelCredentialStatus();
+  const session=getAngelSessionInfo();
+  const master=getAngelMasterInfo();
+  const quotesEnabled=(process.env.QUOTES_PROVIDER??'none')==='angel';
+  const candlesEnabled=process.env.MARKET_PROVIDER==='angel';
+  const authStatus=!credentials.configured?'NOT_CONFIGURED':session.connected?'CONNECTED':session.lastError?'AUTH_FAILED':'UNVERIFIED';
+  const message=authStatus==='NOT_CONFIGURED'?'Set ANGEL_API_KEY, ANGEL_CLIENT_CODE, ANGEL_PASSWORD and ANGEL_TOTP_SECRET (SMARTAPI_* aliases are also accepted).':authStatus==='CONNECTED'?'A verified Angel One session is cached in this process for read-only quotes/candles.':authStatus==='AUTH_FAILED'?session.lastError??'The last Angel One login attempt failed.':'Credentials are present but no session has been established in this process yet.';
+  return {
+    configured:credentials.configured,
+    connected:session.connected,
+    provider:'Angel One SmartAPI',
+    streamState:'READ_ONLY_REST',
+    exchange:'NSE',
+    activeSymbolsTracked:0,
+    latencyMs:null,
+    authStatus,
+    quoteProvider:process.env.QUOTES_PROVIDER??'none',
+    marketProvider:process.env.MARKET_PROVIDER??'none',
+    mode:getDataMode(),
+    credentials:{envSource:credentials.envSource,missing:credentials.missing},
+    sessionExpiresAt:session.expiresAt,
+    instrumentMaster:master,
+    capabilities:{liveQuotes:quotesEnabled&&credentials.configured,historicalCandles:candlesEnabled&&credentials.configured,streaming:false,orders:false,gttPreview:true,observedDerivatives:false},
+    warnings:['Status is observational: it never authenticates or logs in.','Read-only market data only; no orders, GTT placement or portfolio access.','Angel One redistribution terms apply to any public display of this data.'],
+    message
+  };
+}
 // ---------------------------------------------------------------------------
 // 1. OPTION CHAIN & DERIVATIVES GREEKS ENGINE (Black-Scholes & SmartAPI NFO)
 // ---------------------------------------------------------------------------
