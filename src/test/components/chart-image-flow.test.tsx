@@ -156,6 +156,22 @@ describe('chart image research flow', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('shows the charted-stock self-check line on the reading card', async () => {
+    chartResponse = chartScreen({
+      selfCheck: {
+        status: 'checked', symbol: 'RELIANCE', matched: 2, total: 3, repaired: true,
+        line: 'Checked against RELIANCE: matches 2 of 3 conditions',
+      },
+    });
+    render(<AiCopilotDock strategy={chartTemplate()} />);
+    attachFile(pngFile());
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    const card = await screen.findByRole('article', { name: 'Chart reading' });
+    expect(within(card).getByText('Checked against RELIANCE: matches 2 of 3 conditions')).toBeTruthy();
+    expect(requestScan).not.toHaveBeenCalled();
+  });
+
   it('attaches a pasted image and a dropped image', async () => {
     render(<AiCopilotDock strategy={chartTemplate()} />);
     fireEvent.paste(screen.getByLabelText('Research request'), {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { StrategyAST } from '../shared/strategy/types';
-import { ChartObservationsSchema, parseResearchChatResponse, type ResearchChatResponse } from '../shared/contracts/research-chat';
+import { ChartObservationsSchema, ChartSelfCheckSchema, parseResearchChatResponse, type ResearchChatResponse } from '../shared/contracts/research-chat';
 import { snapshotStrategy } from './workspace';
 import { ApiError, readJson } from './api';
 
@@ -15,6 +15,7 @@ const ChartReadingSchema = z.object({
   observations: ChartObservationsSchema,
   confidence: z.number().finite().min(0).max(1),
   summary: z.string().max(2000),
+  selfCheck: ChartSelfCheckSchema.optional(),
 }).strict();
 
 export type ChartImageReading = z.infer<typeof ChartReadingSchema>;
@@ -137,6 +138,7 @@ function chartReading(raw: unknown): ChartImageReading | undefined {
     observations: record.observations,
     confidence: record.confidence,
     summary: record.summary,
+    ...(record.selfCheck ? { selfCheck: record.selfCheck } : {}),
   });
 }
 
@@ -185,7 +187,9 @@ export async function requestChartAnalysis(input: ChartAnalysisInput, signal?: A
     rejectAbort = () => reject(controller.signal.reason ?? new DOMException('Request cancelled', 'AbortError'));
     controller.signal.addEventListener('abort', rejectAbort, { once: true });
   });
-  const timer = setTimeout(() => controller.abort(new ApiError('Chart analysis deadline exceeded. No result was confirmed.', 'CLIENT_DEADLINE')), 90000);
+  // Two vision passes plus one deterministic self-check repair can exceed 90 s
+  // on a free model; the server still bounds each provider call independently.
+  const timer = setTimeout(() => controller.abort(new ApiError('Chart analysis deadline exceeded. No result was confirmed.', 'CLIENT_DEADLINE')), 180000);
   try {
     if (controller.signal.aborted) throw controller.signal.reason;
     const work = (async () => {

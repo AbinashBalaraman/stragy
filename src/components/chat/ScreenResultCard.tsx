@@ -129,7 +129,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
               {result.succeeded > 0 ? (result.matched + (result.matched === 1 ? ' match' : ' matches')) : 'Matches unknown'}
             </h4>
             {result.succeeded > 0 ? (
-              <p className="text-sm text-neutral-300">{result.matched} matches in successfully evaluated stocks.</p>
+              result.matched === 0 ? <p className="text-sm text-neutral-300">No stock meets all conditions today.</p> : null
             ) : (
               <p className="text-sm text-neutral-300">No successful data coverage. Matches are unknown, not zero.</p>
             )}

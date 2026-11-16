@@ -356,6 +356,8 @@ export interface ProviderRequest {
   maxRequestBodyBytes?: number;
   /** Optional output-token override, bounded by AI_LIMITS.maxOutputTokens. */
   maxOutputTokens?: number;
+  /** Optional sampling temperature; chart analysis asks for deterministic 0. */
+  temperature?: number;
   /** Optional OpenAI-compatible reasoning effort hint (used for slower reasoning vision models). */
   reasoningEffort?: 'low' | 'medium' | 'high';
 }
@@ -421,7 +423,7 @@ export function buildProviderPayload(cfg: AIRuntimeConfig, req: ProviderRequest)
       contents: [{ role: 'user', parts: [{ text: req.user }, ...images.map(image => ({ inline_data: { mime_type: image.mimeType, data: image.base64 } }))] }],
       generationConfig: {
         maxOutputTokens,
-        temperature: 0.2,
+        temperature: req.temperature ?? 0.2,
         ...(req.json ? { responseMimeType: 'application/json' } : {}),
       },
     };
@@ -443,7 +445,7 @@ export function buildProviderPayload(cfg: AIRuntimeConfig, req: ProviderRequest)
     payload = {
       model: cfg.model,
       messages: [{ role: 'system', content: req.system }, { role: 'user', content: userContent }],
-      temperature: 0.2,
+      temperature: req.temperature ?? 0.2,
       ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
       ...(cfg.provider === 'openai' ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens }),
       ...(req.json ? { response_format: { type: 'json_object' } } : {}),

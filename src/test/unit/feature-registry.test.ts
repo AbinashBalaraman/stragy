@@ -35,6 +35,7 @@ describe('feature registry', () => {
       expect(feature.api.kind === 'route' ? !!feature.api.path : !!feature.api.action).toBe(true);
       for (const input of feature.inputs) expect(input.key).not.toBe('');
     }
+    expect(getFeature('chart_reading').guide).toBe('docs/agent-guides/chart-to-conditions.md');
   });
 
   it('derives tester defaults and allowed values from the same schemas that validate the hand-off', () => {
@@ -177,6 +178,21 @@ describe('copilot feature setup', () => {
     expect(MarketScannerInputSchema.safeParse({
       universe: scan.setup.universe, strategy: scan.setup.strategy, limit: scan.setup.limit,
     }).success).toBe(true);
+  });
+
+  it('fills a scanner RSI entry and keeps the exit clause out of scan conditions', () => {
+    const response = resolveFeatureSetup({
+      message: 'Screen Nifty 50 stocks where RSI is below 30; exit when RSI is above 70',
+      currentStrategy: base(),
+    }, { now: NOW });
+    expect(response.status).toBe('ready');
+    if (response.status !== 'ready' || response.setup.feature !== 'market_scanner') throw new Error('Expected scanner prefill');
+    expect(response.setup.strategy.rules.entry[0]).toMatchObject({ operator: 'lt', rightValue: 30 });
+    // Scanner exits are the workspace placeholders; the stated exit is a backtest assumption only.
+    expect(response.setup.strategy.rules.exit).toEqual(base().rules.exit);
+    expect(response.setup.assumptions.join(' ')).toMatch(/exit clause noted for a later backtest/i);
+    expect(response.setup.assumptions.join(' ')).toMatch(/scans evaluate entry conditions only/i);
+    expect(response.setup.assumptions.join(' ')).not.toMatch(/which nse stock/i);
   });
 
   it('asks one question for a missing symbol or unsupported wording', () => {

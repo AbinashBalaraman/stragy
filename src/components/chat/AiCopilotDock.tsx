@@ -8,6 +8,7 @@ import { assertProposalCurrent, parseStrategyProposal, type StrategyProposal } f
 import { requestScan, type RunRequestOptions, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
 import { requestFeatureSetup } from '../../client/featureSetup';
+import { FEATURE_PREFILL_EVENT, parseFeaturePrefill, publishFeaturePrefill } from '../../client/featureHandoff';
 import { readPreferences, rememberPreference } from '../../client/preferences';
 import { getSymbolById } from '../../shared/data/symbols';
 import { prepareChartImage, requestChartAnalysis, CHART_IMAGE_ACCEPT, type ChartAnalysisResponse, type ChartImageAttachment, type ChartImageReading } from '../../client/chartAnalysis';
@@ -73,11 +74,25 @@ const ARCHIVE_KEY = 'stragy_copilot_previous_conversation_v1';
 
 /** Only explicit rule sentences enter the async feature-setup call path. */
 function wantsFeatureSetup(text: string): boolean {
-  const explicitRules = /\brsi\b/i.test(text)
+  // Both feature surfaces accept rules. A scanner sentence must not be treated
+  // as a stock-specific chat request, and a tester sentence must not lose its
+  // explicit entry/exit rules.
+  const asksTester = /\b(?:backtest|strategy\s+tester|test\s+(?:this|the)\s+strategy|run\s+(?:this|the)\s+strategy)\b/i.test(text);
+  // Simple "screen/find Nifty 50 ..." sentences stay in research chat so the
+  // server's deterministic planner returns a ScreenResultCard. Only an explicit
+  // request to open the market scanner hands the setup to the scanner page.
+  const asksScanner = /\b(?:open|use|go\s+to)\b[^.;\n]{0,30}\b(?:market\s+)?scanner\b/i.test(text)
+    || /\b(?:market\s+scanner)\b/i.test(text);
+  if (!asksTester && !asksScanner) return false;
+
+  const rsiRule = /\brsi\b/i.test(text)
     && /(?:below|above|under|over|less\s+than|greater\s+than|<|>)/i.test(text)
     && /\d/.test(text);
-  const asksTester = /\b(?:backtest|strategy\s+tester|test\s+(?:this|the)\s+strategy|run\s+(?:this|the)\s+strategy)\b/i.test(text);
-  return explicitRules && asksTester;
+  const averageRule = /\b(?:sma|ema)\s*\d{1,3}\b/i.test(text)
+    && /\b(?:cross(?:es|ed|ing)?|above|below)\b/i.test(text);
+  const breakoutRule = /\b(?:breakout|breaks?\s+(?:out\s+)?(?:above|over)|closes?\s+(?:above|over))\b/i.test(text)
+    && /\b\d{1,3}[- ]?(?:day|bar|period|session)?\s*high\b/i.test(text);
+  return rsiRule || averageRule || breakoutRule;
 }
 
 function loadMessages(key: string): ChatMessage[] {
@@ -219,6 +234,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   const reviewRef = useRef<BacktestReview | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const imageGeneration = useRef(0);
   const snapshot = JSON.stringify(strategy);
   const full = variant === 'full';
@@ -279,6 +295,19 @@ export const AiCopilotDock: React.FC<Props> = ({
     const saved = saveMessages(HISTORY_KEY, messages);
     setHistoryStatus(saved ? 'History stays in this browser.' : 'History was not saved: browser storage is unavailable.');
   }, [messages]);
+
+  // X-3: "Describe in chat" hands over a validated ChatDraft. Fill the composer
+  // and focus it; never send automatically.
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const prefill = parseFeaturePrefill((event as CustomEvent).detail);
+      if (!prefill || prefill.feature !== 'chat_draft') return;
+      setPrompt(prefill.prompt);
+      setTimeout(() => promptRef.current?.focus(), 0);
+    };
+    window.addEventListener(FEATURE_PREFILL_EVENT, receive);
+    return () => window.removeEventListener(FEATURE_PREFILL_EVENT, receive);
+  }, []);
 
   useEffect(() => {
     if ((newConversationSignal ?? 0) !== seenNewChat.current) {
@@ -804,6 +833,7 @@ export const AiCopilotDock: React.FC<Props> = ({
         return true;
       }
       if (data.setup.feature === 'market_scanner') {
+        publishFeaturePrefill(data.setup);
         append('assistant', 'I filled a ' + data.setup.universe + ' scan setup. Open Market scanner to review it; nothing has been run.');
         return true;
       }
@@ -1354,6 +1384,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                 {dragActive && <p className="mb-1 px-1 text-xs text-sky-200">Drop a chart image to attach it.</p>}
                 <textarea
                   id="copilot-prompt"
+                  ref={promptRef}
                   rows={2}
                   maxLength={4000}
                   value={prompt}

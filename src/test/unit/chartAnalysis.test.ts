@@ -135,11 +135,11 @@ describe('chart analysis transport', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('bounds a stalled request at 90 seconds', async () => {
+  it('bounds a stalled request at 180 seconds, leaving room for the self-check repair', async () => {
     vi.useFakeTimers();
     fetchMock.mockReturnValue(new Promise(() => {}));
     const result = requestChartAnalysis({ image: dataUrl(), currentStrategy: chartTemplate() }).catch(error => error);
-    await vi.advanceTimersByTimeAsync(90001);
+    await vi.advanceTimersByTimeAsync(180001);
     expect(await result).toMatchObject({ code: 'CLIENT_DEADLINE' });
     expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
   });

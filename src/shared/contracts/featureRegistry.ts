@@ -242,6 +242,8 @@ export interface FeatureDefinition {
   api: { kind: 'route' | 'action'; method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; path?: string; action?: string };
   /** Words the copilot uses to pick this feature. */
   triggers: string[];
+  /** Repo-relative agent guide that defines how this feature must be planned. */
+  guide?: string;
 }
 
 function jsonNode(schema: z.ZodType): JsonSchemaNode {
@@ -349,6 +351,7 @@ export const FEATURE_REGISTRY: FeatureDefinition[] = [
     limits: ['Images are interpreted, never forecast; low confidence is labelled.', 'A valid workspace strategy is required to preserve exits, risk and costs.', DELAYED_DATA_LIMIT, NO_ORDERS],
     api: { kind: 'route', method: 'POST', path: '/api/v2/chart-analysis' },
     triggers: ['chart', 'image', 'screenshot', 'upload', 'setup like this chart'],
+    guide: 'docs/agent-guides/chart-to-conditions.md',
   },
   {
     id: 'live_quotes',

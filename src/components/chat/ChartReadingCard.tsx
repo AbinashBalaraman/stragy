@@ -83,6 +83,20 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
         </p>
       )}
 
+      {reading.selfCheck && (
+        <p
+          role="status"
+          className={
+            'rounded-lg border px-3 py-2 text-xs leading-5 '
+            + (reading.selfCheck.status === 'checked' && reading.selfCheck.matched === reading.selfCheck.total
+              ? 'border-emerald-400/30 bg-emerald-400/5 text-emerald-100'
+              : 'border-neutral-500/30 bg-white/[0.03] text-neutral-300')
+          }
+        >
+          {reading.selfCheck.line}
+        </p>
+      )}
+
       <section aria-label="Chart conditions">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Conditions to test</h4>

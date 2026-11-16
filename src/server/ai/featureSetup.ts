@@ -175,6 +175,7 @@ function buildIntentStrategy(
   symbol: { symbolId: number; ticker: string },
   intent: StrategyIntent,
   preferences: UserPreferences,
+  includeExit: boolean,
 ): { strategy: StrategyAST; assumptions: string[] } {
   const next = applyPreferences(base, preferences);
   next.universe = {
@@ -191,35 +192,42 @@ function buildIntentStrategy(
   if (intent.kind === 'rsi') {
     const rsiId = ensureIndicator(next, 'RSI', { period: intent.period }, 'rsi' + intent.period);
     entry = { leftIndicator: rsiId, operator: 'lt', rightValue: intent.entry };
-    if (intent.exit !== null) exit = [{ leftIndicator: rsiId, operator: 'gt', rightValue: intent.exit }];
-    next.name = truncateAtWord('RSI ' + intent.entry + (intent.exit !== null ? '/' + intent.exit : '') + ' · ' + symbol.ticker, 70);
+    if (includeExit && intent.exit !== null) exit = [{ leftIndicator: rsiId, operator: 'gt', rightValue: intent.exit }];
+    next.name = truncateAtWord(includeExit
+      ? 'RSI ' + intent.entry + (intent.exit !== null ? '/' + intent.exit : '') + ' · ' + symbol.ticker
+      : 'RSI below ' + intent.entry + ' · ' + symbol.ticker, 70);
     next.description = 'Chat-filled setup: buy when RSI(' + intent.period + ') is below ' + intent.entry + (intent.exit !== null ? ', sell when RSI(' + intent.period + ') is above ' + intent.exit : '') + '.';
     assumptions.push('Entry: RSI(' + intent.period + ') is below ' + intent.entry + ' on the current completed daily bar.');
-    if (intent.exit !== null) assumptions.push('Exit: RSI(' + intent.period + ') is above ' + intent.exit + ' on the current completed daily bar.');
+    if (includeExit && intent.exit !== null) assumptions.push('Exit: RSI(' + intent.period + ') is above ' + intent.exit + ' on the current completed daily bar.');
+    if (!includeExit && intent.exit !== null) assumptions.push('Exit clause noted for a later backtest: RSI(' + intent.period + ') above ' + intent.exit + '. Scans evaluate entry conditions only; the workspace exit rules are preserved.');
   } else if (intent.kind === 'ma_cross') {
     const fastId = ensureIndicator(next, intent.fast.type, { period: intent.fast.period }, 'ma' + intent.fast.period);
     const slowId = ensureIndicator(next, intent.slow.type, { period: intent.slow.period }, 'ma' + intent.slow.period);
     entry = { leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesAbove' : 'crossesBelow', rightIndicator: slowId };
     // The inverse cross is the symmetric default exit for a crossover strategy.
-    exit = [{ leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesBelow' : 'crossesAbove', rightIndicator: slowId }];
+    if (includeExit) exit = [{ leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesBelow' : 'crossesAbove', rightIndicator: slowId }];
     next.name = truncateAtWord(intent.fast.type + ' ' + intent.fast.period + ' / ' + intent.slow.type + ' ' + intent.slow.period + ' crossover · ' + symbol.ticker, 70);
     next.description = 'Chat-filled setup: ' + intent.fast.type + '(' + intent.fast.period + ') crosses ' + intent.direction + ' ' + intent.slow.type + '(' + intent.slow.period + '), exit on the opposite cross.';
     assumptions.push('Entry: ' + intent.fast.type + '(' + intent.fast.period + ') crosses ' + intent.direction + ' ' + intent.slow.type + '(' + intent.slow.period + ') on the current completed daily bar.');
-    assumptions.push('Exit: the opposite crossover (' + intent.fast.type + '(' + intent.fast.period + ') crosses ' + (intent.direction === 'above' ? 'below' : 'above') + ' ' + intent.slow.type + '(' + intent.slow.period + ')).');
+    assumptions.push(includeExit
+      ? 'Exit: the opposite crossover (' + intent.fast.type + '(' + intent.fast.period + ') crosses ' + (intent.direction === 'above' ? 'below' : 'above') + ' ' + intent.slow.type + '(' + intent.slow.period + ')).'
+      : 'Exit clause noted for a later backtest: the opposite crossover. Scans evaluate entry conditions only; the workspace exit rules are preserved.');
   } else if (intent.kind === 'breakout') {
     const highId = ensureIndicator(next, 'HIGHEST', { period: intent.period }, 'high' + intent.period);
     entry = { leftIndicator: 'close', operator: 'crossesAbove', rightIndicator: highId };
     next.name = truncateAtWord(intent.period + '-day high breakout · ' + symbol.ticker, 70);
     next.description = 'Chat-filled setup: buy when close crosses above the highest high of the previous ' + intent.period + ' completed bars.';
     assumptions.push('Entry: close crosses above the highest high of the previous ' + intent.period + ' completed bars (the current bar is excluded).');
-    assumptions.push('Exit: the workspace exit rules are preserved; add an explicit sell rule if you want a different exit.');
+    assumptions.push(includeExit
+      ? 'Exit: the workspace exit rules are preserved; add an explicit sell rule if you want a different exit.'
+      : 'Scans evaluate entry conditions only; the workspace exit rules are preserved for a later backtest.');
   } else {
     const maId = ensureIndicator(next, intent.type, { period: intent.period }, 'ma' + intent.period);
     entry = { leftIndicator: 'close', operator: intent.direction === 'above' ? 'gt' : 'lt', rightIndicator: maId };
     next.name = truncateAtWord('Close ' + intent.direction + ' ' + intent.type + ' ' + intent.period + ' · ' + symbol.ticker, 70);
     next.description = 'Chat-filled setup: buy when close is ' + intent.direction + ' ' + intent.type + '(' + intent.period + ').';
     assumptions.push('Entry: close is ' + intent.direction + ' ' + intent.type + '(' + intent.period + ') on the current completed daily bar.');
-    assumptions.push('Exit: the workspace exit rules are preserved.');
+    assumptions.push(includeExit ? 'Exit: the workspace exit rules are preserved.' : 'Scans evaluate entry conditions only; the workspace exit rules are preserved for a later backtest.');
   }
 
   next.rules = { entry: [entry], exit: exit ?? next.rules.exit };
@@ -293,7 +301,7 @@ export function resolveFeatureSetup(raw: unknown, options: FeatureSetupOptions =
   }
   const base = input.currentStrategy ?? STRATEGY_TEMPLATES[0].strategy;
   const symbol = resolveSymbol(message, preferences) ?? (featureId === 'market_scanner'
-    ? { symbolId: base.universe.symbolId, ticker: base.universe.ticker ?? 'NIFTY 50' }
+    ? { symbolId: base.universe.symbolId, ticker: base.universe.ticker ?? 'Nifty 50' }
     : null);
   if (!symbol) {
     const ambiguous = ambiguousSymbol(message);
@@ -305,7 +313,7 @@ export function resolveFeatureSetup(raw: unknown, options: FeatureSetupOptions =
   if (featureId === 'strategy_tester' && (intent.kind === 'breakout' || intent.kind === 'price_ma') && base.rules.exit.length === 0) {
     return needsInput(featureId, 'What exact exit rule should I use with this entry? For example: close below SMA 20.', []);
   }
-  const built = buildIntentStrategy(base, symbol, intent, preferences);
+  const built = buildIntentStrategy(base, symbol, intent, preferences, featureId === 'strategy_tester');
   const validated = validateStrategy(built.strategy);
   if (!validated.success || !validated.data) {
     return needsInput(featureId, 'The filled strategy did not pass validation: ' + (validated.errors?.[0] ?? 'unknown rule error') + '. What should I change?', built.assumptions);

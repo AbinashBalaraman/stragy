@@ -66,6 +66,8 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
       return `Supertrend (${ind.params.period || 10}, ${ind.params.multiplier || 3}x)`;
     case 'ATR':
       return `ATR (${ind.params.period || 14})`;
+    case 'HIGHEST':
+      return `Highest high of previous ${ind.params.period || 20} bars`;
     case 'BBANDS':
       return `Bollinger Bands (${ind.params.period || 20}, ${ind.params.stdDev || 2}σ)`;
     case 'MACD':

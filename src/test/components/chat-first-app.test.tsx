@@ -172,7 +172,7 @@ describe('chat-first application shell', () => {
 
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Find Nifty 50 RSI oversold now after recently overbought' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
-    await screen.findByText('1 matches in successfully evaluated stocks.');
+    await screen.findByLabelText('Screen results');
 
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'backtest this on RELIANCE' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
@@ -227,7 +227,7 @@ describe('chat-first application shell', () => {
 
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Find Nifty 50 RSI oversold now after recently overbought' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
-    await screen.findByText('1 matches in successfully evaluated stocks.');
+    await screen.findByLabelText('Screen results');
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'backtest this on RELIANCE' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
     await screen.findByRole('article', { name: 'Backtest review' });

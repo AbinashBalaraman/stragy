@@ -7,6 +7,7 @@ import {
 const indicators: IndicatorConfig[] = [
   { id: 'rsi14', type: 'RSI', params: { period: 14 } },
   { id: 'vol_sma_20', type: 'VOLUME_SMA', params: { period: 20 } },
+  { id: 'high20', type: 'HIGHEST', params: { period: 20 } },
 ];
 
 describe('screen evidence presentation', () => {
@@ -23,6 +24,7 @@ describe('screen evidence presentation', () => {
     expect(formatIndicatorValue('Volume avg 20d', 9_789_303.8)).toBe('97.9 L');
     expect(formatIndicatorValue('Volume avg 20d', 12_500_000)).toBe('1.3 Cr');
     expect(getIndicatorLabel('vol_sma_20', indicators)).toBe('Volume avg 20d');
+    expect(getIndicatorLabel('high20', indicators)).toBe('Highest high of previous 20 bars');
   });
 
   it('describes the missing screen condition in plain words with its current value', () => {

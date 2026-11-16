@@ -42,6 +42,41 @@ it('keeps plain stock questions in conversation instead of hijacking them as scr
  expect(fetch).not.toHaveBeenCalled();
 });
 
+it('routes both audited RSI screen phrasings through the deterministic scanner with no provider call',async()=>{
+ for(const message of ['Screen Nifty 50 for RSI below 30','Find Nifty 50 stocks with RSI(14) below 30']){
+  const fetch=vi.fn();
+  const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'},fetch});
+  expect(out.kind).toBe('screen');
+  if(out.kind!=='screen')throw Error('Screen absent');
+  expect(out.method).toBe('rule_parser');
+  expect(out.provider.aiGenerated).toBe(false);
+  expect(out.universe).toBe('NIFTY_50');
+  expect(out.message).toBe('Scanning Nifty 50 for RSI below 30. Nothing is changed or run.');
+  expect(out.strategy.name).toBe('RSI below 30 · Nifty 50');
+  expect(out.strategy.rules.entry[0]).toMatchObject({operator:'lt',rightValue:30});
+  expect(out.strategy.rules.exit).toEqual(validStrategy().rules.exit);
+  expect(out.assumptions.join(' ')).toContain('Workspace exits');
+  expect(fetch).not.toHaveBeenCalled();
+ }
+});
+
+it('retries a failed external screen planner once with a shorter prompt and a full output budget',async()=>{
+ const message='Screen Nifty 50 for a rare divergence pattern';
+ const fetch=vi.fn()
+  .mockResolvedValueOnce(fakeResponse({status:500,body:{error:{message:'Provider reached its output limit before returning text.'}}}))
+  .mockResolvedValueOnce(fakeResponse({body:openAIBody(JSON.stringify({strategy:validStrategy(),assumptions:['Retry plan.']}))}));
+ const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-screen-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ expect(out.kind).toBe('screen');
+ expect(out.method).toBe('external_ai');
+ expect(fetch).toHaveBeenCalledTimes(2);
+ const first=JSON.parse(fetch.mock.calls[0][1].body);
+ const second=JSON.parse(fetch.mock.calls[1][1].body);
+ expect(first.max_completion_tokens).toBe(12000);
+ expect(first.temperature).toBe(0);
+ expect(second.messages[0].content.length).toBeLessThan(first.messages[0].content.length);
+ expect(second.messages[1].content).not.toContain('history');
+});
+
 it('still treats an explicit screening verb plus stock topic as a screen request',async()=>{
  for(const message of ['show me Nifty 50 stocks with RSI oversold after recently overbought','find Nifty 50 stocks with RSI 14 oversold after recently overbought']){
   const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
