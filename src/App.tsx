@@ -5,7 +5,7 @@ import { loadWorkspaceState, saveWorkspaceWithLock, snapshotStrategy, RequestOwn
 import { readStrategyLibrary, commitStrategyLibrary } from './client/strategyLibrary';
 import { scannerBacktestOptions } from './components/scanner/scannerRequestContext';
 import { requestBacktest } from './client/api';
-import type { RunRequestOptions } from './client/api';
+import type { ResearchPhase, RunRequestOptions } from './client/api';
 import { rerunRequestOptions } from './client/rerun';
 import { useLiveQuoteStatus } from './client/liveQuotes';
 import { AppShell, type AppView } from './components/layout/AppShell';
@@ -23,6 +23,8 @@ import { buildChatDraft, type ScannerPrefill, type TesterPrefill, type UserPrefe
 
 export default function App() {
   const [activeView, setActiveView] = useState<AppView>('chat');
+  const activeViewRef = useRef<AppView>('chat');
+  activeViewRef.current = activeView;
   const [newConversationSignal, setNewConversationSignal] = useState(0);
   const [symbols, setSymbols] = useState<SymbolMeta[]>([]);
   const [dataMode, setDataMode] = useState<'real' | 'demo' | 'unknown'>('unknown');
@@ -40,6 +42,7 @@ export default function App() {
   const [previousStrategy, setPreviousStrategy] = useState<StrategyAST | null>(null);
   const [comparisonResults, setComparisonResults] = useState<BacktestResponse[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [runPhase, setRunPhase] = useState<ResearchPhase | null>(null);
   const [runError, setRunError] = useState('');
   const [saveStatus, setSaveStatus] = useState('Saving');
   const [workspaceConflict, setWorkspaceConflict] = useState(false);
@@ -48,8 +51,14 @@ export default function App() {
   const [scannerPrefill, setScannerPrefill] = useState<ScannerPrefill | null>(null);
   /** Result inspected in the side sheet; null keeps the sheet closed. */
   const [detailsResult, setDetailsResult] = useState<BacktestResponse | null>(null);
+  /** A run that finished while the user was elsewhere; offered, never forced. */
+  const [runReady, setRunReady] = useState<BacktestResponse | null>(null);
   const owner = useRef(new RequestOwner());
   const controller = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (activeView === 'results' && runReady) setRunReady(null);
+  }, [activeView, runReady]);
 
   useEffect(() => {
     // Reloading or mounting the persisted workspace is not an edit: saving it
@@ -180,13 +189,21 @@ export default function App() {
     controller.current = new AbortController();
     const id = owner.current.begin();
     setIsLoading(true);
+    setRunPhase('preparing');
     setRunError('');
     try {
-      const result = await requestBacktest(snapshot, controller.current.signal, options);
+      const result = await requestBacktest(snapshot, controller.current.signal, options, phase => {
+        if (owner.current.owns(id)) setRunPhase(phase);
+      });
       if (!owner.current.owns(id)) return null;
       setBacktestResult(result);
       setRunDraftSignature(inputSignature);
-      if (switchToResults) setActiveView('results');
+      if (switchToResults) {
+        // Only take over the view the user is actually on. If they moved away
+        // while the run was in flight, offer the result instead of yanking them.
+        if (activeViewRef.current === 'builder') setActiveView('results');
+        else if (activeViewRef.current !== 'results') setRunReady(result);
+      }
       return result;
     } catch (error) {
       if (owner.current.owns(id)) {
@@ -195,7 +212,10 @@ export default function App() {
       }
       return null;
     } finally {
-      if (owner.current.owns(id)) setIsLoading(false);
+      if (owner.current.owns(id)) {
+        setIsLoading(false);
+        setRunPhase(null);
+      }
     }
   };
 
@@ -373,6 +393,7 @@ export default function App() {
             onChange={changeStrategy}
             onRunBacktest={handleRunBacktest}
             isLoading={isLoading}
+            runPhase={runPhase}
             symbols={symbols}
             onSymbolChange={handleSymbolChange}
             showReferencePrices={dataMode === 'demo'}
@@ -432,6 +453,30 @@ export default function App() {
       {activeView === 'settings' && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ProviderSettings />
+        </div>
+      )}
+
+      {runReady && (
+        <div
+          role="status"
+          className="fixed bottom-4 right-4 z-40 flex max-w-[calc(100vw-2rem)] flex-wrap items-center gap-2 rounded-[var(--r-inner)] border border-[var(--line-strong)] bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text-2)] shadow-lg shadow-black/30"
+        >
+          <span className="text-[var(--text-1)]">Backtest ready</span>
+          <button
+            type="button"
+            onClick={() => { setActiveView('results'); setRunReady(null); }}
+            className="inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1 text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] sm:min-h-8"
+          >
+            View
+          </button>
+          <button
+            type="button"
+            onClick={() => setRunReady(null)}
+            aria-label="Dismiss backtest ready notice"
+            className="inline-flex min-h-11 items-center rounded-[var(--r-btn)] px-2 py-1 text-[var(--text-3)] hover:bg-white/5 hover:text-[var(--text-1)] sm:min-h-8"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

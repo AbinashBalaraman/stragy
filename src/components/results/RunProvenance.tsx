@@ -1,7 +1,7 @@
 import React from 'react';
 import type { BacktestResponse } from '../../shared/strategy/types';
 import { formatDate, formatDateTime } from '../../shared/format';
-import { ChevronRight } from 'lucide-react';
+import { Disclosure } from '../common/Disclosure';
 
 const record = (input: unknown): Record<string, unknown> =>
   input !== null && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
@@ -32,19 +32,8 @@ export function RunProvenance({ result }: { result: BacktestResponse }) {
   const summary = `${sourceLabel(data.source)} · ${datasetRange} · ${freshness} · verification not implied`;
 
   return (
-    <details className="group rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#171719]/60">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-2.5 text-xs [&::-webkit-details-marker]:hidden">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" aria-hidden="true" />
-          <span className="truncate text-[rgba(236,236,237,0.7)]" title={summary}>{summary}</span>
-        </span>
-        <span className="flex shrink-0 items-center gap-1 font-medium text-[#a8c7fa]">
-          Details
-          <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-        </span>
-      </summary>
-
-      <div className="space-y-3 border-t border-[rgba(236,236,237,0.08)] px-3.5 py-3 text-xs leading-relaxed text-[rgba(236,236,237,0.7)]">
+    <Disclosure summary={<span title={summary}>{summary}</span>}>
+      <div className="space-y-3 leading-relaxed">
         <p>
           <strong className="font-semibold text-[#ececed]">Source:</strong> {text(data.source)}
           {' · '}<strong className="font-semibold text-[#ececed]">As of:</strong> {formatDate(data.asOf as string | undefined)}
@@ -88,6 +77,6 @@ export function RunProvenance({ result }: { result: BacktestResponse }) {
           </dl>
         </details>
       </div>
-    </details>
+    </Disclosure>
   );
 }

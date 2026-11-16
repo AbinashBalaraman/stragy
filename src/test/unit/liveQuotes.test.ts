@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LIVE_QUOTE_POLL_MS,
   fetchLiveQuotes,
   normalizeQuoteSymbolIds,
   useLiveQuotes,
+  useLiveQuoteStatus,
 } from '../../client/liveQuotes';
 
 const quote = (symbolId: number, ltp = 100 + symbolId, changePercent = 0.5) => ({
@@ -53,6 +54,14 @@ afterEach(() => {
 });
 
 describe('live quote client', () => {
+  it('marks a failed first status check instead of looking merely unconfigured', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
+    const { result } = renderHook(() => useLiveQuoteStatus(true));
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    expect(result.current.loading).toBe(false);
+    expect(result.current.connected).toBe(false);
+  });
+
   it('deduplicates and bounds ids to ten', () => {
     expect(normalizeQuoteSymbolIds([1, 1, 2, -1, 1.5, 3, 4, 5, 6, 7, 8, 9, 10, 11])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });

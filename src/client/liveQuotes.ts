@@ -30,6 +30,8 @@ export interface LiveQuotesSnapshot {
   reason: string | null;
   fetchedAt: string | null;
   source: 'ANGEL_SMARTAPI' | null;
+  /** True only when a completed request failed (network, HTTP, malformed). */
+  failed: boolean;
 }
 
 export interface LiveQuotesHookState extends LiveQuotesSnapshot {
@@ -46,6 +48,8 @@ export interface LiveQuoteStatus {
    * never flip it back to a checking state.
    */
   loading: boolean;
+  /** True when the last completed request failed; the footer must not claim data. */
+  failed: boolean;
 }
 
 const quoteSchema = z.object({
@@ -73,7 +77,7 @@ const responseSchema = z.object({
   reason: z.object({ code: z.string(), message: z.string() }).optional(),
 }).passthrough();
 
-const emptySnapshot = (reason: string | null = null): LiveQuotesSnapshot => ({
+const emptySnapshot = (reason: string | null = null, failed = false): LiveQuotesSnapshot => ({
   quotes: [],
   configured: false,
   available: false,
@@ -81,6 +85,7 @@ const emptySnapshot = (reason: string | null = null): LiveQuotesSnapshot => ({
   reason,
   fetchedAt: null,
   source: null,
+  failed,
 });
 
 /** Dedupe, validate and bound quote ids before they reach the API. */
@@ -106,12 +111,12 @@ export async function fetchLiveQuotes(symbolIds: number[], signal?: AbortSignal)
       signal,
       headers: { Accept: 'application/json' },
     });
-    if (!response.ok) return emptySnapshot('Live quotes request failed (' + response.status + ').');
+    if (!response.ok) return emptySnapshot('Live quotes request failed (' + response.status + ').', true);
     let raw: unknown;
     try { raw = await response.json(); }
-    catch { return emptySnapshot('Live quotes response was not valid JSON.'); }
+    catch { return emptySnapshot('Live quotes response was not valid JSON.', true); }
     const parsed = responseSchema.safeParse(raw);
-    if (!parsed.success) return emptySnapshot('Live quotes response was invalid.');
+    if (!parsed.success) return emptySnapshot('Live quotes response was invalid.', true);
     const quotes = parsed.data.quotes.filter(quote => ids.includes(quote.symbolId));
     const connected = parsed.data.configured && parsed.data.available && quotes.length > 0;
     return {
@@ -122,10 +127,11 @@ export async function fetchLiveQuotes(symbolIds: number[], signal?: AbortSignal)
       reason: parsed.data.reason?.message ?? (parsed.data.configured ? null : 'Live quotes are not configured.'),
       fetchedAt: parsed.data.fetchedAt,
       source: parsed.data.source,
+      failed: false,
     };
   } catch (error) {
     if (signal?.aborted) return emptySnapshot('Live quotes request was cancelled.');
-    return emptySnapshot(error instanceof Error ? error.message : 'Live quotes are unavailable.');
+    return emptySnapshot(error instanceof Error ? error.message : 'Live quotes are unavailable.', true);
   }
 }
 
@@ -205,6 +211,7 @@ export function useLiveQuoteStatus(enabled = true): LiveQuoteStatus {
     fetchedAt: state.fetchedAt,
     // Unknown, not "not live": the first request has not produced any result yet.
     loading: state.loading && state.fetchedAt === null && state.reason === null,
+    failed: state.failed,
   };
 }
 

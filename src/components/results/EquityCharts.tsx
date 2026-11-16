@@ -36,26 +36,26 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
 
   return (
     <div className={`grid gap-5 ${layoutMode === 'grid' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
-      <div className="space-y-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:p-5">
-        <div className="flex flex-col justify-between gap-2 border-b border-[rgba(236,236,237,0.08)] pb-3.5 sm:flex-row sm:items-center">
+      <div className="space-y-4 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
+        <div className="flex flex-col justify-between gap-2 border-b border-[var(--line)] pb-3 sm:flex-row sm:items-center">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-semibold text-[#ececed] sm:text-base">Portfolio equity vs benchmark</h3>
-              <span className="rounded border border-[rgba(168,199,250,0.25)] bg-[rgba(168,199,250,0.1)] px-2 py-0.5 font-mono text-[10px] font-semibold text-[#a8c7fa] sm:text-xs">
+              <h3 className="st-title font-semibold text-[var(--text-1)]">Portfolio equity vs benchmark</h3>
+              <span className="st-meta rounded bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-2)]">
                 {totalStrategyReturn} strategy
               </span>
             </div>
-            <p className="mt-0.5 text-[11px] text-[rgba(236,236,237,0.52)]">
+            <p className="st-meta mt-0.5 text-[var(--text-3)]">
               Initial {formatINR(capital)} · final {formatINR(lastPoint.equity)}
             </p>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-2 text-[11px] text-[rgba(236,236,237,0.52)]">
-            <span className="flex items-center gap-1 font-mono text-[#a8c7fa]">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 text-[11px] text-[var(--text-3)]">
+            <span className="flex items-center gap-1 text-[var(--text-2)]">
               <TrendingUp className="h-3 w-3" /> Strategy
             </span>
             <span className="text-[rgba(236,236,237,0.25)]">·</span>
-            <span className="flex items-center gap-1 font-mono text-[rgba(236,236,237,0.62)]">
+            <span className="flex items-center gap-1 text-[var(--text-3)]">
               {benchmarkLabel} ({totalBenchmarkReturn})
             </span>
           </div>
@@ -95,14 +95,14 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
               />
               <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
               <Line type="monotone" dataKey="equity" stroke="#a8c7fa" strokeWidth={2.2} dot={false} name="Strategy Equity" />
-              <Line type="monotone" dataKey="benchmarkEquity" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name={benchmarkLabel} />
+              <Line type="monotone" dataKey="benchmarkEquity" stroke="#9a9aa3" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name={benchmarkLabel} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      <div className="space-y-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:p-5">
-        <div className="flex flex-col justify-between gap-2 border-b border-[rgba(236,236,237,0.08)] pb-3.5 sm:flex-row sm:items-center">
+      <div className="space-y-4 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
+        <div className="flex flex-col justify-between gap-2 border-b border-[var(--line)] pb-3 sm:flex-row sm:items-center">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-[#ececed] sm:text-base">Drawdown</h3>
@@ -110,7 +110,7 @@ export const EquityCharts: React.FC<EquityChartsProps> = ({ equityCurve, initial
                 Max {maxDrawdown}
               </span>
             </div>
-            <p className="mt-0.5 text-[11px] text-[rgba(236,236,237,0.52)]">
+            <p className="st-meta mt-0.5 text-[var(--text-3)]">
               Peak-to-trough capital decline during adverse periods
             </p>
           </div>

@@ -114,6 +114,14 @@ describe('strategy tester summary', () => {
     expect(onRunBacktest).toHaveBeenCalledWith({ start: windowStartIso(5) });
   });
 
+  it('shows the real run phase without inventing progress', () => {
+    const view = render(<StrategyBuilder strategy={base()} onChange={vi.fn()} onRunBacktest={vi.fn()} isLoading runPhase="preparing" symbols={[{ id: base().universe.symbolId, ticker: 'RELIANCE', name: 'Reliance Industries', exchange: 'NSE', sector: 'Energy', currentPrice: 1344.8, changePercent: 0.38 }]} />);
+    expect(screen.getByText(/Loading 3 years of RELIANCE daily bars/)).toBeTruthy();
+    expect(screen.queryByText('Simulating…')).toBeNull();
+    view.rerender(<StrategyBuilder strategy={base()} onChange={vi.fn()} onRunBacktest={vi.fn()} isLoading runPhase="running" symbols={[{ id: base().universe.symbolId, ticker: 'RELIANCE', name: 'Reliance Industries', exchange: 'NSE', sector: 'Energy', currentPrice: 1344.8, changePercent: 0.38 }]} />);
+    expect(screen.getByText('Simulating…')).toBeTruthy();
+  });
+
   it('hands off to the copilot instead of editing fields', () => {
     const onDescribeInChat = vi.fn();
     render(<Harness onDescribeInChat={onDescribeInChat} />);

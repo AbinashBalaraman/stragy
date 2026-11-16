@@ -74,7 +74,7 @@ describe('results re-simulation ownership', () => {
   it('re-runs the displayed result instead of the current draft', () => {
     const onReRun = vi.fn();
     render(<ResultsDashboard result={displayed} onReRun={onReRun} isLoading={false} initialTab="trades" />);
-    fireEvent.click(screen.getByRole('button', { name: /Re-Simulate/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Run again/ }));
     expect(onReRun).toHaveBeenCalledTimes(1);
     expect(onReRun).toHaveBeenCalledWith(displayed);
   });

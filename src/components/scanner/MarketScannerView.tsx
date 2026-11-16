@@ -201,7 +201,7 @@ export const UNIVERSE_LIST: UniverseConfig[] = [
   { id: 'ALL', label: 'All configured markets (NSE + BSE)', shortLabel: 'All (NSE+BSE)', category: 'All', description: 'Configured NSE/BSE universe; current membership and partial data coverage', badge: 'NSE + BSE' },
   { id: 'NSE', label: 'Configured NSE Stocks', shortLabel: 'NSE universe', category: 'Exchange', description: 'Configured National Stock Exchange equities; partial coverage', badge: 'NSE' },
   { id: 'BSE', label: 'All BSE Stocks (SENSEX & Large-Caps)', shortLabel: 'All BSE', category: 'Exchange', description: 'Bombay Stock Exchange (BSE) listed equities', badge: 'BSE' },
-  { id: 'NIFTY_50', label: 'Configured NIFTY 50-labelled pool', shortLabel: 'NIFTY 50', category: 'Benchmark & Sector Indices', description: 'Bounded configured pool; current NIFTY 50 membership and count are unverified', badge: 'NIFTY 50' },
+  { id: 'NIFTY_50', label: 'Configured NIFTY 50-labelled pool', shortLabel: 'Nifty 50', category: 'Benchmark & Sector Indices', description: 'Bounded configured pool; current NIFTY 50 membership and count are unverified', badge: 'NIFTY 50' },
   { id: 'BANK_NIFTY', label: 'Bank NIFTY', shortLabel: 'Bank Nifty', category: 'Benchmark & Sector Indices', description: 'Leading private and PSU banking giants', badge: 'BANK' },
   { id: 'NIFTY_IT', label: 'NIFTY IT', shortLabel: 'NIFTY IT', category: 'Benchmark & Sector Indices', description: 'Top technology & software exporters', badge: 'IT' },
   { id: 'NIFTY_AUTO', label: 'NIFTY Auto', shortLabel: 'NIFTY Auto', category: 'Benchmark & Sector Indices', description: 'Leading automotive, 2-wheeler, EV & commercial vehicle OEMs', badge: 'AUTO' },
@@ -238,6 +238,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
   const [moreTabsOpen, setMoreTabsOpen] = useState(false);
   const [scanLimit, setScanLimit] = useState(35);
+  const [scanSlow, setScanSlow] = useState(false);
   const [prefill, setPrefill] = useState<ScannerPrefill | null>(null);
   const appliedPrefill = useRef<ScannerPrefill | null>(null);
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
@@ -352,6 +353,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       if (scanOwner.current.owns(ticket, currentContext.current)) setIsScanning(false);
     }
   };
+
+  // A cold Angel scan is rate-limited; say so after 30s instead of looking stuck.
+  useEffect(() => {
+    if (!isScanning) { setScanSlow(false); return; }
+    const timer = setTimeout(() => setScanSlow(true), 30_000);
+    return () => clearTimeout(timer);
+  }, [isScanning]);
 
   // A chat hand-off fills the universe, cutoff and scan size, then opens the matches.
   useEffect(() => {
@@ -473,6 +481,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                       live prices from Angel One
                     </span>
+                  ) : liveQuotes.loading || initialLoading ? (
+                    <span className="text-neutral-500">checking live prices…</span>
                   ) : (
                     <span className="text-neutral-500">live prices unavailable</span>
                   )}
@@ -656,6 +666,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </div>
       </section>
 
+      {isScanning && scanSlow && (
+        <p role="status" className="st-meta rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-3)]">
+          Still scanning · Angel One allows 2 requests a second
+        </p>
+      )}
+
       {prefill && (
         <PrefillNote
           assumptions={prefill.assumptions}
@@ -679,7 +695,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <div key={column.key} className="overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
                 <div className="flex items-baseline justify-between gap-2 border-b border-white/8 px-4 py-3">
                   <div className="min-w-0">
-                    <h4 className="text-sm font-medium text-neutral-100">{column.title} — {currentUniverseConfig.shortLabel}</h4>
+                    <h3 className="text-sm font-medium text-neutral-100">{column.title} — {currentUniverseConfig.shortLabel}</h3>
                     <p className="mt-0.5 text-[11px] text-neutral-500">{column.subtitle}</p>
                   </div>
                   <span className="shrink-0 font-mono text-[11px] text-neutral-500">{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
@@ -1157,7 +1173,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
           {isScanning ? (
             <div role="status" className="rounded-xl border border-white/8 bg-[#171719] px-4 py-10 text-center text-xs text-neutral-400">
-              Evaluating the entry conditions against {currentUniverseConfig.shortLabel}. Coverage may be partial.
+              <p>Evaluating the entry conditions against {currentUniverseConfig.shortLabel}. Coverage may be partial.</p>
             </div>
           ) : !scanError && scanResult && scanResult.matches.length > 0 ? (
             <ul className="divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-[#171719]">

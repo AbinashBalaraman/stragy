@@ -10,7 +10,8 @@ import { IndianCostWaterfall } from './IndianCostWaterfall';
 import { TradeLogTable } from './TradeLogTable';
 import { StrategyComparisonView, type ComparisonListUpdate } from './StrategyComparisonView';
 import { survivorshipBasis } from './survivorship';
-import { Activity, ShieldCheck, Receipt, List, RefreshCw, Scale, ChevronRight } from 'lucide-react';
+import { Activity } from 'lucide-react';
+import { Disclosure } from '../common/Disclosure';
 
 interface ResultsDashboardProps {
   result: BacktestResponse | null;
@@ -29,12 +30,12 @@ interface ResultsDashboardProps {
 
 type TabId = NonNullable<ResultsDashboardProps['initialTab']>;
 
-const TABS: Array<{ id: TabId; label: string; short: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { id: 'overview', label: 'Overview & charts', short: 'Overview', icon: Activity },
-  { id: 'compare', label: 'Compare variations', short: 'Compare', icon: Scale },
-  { id: 'robustness', label: 'Robustness', short: 'Robustness', icon: ShieldCheck },
-  { id: 'costs', label: 'Costs', short: 'Costs', icon: Receipt },
-  { id: 'trades', label: 'Trade log', short: 'Trades', icon: List },
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: 'overview', label: 'Overview & charts' },
+  { id: 'compare', label: 'Compare variations' },
+  { id: 'robustness', label: 'Robustness' },
+  { id: 'costs', label: 'Costs' },
+  { id: 'trades', label: 'Trade log' },
 ];
 
 export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
@@ -89,66 +90,50 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4 pb-24 sm:space-y-5 sm:p-8">
-      <div className="flex flex-col justify-between gap-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:flex-row sm:items-center sm:p-5">
-        <div className="min-w-0 space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h2 className="text-xl font-semibold tracking-[-0.02em] text-[#ececed] sm:text-2xl">
-              {result.strategy.name}
-            </h2>
-            <span className="rounded border border-[rgba(168,199,250,0.25)] bg-[rgba(168,199,250,0.1)] px-2 py-0.5 font-mono text-[11px] font-semibold text-[#a8c7fa]">
-              {result.symbol.ticker} · {result.strategy.universe.timeframe}
-            </span>
+      <header className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-xl font-semibold tracking-[-0.01em] text-[var(--text-1)]">{result.strategy.name}</h2>
+            <p className="st-meta mt-1 text-[var(--text-3)]">
+              {result.symbol.ticker} · {result.strategy.universe.timeframe} · {result.bars.length} sessions · completed {formatDateTime(result.executedAt)}
+            </p>
           </div>
-          <p className="text-xs text-[rgba(236,236,237,0.52)]">
-            {result.bars.length} sessions · completed {formatDateTime(result.executedAt)}
-          </p>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('compare')}
+              className="rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-2 text-xs font-medium text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
+            >
+              Compare variations ({comparisonCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => onReRun(result)}
+              disabled={isLoading}
+              title="Run again with the displayed result's stored strategy and request window."
+              className="rounded-[var(--r-btn)] bg-[#a8c7fa] px-3 py-2 text-xs font-semibold text-[#101012] transition-colors hover:bg-[#c7dbff] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isLoading ? 'Running…' : 'Run again'}
+            </button>
+          </div>
         </div>
-
-        <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-          <button
-            onClick={() => setActiveTab('compare')}
-            className="flex items-center gap-1.5 rounded-lg border border-[rgba(236,236,237,0.1)] bg-[#1e1e21] px-3.5 py-2 text-xs font-medium text-[#ececed] transition-colors hover:border-[#a8c7fa]/50 hover:bg-[#232326]"
-          >
-            <Scale className="h-3.5 w-3.5 text-[#a8c7fa]" />
-            <span>Compare variations <span className="text-[rgba(236,236,237,0.45)]">({comparisonCount})</span></span>
-          </button>
-          <button
-            onClick={() => onReRun(result)}
-            disabled={isLoading}
-            title="Re-run the displayed result's strategy and stored request window. This does not use the current builder draft."
-            className="btn-primary-mint !px-3.5 !py-2 text-xs"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Re-Simulate</span>
-          </button>
-        </div>
-      </div>
+      </header>
 
       <RunProvenance result={result} />
 
       {survivorship && (
-        <details className="group rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#171719]/60 px-3.5 py-2.5 text-xs">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-            <span className="min-w-0 text-[rgba(236,236,237,0.7)]">
-              Universe-based run: today&apos;s {survivorship.basis} members are used, which overstates past results.
-            </span>
-            <span className="flex shrink-0 items-center gap-1 font-medium text-[#a8c7fa]">
-              Details
-              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-            </span>
-          </summary>
-          <p className="mt-2 leading-relaxed text-[rgba(236,236,237,0.58)]">
+        <Disclosure summary={`Universe-based run: today's ${survivorship.basis} members are used, which overstates past results.`}>
+          <p>
             The screen is built from the current {survivorship.basis} constituent list. Companies removed from the index, or added after a past date, are not represented in that history. Treat this as a screen on surviving names, not a point-in-time universe study.
           </p>
-        </details>
+        </Disclosure>
       )}
 
       <MetricsGrid metrics={result.metrics} />
 
-      <div className="sticky top-0 z-30 -mx-4 border-y border-[rgba(236,236,237,0.08)] bg-[#101012]/95 px-4 py-2 backdrop-blur sm:-mx-8 sm:px-8">
-        <nav aria-label="Result views" className="no-scrollbar flex items-center gap-1 overflow-x-auto text-xs font-medium">
+      <div className="sticky top-0 z-30 -mx-4 border-y border-[var(--line)] bg-[#101012]/95 px-4 py-2 backdrop-blur sm:-mx-8 sm:px-8">
+        <nav aria-label="Result views" className="flex flex-wrap items-center gap-1 text-xs">
           {TABS.map(tab => {
-            const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (
               <button
@@ -157,15 +142,9 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
                 aria-current={active ? 'page' : undefined}
                 aria-label={`${tab.label}${tab.id === 'trades' ? ` (${result.trades.length})` : ''}`}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 transition-colors sm:px-3 ${
-                  active
-                    ? 'bg-[#a8c7fa] font-semibold text-[#101012]'
-                    : 'text-[rgba(236,236,237,0.55)] hover:bg-[#1e1e21] hover:text-[#ececed]'
-                }`}
+                className={'flex shrink-0 items-center rounded-[var(--r-btn)] px-3 py-1.5 transition-colors ' + (active ? 'bg-white/[0.08] font-medium text-[var(--text-1)]' : 'text-[var(--text-3)] hover:bg-white/[0.04] hover:text-[var(--text-2)]')}
               >
-                <Icon className={`hidden h-3.5 w-3.5 sm:block ${active ? 'text-[#101012]' : 'text-[#a8c7fa]'}`} />
-                <span className="sm:hidden">{tab.short}</span>
-                <span className="hidden sm:inline">{tab.label}{tab.id === 'trades' ? ` (${result.trades.length})` : ''}</span>
+                <span>{tab.label}{tab.id === 'trades' ? ` (${result.trades.length})` : ''}</span>
               </button>
             );
           })}

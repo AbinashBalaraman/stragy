@@ -16,14 +16,8 @@ import { comparisonSeriesKey, consolidateComparisonRuns, partitionComparisonRuns
 import { repairStrategyAST } from '../../shared/strategy/schema';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { formatINR, formatNumber, formatPercent } from '../../shared/format';
-import {
-  RefreshCw,
-  Trash2,
-  Check,
-  ChevronRight,
-  Info,
-  Scale
-} from 'lucide-react';
+import { Trash2, Check, ChevronRight } from 'lucide-react';
+import { Disclosure } from '../common/Disclosure';
 
 export type ComparisonListUpdate = (update: BacktestResponse[] | ((current: BacktestResponse[]) => BacktestResponse[])) => void;
 
@@ -228,7 +222,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
   const sortableHeader = (key: typeof sortKey, label: string, extraClass = '') => (
     <th
-      className={`cursor-pointer px-3 py-3 transition-colors hover:text-[#ececed] ${extraClass}`}
+      className={'cursor-pointer px-3 py-2.5 transition-colors hover:text-[var(--text-1)] ' + extraClass}
       aria-sort={sortKey === key ? (sortAsc ? 'ascending' : 'descending') : 'none'}
       onClick={() => {
         if (sortKey === key) setSortAsc(!sortAsc);
@@ -237,16 +231,16 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
     >
       <div className="flex items-center gap-1">
         <span>{label}</span>
-        {sortKey === key && <span className="text-[#a8c7fa]">{sortAsc ? '▲' : '▼'}</span>}
+        {sortKey === key && <span className="text-[var(--text-2)]" aria-hidden="true">{sortAsc ? '▲' : '▼'}</span>}
       </div>
     </th>
   );
 
   if (!currentResult) {
     return (
-      <div className="space-y-2 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-8 text-center text-xs text-[rgba(236,236,237,0.55)]">
-        {batchError && <p role="alert" className="text-rose-300">{batchError}</p>}
-        <p className="text-xs text-[rgba(236,236,237,0.55)]">Comparisons are immutable run snapshots. Different symbols, data windows, capital or execution assumptions are not directly comparable.</p>
+      <div className="space-y-2 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-8 text-center text-xs text-[var(--text-3)]">
+        {batchError && <p role="alert" className="text-[var(--down)]">{batchError}</p>}
+        <p className="text-xs text-[var(--text-3)]">Comparisons are immutable run snapshots. Different symbols, data windows, capital or execution assumptions are not directly comparable.</p>
         <p>No completed run is loaded for comparison.</p>
       </div>
     );
@@ -255,26 +249,16 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
   const symbolName = currentResult.symbol?.name || 'Asset';
   const symbolTicker = currentResult.symbol?.ticker || 'NSE';
   const sweepButtonClass = (preset: string) =>
-    `rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
-      selectedPreset === preset
-        ? 'border-[#a8c7fa]/50 bg-[#a8c7fa]/10 text-[#a8c7fa]'
-        : 'border-[rgba(236,236,237,0.1)] bg-[#101012] text-[rgba(236,236,237,0.68)] hover:border-[rgba(236,236,237,0.22)] hover:text-[#ececed]'
-    }`;
+    'rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ' + (selectedPreset === preset ? 'bg-white/[0.06] font-medium text-[var(--text-1)]' : 'text-[var(--text-2)] hover:border-[var(--line-strong)] hover:text-[var(--text-1)]');
 
   return (
     <div className="space-y-4">
-      <section className="space-y-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:p-5">
+      <section className="space-y-4 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <Scale className="h-4 w-4 text-[#a8c7fa]" />
-              <h3 className="text-base font-semibold tracking-tight text-[#ececed]">Compare variations</h3>
-              <span className="rounded border border-[rgba(236,236,237,0.1)] bg-[#1e1e21] px-2 py-0.5 font-mono text-[11px] text-[rgba(236,236,237,0.62)]">
-                {allResults.length} compatible · {loadedResults.length} {loadedResults.length === 1 ? 'run' : 'runs'} loaded
-              </span>
-            </div>
-            <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.58)]">
-              Rank runs of {symbolName} ({symbolTicker}) that share the same dates, capital and costs. Each run is kept as its own result.
+            <h3 className="st-title font-semibold text-[var(--text-1)]">Compare variations</h3>
+            <p className="st-meta text-[var(--text-3)]">
+              {allResults.length} compatible · {loadedResults.length} {loadedResults.length === 1 ? 'run' : 'runs'} loaded · rank runs of {symbolName} ({symbolTicker}) with the same dates, capital and costs.
             </p>
           </div>
 
@@ -282,10 +266,9 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             type="button"
             onClick={handleReRunAll}
             disabled={isRunningBatch}
-            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-[rgba(236,236,237,0.1)] bg-[#1e1e21] px-3 py-1.5 text-xs font-medium text-[#ececed] transition-colors hover:border-[#a8c7fa]/40 disabled:opacity-50"
+            className="shrink-0 rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] disabled:opacity-50"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRunningBatch ? 'animate-spin text-[#a8c7fa]' : 'text-[#a8c7fa]'}`} />
-            <span>{isRunningBatch ? 'Running variations…' : 'Re-run variations'}</span>
+            {isRunningBatch ? 'Running variations…' : 'Re-run variations'}
           </button>
         </div>
 
@@ -310,16 +293,14 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
         {batchError && <p role="alert" className="text-xs text-rose-300">{batchError}</p>}
       </section>
 
-      <details className="group rounded-xl border border-amber-500/25 bg-amber-500/[0.04] px-3.5 py-2.5 text-xs">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[rgba(236,236,237,0.7)] [&::-webkit-details-marker]:hidden">
-          <span>
-            Run a sweep above to add a matching variation.
-            {compatibility.excluded.length > 0 ? ` ${compatibility.excluded.length} ${compatibility.excluded.length === 1 ? 'run is' : 'runs are'} excluded.` : ''}
-            {!canRank ? ' Two matching runs are needed before ranking starts.' : ' Only runs with the same symbol, dates, capital and costs are ranked.'}
-          </span>
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-amber-300 transition-transform group-open:rotate-90" />
-        </summary>
-        <div className="mt-2 space-y-2 leading-relaxed text-[rgba(236,236,237,0.6)]">
+      <Disclosure summary={(
+        <span>
+          Run a sweep above to add a matching variation.
+          {compatibility.excluded.length > 0 ? ` ${compatibility.excluded.length} ${compatibility.excluded.length === 1 ? 'run is' : 'runs are'} excluded.` : ''}
+          {!canRank ? ' Two matching runs are needed before ranking starts.' : ' Only runs with the same symbol, dates, capital and costs are ranked.'}
+        </span>
+      )}>
+        <div className="space-y-2 leading-relaxed">
           <p>Each run is kept as its own result; a strategy name alone does not identify a run. A different symbol, dates, capital or cost model is not directly comparable.</p>
           {compatibility.baselineIssues.length > 0 && <p role="alert" className="text-rose-300">Baseline context is unverified: {compatibility.baselineIssues.join(', ')}. Ranking is disabled.</p>}
           {compatibility.excluded.length > 0 && (
@@ -334,30 +315,30 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
             </ul>
           )}
         </div>
-      </details>
+      </Disclosure>
 
-      <section className="space-y-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:p-5">
-        <div className="flex flex-col justify-between gap-3 border-b border-[rgba(236,236,237,0.08)] pb-3 sm:flex-row sm:items-center">
+      <section className="space-y-4 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
+        <div className="flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-3 sm:flex-row sm:items-center">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-semibold text-[#ececed] sm:text-base">
+              <h3 className="st-title font-semibold text-[var(--text-1)]">
                 {chartMetric === 'equity' ? 'Equity overlay' : 'Drawdown overlay'}
               </h3>
-              <span className="rounded bg-[#1e1e21] px-2 py-0.5 font-mono text-[11px] text-[rgba(236,236,237,0.62)]">
+              <span className="st-meta rounded bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-3)]">
                 {multiEquityData.length} sessions
               </span>
             </div>
-            <p className="mt-0.5 text-[11px] text-[rgba(236,236,237,0.52)]">
+            <p className="st-meta mt-0.5 text-[var(--text-3)]">
               {formatINR(currentResult.metrics.initialCapital)} initial capital across compatible runs only.
             </p>
           </div>
 
-          <div className="flex items-center gap-1 rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#101012] p-1 text-xs font-medium">
+          <div className="flex items-center gap-1 rounded-[var(--r-btn)] bg-[var(--surface-2)] p-0.5 text-xs">
             <button
               type="button"
               onClick={() => setChartMetric('equity')}
               aria-pressed={chartMetric === 'equity'}
-              className={`rounded-lg px-2.5 py-1 transition-colors ${chartMetric === 'equity' ? 'bg-[#a8c7fa] font-semibold text-[#101012]' : 'text-[rgba(236,236,237,0.58)] hover:text-[#ececed]'}`}
+              className={'rounded-[var(--r-btn)] px-2.5 py-1 transition-colors ' + (chartMetric === 'equity' ? 'bg-white/[0.08] font-medium text-[var(--text-1)]' : 'text-[var(--text-3)] hover:text-[var(--text-2)]')}
             >
               Equity
             </button>
@@ -365,7 +346,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
               type="button"
               onClick={() => setChartMetric('drawdown')}
               aria-pressed={chartMetric === 'drawdown'}
-              className={`rounded-lg px-2.5 py-1 transition-colors ${chartMetric === 'drawdown' ? 'bg-[#a8c7fa] font-semibold text-[#101012]' : 'text-[rgba(236,236,237,0.58)] hover:text-[#ececed]'}`}
+              className={'rounded-[var(--r-btn)] px-2.5 py-1 transition-colors ' + (chartMetric === 'drawdown' ? 'bg-white/[0.08] font-medium text-[var(--text-1)]' : 'text-[var(--text-3)] hover:text-[var(--text-2)]')}
             >
               Drawdown
             </button>
@@ -384,16 +365,12 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 onClick={() => handleToggleSeries(result.backtestId)}
                 aria-pressed={visible}
                 title={`${result.strategy.name} (${result.backtestId})`}
-                className={`flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors ${
-                  visible
-                    ? 'border-[rgba(236,236,237,0.12)] bg-[#101012] text-[rgba(236,236,237,0.82)]'
-                    : 'border-[rgba(236,236,237,0.06)] bg-[#101012]/40 text-[rgba(236,236,237,0.35)] line-through'
-                }`}
+                className={'flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--r-btn)] px-2 py-1 text-xs transition-colors ' + (visible ? 'text-[var(--text-2)] hover:bg-white/[0.04]' : 'text-[var(--text-disabled)] line-through')}
               >
-                <span className="font-mono text-[10px] text-[rgba(236,236,237,0.45)]">{String(index + 1).padStart(2, '0')}</span>
+                <span className="st-tnum text-[10px] text-[var(--text-3)]">{String(index + 1).padStart(2, '0')}</span>
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, opacity: visible ? 1 : 0.3 }} />
                 <span className="truncate max-w-[150px] sm:max-w-[210px]">{result.strategy?.name || `Strategy ${index + 1}`}</span>
-                {isTop && <span className="shrink-0 rounded border border-[#a8c7fa]/30 px-1 text-[9px] font-semibold uppercase tracking-wide text-[#a8c7fa]">Top</span>}
+                {isTop && <span className="shrink-0 rounded bg-[var(--surface-2)] px-1 text-[9px] text-[var(--text-3)]">Top</span>}
               </button>
             );
           })}
@@ -501,21 +478,18 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719]">
-        <div className="flex flex-col justify-between gap-2 border-b border-[rgba(236,236,237,0.08)] p-4 sm:flex-row sm:items-center">
+      <section className="overflow-hidden rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)]">
+        <div className="flex flex-col justify-between gap-2 border-b border-[var(--line)] p-4 sm:flex-row sm:items-center">
           <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-sm font-semibold text-[#ececed]">Ranked variations</h4>
-            <span className="text-[11px] text-[rgba(236,236,237,0.45)]">Click a column to sort</span>
+            <h4 className="st-title font-semibold text-[var(--text-1)]">Ranked variations</h4>
+            <span className="st-meta text-[var(--text-3)]">Click a column to sort</span>
           </div>
-          <div className="flex items-center gap-1 text-xs text-[rgba(236,236,237,0.52)]">
-            <Info className="h-3.5 w-3.5 text-[#a8c7fa]" />
-            <span>Costs reflect each run's fee configuration; statutory rates may be illustrative.</span>
-          </div>
+          <p className="st-meta text-[var(--text-3)]">Costs reflect each run's fee configuration; statutory rates may be illustrative.</p>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-left text-xs">
-            <thead className="select-none border-b border-[rgba(236,236,237,0.08)] bg-[#101012] text-[11px] font-semibold uppercase tracking-wider text-[rgba(236,236,237,0.52)]">
+            <thead className="st-label select-none border-b border-[var(--line)] bg-[var(--surface-2)] text-[var(--text-3)]">
               <tr>
                 <th className="w-8 px-2 py-3 sm:w-[38px] sm:px-3">
                   <span className="sm:hidden">#</span>
@@ -531,7 +505,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 <th className="w-[84px] px-2 py-3 text-right sm:w-[160px] sm:px-3">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[rgba(236,236,237,0.06)] font-mono text-xs">
+            <tbody className="st-table-text divide-y divide-[var(--line)]">
               {sortedResults.map((result, index) => {
                 if (!result || !result.strategy) return null;
                 const isTop = topPerformer?.backtestId === result.backtestId;
@@ -544,22 +518,22 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 const profitFactor = profitFactorText(result.metrics);
 
                 return (
-                  <tr key={result.backtestId} className={`transition-colors hover:bg-white/[0.02] ${isTop ? 'bg-[#a8c7fa]/[0.035]' : ''}`}>
+                  <tr key={result.backtestId} className={'transition-colors hover:bg-[var(--surface-hover)] ' + (isTop ? 'bg-white/[0.03]' : '')}>
                     <td className="px-2 py-3.5 font-semibold sm:px-3">
-                      <span className={isTop ? 'text-[#a8c7fa]' : 'text-[rgba(236,236,237,0.5)]'}>{index + 1}</span>
+                      <span className={isTop ? 'text-[var(--text-1)]' : 'text-[var(--text-3)]'}>{index + 1}</span>
                     </td>
                     <td className="min-w-0 px-2 py-3.5 sm:px-3">
                       <div className="flex items-center gap-2">
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="max-w-[130px] truncate font-sans text-xs font-semibold text-[#ececed] sm:max-w-[240px]" title={result.strategy.name}>
+                            <span className="max-w-[130px] truncate text-xs font-medium text-[var(--text-1)] sm:max-w-[240px]" title={result.strategy.name}>
                               {result.strategy.name || `Strategy ${index + 1}`}
                             </span>
-                            {isTop && <span className="rounded border border-[#a8c7fa]/30 px-1.5 text-[10px] font-sans font-semibold text-[#a8c7fa]">Top Sharpe</span>}
-                            {isCurrent && <span className="rounded border border-[rgba(236,236,237,0.14)] px-1.5 text-[10px] font-sans font-medium text-[rgba(236,236,237,0.6)]">Current</span>}
+                            {isTop && <span className="rounded bg-[var(--surface-2)] px-1.5 text-[10px] text-[var(--text-2)]">Top Sharpe</span>}
+                            {isCurrent && <span className="rounded bg-[var(--surface-2)] px-1.5 text-[10px] text-[var(--text-3)]">Current</span>}
                           </div>
-                          <p className="mt-0.5 truncate font-sans text-[11px] text-[rgba(236,236,237,0.45)]" title={`${indicatorsList} · SL ${formatNumber(result.strategy.risk?.stopLoss?.value ?? 2, 2)}% · ${result.backtestId}`}>
+                          <p className="st-meta mt-0.5 truncate text-[var(--text-3)]" title={`${indicatorsList} · SL ${formatNumber(result.strategy.risk?.stopLoss?.value ?? 2, 2)}% · ${result.backtestId}`}>
                             {indicatorsList} · SL {formatNumber(result.strategy.risk?.stopLoss?.value ?? 2, 2)}% · {result.strategy.risk?.takeProfit ? `TP ${formatNumber(result.strategy.risk.takeProfit.value, 2)}% · ` : ''}{result.strategy.risk?.trailingStop ? `trail ${formatNumber(result.strategy.risk.trailingStop.value, 2)}% · ` : ''}run {result.backtestId}
                           </p>
                         </div>
@@ -567,39 +541,39 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                     </td>
 
                     <td className="px-3 py-3.5">
-                      <div className={`font-semibold ${netPnl >= 0 ? 'text-[#a8c7fa]' : 'text-rose-300'}`}>
+                      <div className={`st-tnum whitespace-nowrap font-medium ${netPnl >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}`}>
                         {formatPercent(result.metrics?.totalReturnPercent, { signed: true, decimals: 2 })}
                       </div>
-                      <div className="text-[11px] text-[rgba(236,236,237,0.5)]">
+                      <div className="st-meta st-tnum text-[var(--text-3)]">
                         {formatINR(netPnl, { signed: true })}<span className="hidden sm:inline"> · fees {formatINR(result.costs?.totalCharges)}</span>
                       </div>
                     </td>
 
                     <td className="hidden px-3 py-3.5 xl:table-cell">
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${(result.metrics?.sharpeRatio ?? 0) >= 1.5 ? 'bg-[#a8c7fa]/15 text-[#a8c7fa]' : (result.metrics?.sharpeRatio ?? 0) >= 1 ? 'bg-[#a8c7fa]/10 text-[#c7dbff]' : 'text-[rgba(236,236,237,0.7)]'}`}>
+                      <span className="st-tnum text-[var(--text-2)]">
                         {formatNumber(result.metrics?.sharpeRatio)}
                       </span>
                     </td>
 
-                    <td className="hidden px-3 py-3.5 text-[rgba(236,236,237,0.8)] xl:table-cell">
+                    <td className="st-tnum hidden px-3 py-3.5 text-[var(--text-2)] xl:table-cell">
                       <div className="font-semibold">{formatPercent(result.metrics?.winRate, { decimals: 1 })}</div>
-                      <div className="text-[10px] text-[rgba(236,236,237,0.45)]">
+                      <div className="st-meta text-[var(--text-3)]">
                         {result.metrics?.winningTrades ?? 0}W / {result.metrics?.losingTrades ?? 0}L
                       </div>
                     </td>
 
-                    <td className={`hidden px-3 py-3.5 font-semibold xl:table-cell ${profitFactor.noLosses ? 'font-sans text-[11px] text-[#a8c7fa]' : 'text-[rgba(236,236,237,0.8)]'}`}>
+                    <td className={'st-tnum hidden px-3 py-3.5 xl:table-cell ' + (profitFactor.noLosses ? 'text-[11px] text-[var(--text-2)]' : 'text-[var(--text-2)]')}>
                       {profitFactor.text}
                     </td>
 
-                    <td className="hidden px-3 py-3.5 text-rose-300 xl:table-cell">
+                    <td className="st-tnum hidden px-3 py-3.5 text-[var(--down)] xl:table-cell">
                       <div className="font-semibold">{formatPercent(Math.abs(result.metrics?.maxDrawdownPercent ?? 0), { decimals: 2 })}</div>
-                      <div className="text-[10px] text-[rgba(236,236,237,0.45)]">{formatINR(result.metrics?.maxDrawdownAmount)}</div>
+                      <div className="st-meta text-[var(--text-3)]">{formatINR(result.metrics?.maxDrawdownAmount)}</div>
                     </td>
 
-                    <td className="hidden px-3 py-3.5 text-[rgba(236,236,237,0.7)] xl:table-cell">
+                    <td className="st-tnum hidden px-3 py-3.5 text-[var(--text-2)] xl:table-cell">
                       <div>{result.metrics?.totalTrades ?? 0}</div>
-                      <div className="text-[10px] text-[rgba(236,236,237,0.45)]">~{formatNumber(result.metrics?.avgHoldingBars, 0)} {(result.metrics?.avgHoldingBars ?? 0) === 1 ? 'bar' : 'bars'}</div>
+                      <div className="st-meta text-[var(--text-3)]">~{formatNumber(result.metrics?.avgHoldingBars, 0)} {(result.metrics?.avgHoldingBars ?? 0) === 1 ? 'bar' : 'bars'}</div>
                     </td>
 
                     <td className="w-[86px] px-2 py-3.5 text-right sm:w-[180px] sm:px-3">
@@ -608,7 +582,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                           type="button"
                           onClick={() => onApplyStrategy?.(result.strategy)}
                           aria-label="Use this variation"
-                          className="flex items-center gap-1 whitespace-nowrap rounded-lg border border-[#a8c7fa]/35 bg-[#a8c7fa]/10 px-2 py-1 font-sans text-[11px] font-medium text-[#a8c7fa] transition-colors hover:bg-[#a8c7fa] hover:text-[#101012]"
+                          className="flex items-center gap-1 whitespace-nowrap rounded-[var(--r-btn)] border border-[var(--line)] px-2 py-1 text-[11px] text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
                           title="Copy this run's strategy into the builder. This does not run a simulation."
                         >
                           <Check className="h-3 w-3" />
@@ -619,7 +593,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                           <button
                             type="button"
                             onClick={() => onSelectActiveResult?.(result)}
-                            className="hidden rounded-lg p-1 text-[rgba(236,236,237,0.5)] transition-colors hover:bg-[#1e1e21] hover:text-[#ececed] sm:inline-flex"
+                            className="hidden rounded-[var(--r-btn)] p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] sm:inline-flex"
                             title={`Inspect ${result.strategy.name}`}
                             aria-label={`Inspect ${result.strategy.name}`}
                           >
@@ -630,7 +604,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                           <button
                             type="button"
                             onClick={() => handleRemove(result.backtestId)}
-                            className="hidden rounded-lg p-1 text-[rgba(236,236,237,0.45)] transition-colors hover:bg-[#1e1e21] hover:text-rose-300 sm:inline-flex"
+                            className="hidden rounded-[var(--r-btn)] p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--down)] sm:inline-flex"
                             title="Remove variation from matrix"
                             aria-label={`Remove ${result.strategy.name}`}
                           >

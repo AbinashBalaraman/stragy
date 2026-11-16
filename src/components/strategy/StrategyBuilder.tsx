@@ -29,6 +29,8 @@ interface Props {
   /** Remembered default window from user preferences. */
   initialWindow?: RunWindowKey;
   onWindowChange?: (dateRange: UserPreferences['dateRange']) => void;
+  /** Real job phase while a run is in flight; no percentages are invented. */
+  runPhase?: 'preparing' | 'running' | null;
 }
 
 const control = 'w-full rounded-lg border border-white/15 bg-[#101012] p-2 text-sm text-[#ececed]';
@@ -163,7 +165,7 @@ const WINDOW_PREFERENCE: Record<RunWindowKey, UserPreferences['dateRange']> = {
   '1y': 'last-1y', '3y': 'last-3y', '5y': 'last-5y', max: 'custom',
 };
 
-export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBacktest, isLoading, symbols, onSymbolChange, showReferencePrices = false, onDescribeInChat, prefill: incomingPrefill, onPrefillDismiss, initialWindow, onWindowChange }) => {
+export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBacktest, isLoading, runPhase, symbols, onSymbolChange, showReferencePrices = false, onDescribeInChat, prefill: incomingPrefill, onPrefillDismiss, initialWindow, onWindowChange }) => {
   const [error, setError] = useState('');
   const [importError, setImportError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -320,6 +322,15 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
             {isLoading ? 'Running research…' : 'Run backtest'}
           </button>
         </div>
+
+        {isLoading && (
+          <p role="status" className="mt-3 flex items-center gap-2 text-xs text-[var(--text-3)]">
+            <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#a8c7fa]" />
+            {runPhase === 'running'
+              ? 'Simulating…'
+              : `Loading ${runWindow === '3y' ? '3 years' : runWindow === '1y' ? '1 year' : runWindow === '5y' ? '5 years' : 'all available history'} of ${symbols?.find(item => item.id === strategy.universe.symbolId)?.ticker ?? 'the instrument'} daily bars…`}
+          </p>
+        )}
 
         {prefill && (
           <div className="mt-4">

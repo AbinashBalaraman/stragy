@@ -9,7 +9,7 @@ interface Props {
   onNewChat: () => void;
   dataMode: 'real' | 'demo' | 'unknown';
   /** Only set `connected` after an actual Angel One quote has arrived. */
-  liveQuotes?: { connected: boolean; provider: 'angel' | null; loading?: boolean };
+  liveQuotes?: { connected: boolean; provider: 'angel' | null; loading?: boolean; failed?: boolean };
   children: React.ReactNode;
   footer?: React.ReactNode;
 }
@@ -154,6 +154,8 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
   // Before the first quote result we know nothing about the broker: do not claim
   // "delayed, not live", which reads as a settled statement about the data.
   const checkingQuotes = dataMode === 'real' && liveQuotes?.loading === true && !live;
+  // A failed check is not "delayed daily data"; never claim a source that did not answer.
+  const quotesFailed = dataMode === 'real' && liveQuotes?.failed === true && !live && !checkingQuotes;
   const liveProvider = liveQuotes?.provider === 'angel' ? 'Angel One' : 'broker';
   const statusFooter = live ? (
     <div className="space-y-0.5">
@@ -165,6 +167,8 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
     </div>
   ) : checkingQuotes ? (
     <p role="status" className="text-[11px] leading-4 text-neutral-400">Checking quotes…</p>
+  ) : quotesFailed ? (
+    <p role="status" className="text-[11px] leading-4 text-[#f5d383]">Quotes unavailable · retrying</p>
   ) : (
     <p className={`text-[11px] leading-4 ${modeTone}`}>{dataModeCopy[dataMode]}</p>
   );

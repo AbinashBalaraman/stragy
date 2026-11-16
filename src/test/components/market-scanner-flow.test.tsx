@@ -25,7 +25,7 @@ beforeEach(() => {
   scan.mockResolvedValue(scanResult());
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ success: true, dates: [] }) })));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('bounded lazy market scanner flow', () => {
   it('labels real market prices without calling them demo and retains model-only derivatives disclosure', async () => {
@@ -101,6 +101,28 @@ describe('bounded lazy market scanner flow', () => {
     expect(await screen.findByRole('button', { name: 'Load & Run Backtest on TEST' })).toBeTruthy();
     expect(screen.queryByText('close gt st1')).toBeNull();
     expect(screen.getAllByText('Close above Supertrend (10, 3)').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('explains the Angel rate limit when a scan is still running after 30 seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      scan.mockImplementationOnce(() => new Promise(() => {}));
+      renderScanner();
+      fireEvent.click(screen.getByRole('button', { name: /Strategy matches/i }));
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.queryByText(/Still scanning/)).toBeNull();
+      act(() => { vi.advanceTimersByTime(30_000); });
+      expect(screen.getByText('Still scanning · Angel One allows 2 requests a second')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says it is checking live prices while the first load is still in flight', () => {
+    market.mockImplementationOnce(() => new Promise(() => {}));
+    renderScanner();
+    expect(screen.getByText('checking live prices…')).toBeTruthy();
+    expect(screen.queryByText('live prices unavailable')).toBeNull();
   });
 
   it('summarizes partial pricing failures without dumping provider JSON', async () => {

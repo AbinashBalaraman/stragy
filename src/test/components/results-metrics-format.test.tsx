@@ -39,7 +39,8 @@ afterEach(cleanup);
 describe('results metrics evidence state', () => {
   it('shows the insufficient-evidence banner and rounds raw drawdown floats', () => {
     render(<MetricsGrid metrics={metrics()} />);
-    expect(screen.getByRole('status').textContent).toContain('Insufficient evidence: 8 trades (need 30+)');
+    expect(screen.getByText(/8 trades: a small sample/)).toBeTruthy();
+    expect(screen.getByText('What this means')).toBeTruthy();
     expect(screen.getByText('1.13%')).toBeTruthy();
     expect(screen.getByText(/₹1,000\.00/)).toBeTruthy();
     expect(screen.queryByText(/1\.134125/)).toBeNull();
@@ -50,8 +51,8 @@ describe('results metrics evidence state', () => {
     expect(screen.getByText('No losing trades')).toBeTruthy();
   });
 
-  it('hides the banner when the sample is large enough', () => {
+  it('hides the small-sample note when the sample is large enough', () => {
     render(<MetricsGrid metrics={metrics({ totalTrades: 30 })} />);
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(/small sample/)).toBeNull();
   });
 });

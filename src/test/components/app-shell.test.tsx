@@ -112,6 +112,17 @@ describe('calm app shell', () => {
     expect(screen.queryByText('Checking quotes…')).toBeNull();
   });
 
+  it('never claims delayed daily data when the quote check failed', () => {
+    render(
+      <AppShell activeView="chat" onNavigate={vi.fn()} onNewChat={vi.fn()} dataMode="real" liveQuotes={{ connected: false, provider: null, loading: false, failed: true }}>
+        Chat content
+      </AppShell>
+    );
+    expect(screen.getByText('Quotes unavailable · retrying')).toBeTruthy();
+    expect(screen.queryByText(/Observed public daily data/)).toBeNull();
+    expect(screen.queryByText('Checking quotes…')).toBeNull();
+  });
+
   it('keeps the AI providers pill the same width as the other rail items', () => {
     renderShell();
     const settings = screen.getByRole('button', { name: 'AI providers' });
