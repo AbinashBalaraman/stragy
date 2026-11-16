@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BookMarked, ChartNoAxesCombined, ChevronDown, KeyRound, Menu, MessageSquare, Plus, Radio, Settings2, Sparkles, X } from 'lucide-react';
+import { BookMarked, ChartNoAxesCombined, KeyRound, Menu, MessageSquare, Plus, Radio, Sparkles, X } from 'lucide-react';
 
 export type AppView = 'chat' | 'builder' | 'results' | 'scanner' | 'library' | 'settings';
 
@@ -22,28 +22,31 @@ const dataModeCopy = {
 
 const viewLabel: Record<AppView, string> = {
   chat: 'Chat',
-  builder: 'Builder',
-  results: 'Analytics',
-  scanner: 'Scanner',
+  builder: 'Strategy tester',
+  results: 'Backtest results',
+  scanner: 'Market scanner',
   library: 'Saved strategies',
-  settings: 'Settings',
+  settings: 'AI providers',
 };
+
+/** Rail order is fixed by the owner: chat, then the research tools, then settings. */
+const primaryViews = [
+  { view: 'chat' as const, label: 'Chat', icon: MessageSquare },
+  { view: 'scanner' as const, label: 'Market scanner', icon: Radio },
+  { view: 'builder' as const, label: 'Strategy tester', icon: Sparkles },
+  { view: 'results' as const, label: 'Backtest results', icon: ChartNoAxesCombined },
+  { view: 'library' as const, label: 'Saved strategies', icon: BookMarked },
+];
 
 const NavItems: React.FC<{
   activeView: AppView;
   onNavigate: (view: AppView) => void;
   onNewChat: () => void;
-  advancedOpen: boolean;
-  onAdvancedOpenChange: (open: boolean) => void;
-  idPrefix: string;
-}> = ({ activeView, onNavigate, onNewChat, advancedOpen, onAdvancedOpenChange, idPrefix }) => {
-  const advanced = [
-    { view: 'builder' as const, label: 'Strategy builder', icon: Sparkles },
-    { view: 'scanner' as const, label: 'Market scanner', icon: Radio },
-    { view: 'results' as const, label: 'Backtest analytics', icon: ChartNoAxesCombined },
-  ];
+}> = ({ activeView, onNavigate, onNewChat }) => {
+  const itemClass = (active: boolean) =>
+    `flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm ${active ? 'bg-white/[0.08] text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200'}`;
   return (
-    <nav aria-label="Primary" className="flex flex-col gap-1">
+    <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1">
       <button
         type="button"
         onClick={onNewChat}
@@ -52,79 +55,43 @@ const NavItems: React.FC<{
         <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
         New chat
       </button>
-      <button
-        type="button"
-        onClick={() => onNavigate('chat')}
-        aria-current={activeView === 'chat' ? 'page' : undefined}
-        className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm ${activeView === 'chat' ? 'bg-white/[0.08] text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200'}`}
-      >
-        <MessageSquare className="h-4 w-4 shrink-0" aria-hidden="true" />
-        Conversation
-      </button>
-      <button
-        type="button"
-        onClick={() => onNavigate('library')}
-        aria-current={activeView === 'library' ? 'page' : undefined}
-        className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm ${activeView === 'library' ? 'bg-white/[0.08] text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200'}`}
-      >
-        <BookMarked className="h-4 w-4 shrink-0" aria-hidden="true" />
-        Saved strategies
-      </button>
-
-      <p className="mt-3 px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-600">Settings</p>
-      <button
-        type="button"
-        onClick={() => onNavigate('settings')}
-        aria-current={activeView === 'settings' ? 'page' : undefined}
-        className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm ${activeView === 'settings' ? 'bg-white/[0.08] text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200'}`}
-      >
-        <KeyRound className="h-4 w-4 shrink-0" aria-hidden="true" />
-        AI providers
-      </button>
-
-      <button
-        type="button"
-        id={idPrefix + '-advanced-tools'}
-        aria-expanded={advancedOpen}
-        aria-controls={idPrefix + '-advanced-tools-panel'}
-        onClick={() => onAdvancedOpenChange(!advancedOpen)}
-        className="mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-neutral-500 hover:text-neutral-300"
-      >
-        <Settings2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        Advanced tools
-        <ChevronDown className={'ml-auto h-3.5 w-3.5 transition-transform ' + (advancedOpen ? 'rotate-180' : '')} aria-hidden="true" />
-      </button>
-      {advancedOpen && (
-        <div id={idPrefix + '-advanced-tools-panel'} role="group" aria-label="Advanced tools" className="space-y-0.5 pl-2">
-          {advanced.map(item => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.view}
-                type="button"
-                onClick={() => onNavigate(item.view)}
-                aria-current={activeView === item.view ? 'page' : undefined}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm ${activeView === item.view ? 'bg-white/[0.08] text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200'}`}
-              >
-                <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {primaryViews.map(item => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.view}
+            type="button"
+            onClick={() => onNavigate(item.view)}
+            aria-current={activeView === item.view ? 'page' : undefined}
+            className={itemClass(activeView === item.view)}
+          >
+            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {item.label}
+          </button>
+        );
+      })}
+      <div className="mt-auto space-y-1 border-t border-white/8 pt-3">
+        <p className="px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-600">Settings</p>
+        <button
+          type="button"
+          onClick={() => onNavigate('settings')}
+          aria-current={activeView === 'settings' ? 'page' : undefined}
+          className={itemClass(activeView === 'settings')}
+        >
+          <KeyRound className="h-4 w-4 shrink-0" aria-hidden="true" />
+          AI providers
+        </button>
+      </div>
     </nav>
   );
 };
 
 /**
- * A quiet, responsive shell. Chat is the product; builder/scanner/analytics live
- * behind an explicit Advanced tools disclosure and remain fully reachable.
+ * A quiet, responsive shell. Chat is the product; the research tools sit in the
+ * rail as equals, and settings stays at the bottom above the data-status footer.
  */
 export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, dataMode, liveQuotes, children, footer }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [drawerAdvancedOpen, setDrawerAdvancedOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -233,9 +200,6 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
             activeView={activeView}
             onNavigate={navigate}
             onNewChat={newChat}
-            advancedOpen={advancedOpen}
-            onAdvancedOpenChange={setAdvancedOpen}
-            idPrefix="desktop"
           />
           <div className="mt-auto space-y-3 px-2 pt-6">
             {statusFooter}
@@ -269,9 +233,6 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
               activeView={activeView}
               onNavigate={navigate}
               onNewChat={newChat}
-              advancedOpen={drawerAdvancedOpen}
-              onAdvancedOpenChange={setDrawerAdvancedOpen}
-              idPrefix="mobile"
             />
             <div className="mt-auto space-y-2 pt-6 text-[11px] text-neutral-500">
               {statusFooter}

@@ -105,13 +105,12 @@ afterEach(() => {
 const sidebar = () => within(screen.getByRole('complementary', { name: 'Workspace navigation' }));
 
 describe('chat-first application shell', () => {
-  it('opens on the conversation with advanced build tools hidden', async () => {
+  it('opens on the conversation with the research rail visible', async () => {
     render(<App />);
     expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
     expect(screen.getByLabelText('Research conversation')).toBeTruthy();
-    expect(sidebar().getByRole('button', { name: 'Conversation' })).toBeTruthy();
-
-    expect(screen.queryByRole('button', { name: 'Strategy builder' })).toBeNull();
+    expect(sidebar().getByRole('button', { name: 'Chat' })).toBeTruthy();
+    expect(sidebar().getByRole('button', { name: 'Strategy tester' })).toBeTruthy();
     expect(screen.queryByTestId('builder-view')).toBeNull();
     expect(screen.queryByTestId('results-view')).toBeNull();
     expect(screen.queryByTestId('scanner-view')).toBeNull();
@@ -121,7 +120,7 @@ describe('chat-first application shell', () => {
     await screen.findByText('Workspace unchanged; no local save yet');
   });
 
-  it('keeps the conversation mounted and its history intact while advanced views are open', async () => {
+  it('keeps the conversation mounted and its history intact while another rail view is open', async () => {
     render(<App />);
     await screen.findByText('Test a trading idea before you trust it.');
 
@@ -129,15 +128,14 @@ describe('chat-first application shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
     expect(await screen.findByText('Validated reply only.')).toBeTruthy();
 
-    fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
-    fireEvent.click(sidebar().getByRole('button', { name: 'Strategy builder' }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Strategy tester' }));
     expect(await screen.findByTestId('builder-view')).toBeTruthy();
 
     const conversation = screen.getByLabelText('Research conversation');
     expect(conversation.closest('[hidden]')).toBeTruthy();
     expect(screen.getByText('Validated reply only.')).toBeTruthy();
 
-    fireEvent.click(sidebar().getByRole('button', { name: 'Conversation' }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(screen.queryByTestId('builder-view')).toBeNull());
     expect(screen.getByLabelText('Research conversation').closest('[hidden]')).toBeNull();
     expect(screen.getByText('Validated reply only.')).toBeTruthy();
@@ -188,12 +186,11 @@ describe('chat-first application shell', () => {
     expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
     expect(screen.queryByRole('article', { name: 'Backtest result' })).toBeNull();
 
-    fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
-    fireEvent.click(sidebar().getByRole('button', { name: 'Backtest analytics' }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Backtest results' }));
     expect(await screen.findByTestId('results-view')).toBeTruthy();
     expect(screen.getByTestId('results-id').textContent).toBe(retainedId);
 
-    fireEvent.click(sidebar().getByRole('button', { name: 'Conversation' }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Chat' }));
     await waitFor(() => expect(screen.queryByTestId('results-view')).toBeNull());
     expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
     expect(screen.queryByRole('article', { name: 'Backtest result' })).toBeNull();
@@ -202,7 +199,6 @@ describe('chat-first application shell', () => {
   it('puts the market scanner inside a vertical scroll container', async () => {
     render(<App />);
     await screen.findByText('Test a trading idea before you trust it.');
-    fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
     fireEvent.click(sidebar().getByRole('button', { name: 'Market scanner' }));
     const scanner = await screen.findByTestId('scanner-view');
     expect(scanner.parentElement?.className).toContain('overflow-y-auto');
@@ -239,14 +235,13 @@ describe('chat-first application shell', () => {
     expect(await screen.findByText(/Backtest completed/)).toBeTruthy();
 
     // A builder run replaces the App's selected result with a different run.
-    fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
-    fireEvent.click(sidebar().getByRole('button', { name: 'Strategy builder' }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Strategy tester' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Run builder backtest' }));
     expect(await screen.findByTestId('results-view')).toBeTruthy();
     expect((await screen.findByTestId('results-id')).textContent).toBe('run-2');
 
     // View details must select the conversation's validated run (run-1).
-    fireEvent.click(sidebar().getByRole('button', { name: 'Conversation' }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Chat' }));
     fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
     expect(await screen.findByTestId('results-view')).toBeTruthy();
     expect(screen.getByTestId('results-id').textContent).toBe('run-1');

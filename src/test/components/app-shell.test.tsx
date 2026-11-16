@@ -9,40 +9,49 @@ const renderShell = (onNavigate = vi.fn(), onNewChat = vi.fn()) => {
   return { onNavigate, onNewChat };
 };
 
+const RAIL_ORDER = ['New chat', 'Chat', 'Market scanner', 'Strategy tester', 'Backtest results', 'Saved strategies', 'AI providers'];
+const navLabels = (scope: HTMLElement) =>
+  within(scope).getAllByRole('button').map(button => button.textContent?.trim() ?? '');
+
 afterEach(cleanup);
 
 describe('calm app shell', () => {
-  it('defaults to a chat-first surface with advanced tools hidden', () => {
+  it('shows every research tool in the rail up front, in the owner order', () => {
     const onNewChat = vi.fn();
     renderShell(vi.fn(), onNewChat);
 
     expect(screen.getByText('Chat content')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Conversation' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Strategy builder' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Market scanner' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Backtest analytics' })).toBeNull();
-
-    const advanced = screen.getByRole('button', { name: /Advanced tools/ });
-    expect(advanced.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(advanced);
-
-    expect(advanced.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Strategy builder' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Market scanner' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Backtest analytics' })).toBeTruthy();
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    expect(navLabels(nav)).toEqual(RAIL_ORDER);
+    expect(screen.queryByRole('button', { name: /Advanced tools/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Chat' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('button', { name: 'Saved strategies' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'AI providers' })).toBeTruthy();
     expect(onNewChat).not.toHaveBeenCalled();
   });
 
-  it('routes advanced navigation without treating it as a new chat', () => {
+  it('routes tool navigation without treating it as a new chat', () => {
     const { onNavigate, onNewChat } = renderShell();
-    fireEvent.click(screen.getByRole('button', { name: /Advanced tools/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Strategy builder' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Strategy tester' }));
 
     expect(onNavigate).toHaveBeenCalledWith('builder');
     expect(onNewChat).not.toHaveBeenCalled();
   });
 
-  it('opens an accessible mobile drawer and navigates from it', () => {
+  it('routes each rail item to its view', () => {
+    const { onNavigate } = renderShell();
+    const expected: Array<[string, string]> = [
+      ['Market scanner', 'scanner'],
+      ['Strategy tester', 'builder'],
+      ['Backtest results', 'results'],
+      ['Saved strategies', 'library'],
+      ['AI providers', 'settings'],
+    ];
+    for (const [label, view] of expected) fireEvent.click(screen.getByRole('button', { name: label }));
+    expect(onNavigate.mock.calls.map(call => call[0])).toEqual(expected.map(([, view]) => view));
+  });
+
+  it('opens an accessible mobile drawer with the same order and navigates from it', () => {
     const { onNavigate } = renderShell();
     const trigger = screen.getByRole('button', { name: 'Open navigation' });
     fireEvent.click(trigger);
@@ -50,8 +59,8 @@ describe('calm app shell', () => {
     const dialog = screen.getByRole('dialog', { name: 'Navigation menu' });
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Close navigation' }));
+    expect(navLabels(within(dialog).getByRole('navigation', { name: 'Primary' }))).toEqual(RAIL_ORDER);
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /Advanced tools/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Market scanner' }));
 
     expect(onNavigate).toHaveBeenCalledWith('scanner');
@@ -76,9 +85,9 @@ describe('calm app shell', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('returns to the conversation without clearing it', () => {
+  it('returns to the chat without clearing it', () => {
     const { onNavigate, onNewChat } = renderShell();
-    fireEvent.click(screen.getByRole('button', { name: 'Conversation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
 
     expect(onNavigate).toHaveBeenCalledWith('chat');
     expect(onNewChat).not.toHaveBeenCalled();

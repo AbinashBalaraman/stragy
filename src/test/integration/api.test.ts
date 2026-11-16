@@ -37,6 +37,9 @@ beforeEach(() => {
   // createApp mutates these; stub first so teardown restores the original values.
   vi.stubEnv('DATA_MODE', 'demo');
   vi.stubEnv('AI_PROVIDER', 'none');
+  // Readiness reports the optional database honestly; this suite runs without one.
+  vi.stubEnv('DATABASE_URL', '');
+  vi.stubEnv('DATABASE_URL_UNPOOLED', '');
   // Fix data cutoff/rate-window time without replacing real timeout timers.
   vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 0, 8, 12));
   externalFetch = vi.fn(async () => { throw new Error('External network forbidden in API fixtures'); });
@@ -95,7 +98,7 @@ describe('bounded offline API contracts', () => {
     expect(live.body).toEqual({ status: 'ok' });
     const ready = await bounded(request(app).get('/health/ready'));
     expect(ready.status).toBe(200);
-    expect(ready.body).toEqual({ status: 'ready', mode: 'demo', persistence: 'ephemeral' });
+    expect(ready.body).toEqual({ status: 'ready', mode: 'demo', persistence: 'ephemeral', db: 'not-configured' });
     const health = await bounded(request(app).get('/api/health'));
     expect(health.status).toBe(200);
     expect(health.body).toMatchObject({ status: 'ok', mode: 'demo', platform: 'Stragy research' });

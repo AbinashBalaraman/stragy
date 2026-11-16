@@ -73,8 +73,7 @@ describe('workspace autosave and conflict recovery', () => {
 
     render(<App />);
     await screen.findByText('Workspace unchanged; saved locally');
-    fireEvent.click(sidebar().getByRole('button', { name: /Advanced tools/ }));
-    fireEvent.click(sidebar().getByRole('button', { name: 'Strategy builder' }));
+    fireEvent.click(sidebar().getByRole('button', { name: 'Strategy tester' }));
     expect((await screen.findByTestId('builder-name')).textContent).toBe('Workspace A');
 
     fireEvent.click(screen.getByRole('button', { name: 'Change draft' }));
