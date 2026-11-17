@@ -13,6 +13,7 @@ import { RobustnessSuite, BacktestResponse } from '../../shared/strategy/types';
 import { formatDate, formatINR, formatNumber, formatPercent } from '../../shared/format';
 import { StatRow } from '../common/StatRow';
 import { Disclosure } from '../common/Disclosure';
+import { decaySentence, plainRobustnessReason, trainTestSentence } from './robustnessCopy';
 
 interface RobustnessViewProps {
   robustness?: RobustnessSuite;
@@ -72,7 +73,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
         <div className="space-y-4">
           <p className="text-xs leading-5 text-[var(--text-2)]">
             We reshuffled the daily returns 500 times to see the range of outcomes. This is not a forecast.
-            {monteCarlo.reason ? ` ${monteCarlo.reason}` : ''}
+            {monteCarlo.reason ? ` ${plainRobustnessReason(monteCarlo.reason)}` : ''}
           </p>
           <Disclosure summary="How this test works">
             <p>Independent daily net-equity returns were resampled with seed {monteCarlo.seed ?? 'N/A'} over the observed horizon only. Serial dependence is ignored; this is not a forecast.</p>
@@ -115,22 +116,9 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
 
       {activeTab === 'trainTest' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--text-2)]">Out-of-sample check:</span>
-              <span
-                className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
-                  trainTestSplit.overfittingRisk === 'LOW'
-                    ? 'border-[#a8c7fa]/30 bg-[#a8c7fa]/10 text-[#a8c7fa]'
-                    : trainTestSplit.overfittingRisk === 'MODERATE'
-                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-                      : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
-                }`}
-              >
-                {trainTestSplit.overfittingRisk}
-              </span>
-            </div>
-            <span className="st-tnum text-xs text-[var(--text-3)]">Split after {formatDate(trainTestSplit.splitDate)}</span>
+          <div className="flex flex-wrap items-start justify-between gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3">
+            <p className="max-w-2xl text-xs leading-5 text-[var(--text-2)]">{trainTestSentence(trainTestSplit)}</p>
+            <span className="st-tnum shrink-0 text-xs text-[var(--text-3)]">Split after {formatDate(trainTestSplit.splitDate)}</span>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -183,7 +171,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                 </div>
               </div>
               <p className="text-[11px] text-[rgba(236,236,237,0.5)]">
-                Return fell {formatNumber(trainTestSplit.cagrDecayRatio, 2)}× from the fitted window to the test window.
+                {decaySentence(trainTestSplit.cagrDecayRatio)}
               </p>
             </div>
           </div>
@@ -197,6 +185,9 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
             <span className="font-medium text-[#a8c7fa]">Net return</span>
           </div>
 
+          {sensitivityHeatmap.status !== 'available' ? (
+            <p className="text-xs leading-5 text-[var(--text-3)]">{plainRobustnessReason(sensitivityHeatmap.reason)}</p>
+          ) : (
           <div className="overflow-x-auto">
             <table className="w-full table-fixed border-collapse text-center text-[10px] sm:text-xs">
               <thead>
@@ -237,6 +228,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
     </div>
