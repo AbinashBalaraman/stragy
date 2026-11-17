@@ -5,7 +5,7 @@ import type { BacktestResponse, StrategyAST, SymbolMeta } from '../../shared/str
 import { snapshotStrategy } from '../../client/workspace';
 import { canonicalStrategySignature, exitRuleCompatibility } from '../../shared/strategy/backtestReview';
 import { assertProposalCurrent, parseStrategyProposal, type StrategyProposal } from '../../shared/contracts/ai-proposal';
-import { requestScan, type RunRequestOptions, type ScanResult } from '../../client/api';
+import { requestScan, type ResearchPhase, type RunRequestOptions, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
 import { requestFeatureSetup } from '../../client/featureSetup';
 import { FEATURE_PREFILL_EVENT, parseFeaturePrefill, publishFeaturePrefill } from '../../client/featureHandoff';
@@ -63,6 +63,8 @@ interface Props {
   newConversationSignal?: number;
   onCancelResearch?: () => void;
   onSaveStrategy?: (strategy: StrategyAST) => Promise<{ name: string } | void>;
+  /** Live phase of a run started from this conversation ('waiting' = queued). */
+  runPhase?: ResearchPhase | null;
 }
 
 const MessageSchema = z.object({
@@ -281,8 +283,22 @@ function chartReadingFromScreen(plan: ResearchScreenPlan): ChartImageReading | n
   return { source: plan.source, observations: plan.observations, confidence: plan.confidence, summary: plan.summary };
 }
 
-/** A run may only complete the exact reviewed strategy on the same instrument and cutoff. */
-function isCurrentReviewResult(result: BacktestResponse | null | void | undefined, review: BacktestReview): result is BacktestResponse {
+/** A calendar day (YYYY-MM-DD), or null when the value is not a date. */
+export function reviewDay(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed);
+  if (iso) return iso[1];
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+/**
+ * A run may only complete the exact reviewed strategy on the same instrument.
+ * `review.asOf` is a cutoff, not a promise that data exists for that day: a
+ * dataset that ends earlier is valid, anything observed after it is not.
+ */
+export function isCurrentReviewResult(result: BacktestResponse | null | void | undefined, review: BacktestReview): result is BacktestResponse {
   if (!result || typeof result !== 'object') return false;
   if (typeof result.backtestId !== 'string'
     || !result.metrics || typeof result.metrics !== 'object'
@@ -291,7 +307,9 @@ function isCurrentReviewResult(result: BacktestResponse | null | void | undefine
   if (result.strategy?.universe?.symbolId !== review.symbol.id) return false;
   const resultSignature = canonicalStrategySignature(result.strategy);
   if (!resultSignature || resultSignature !== review.strategySignature) return false;
-  if (review.asOf && summarizeRunData(result).observedThrough !== review.asOf) return false;
+  const cutoff = reviewDay(review.asOf);
+  const observed = reviewDay(summarizeRunData(result).observedThrough);
+  if (cutoff && observed && observed > cutoff) return false;
   return true;
 }
 
@@ -311,6 +329,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   newConversationSignal,
   onCancelResearch,
   onSaveStrategy,
+  runPhase = null,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages(HISTORY_KEY));
   const [archivedMessages, setArchivedMessages] = useState<ChatMessage[]>(() => loadMessages(ARCHIVE_KEY));
@@ -324,6 +343,8 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [sentChartImage, setSentChartImage] = useState<ChartImageAttachment | null>(null);
   /** Auto-scroll only while the reader is at the bottom (P0-6). */
   const [pinned, setPinned] = useState(true);
+  /** "Jump to latest" appears only for a screenful (or new content) out of view. */
+  const [jumpVisible, setJumpVisible] = useState(false);
   const [pendingDraftBacktest, setPendingDraftBacktest] = useState<string | null>(null);
   /** A send asks for the answer: follow it until the reader scrolls by hand. */
   const followAnswer = useRef(false);
@@ -338,6 +359,10 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [screenPlan, setScreenPlan] = useState<ResearchScreenPlan | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanPending, setScanPending] = useState(false);
+  /** A queued scan is waiting behind another job, not evaluating yet. */
+  const [scanWaiting, setScanWaiting] = useState(false);
+  /** "scan 42/50" from the job stage, shown while the scan runs. */
+  const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
   const scanPendingRef = useRef(false);
   const [scanError, setScanError] = useState('');
   /** A chart reading must be confirmed/edited before any scan starts. */
@@ -418,6 +443,8 @@ export const AiCopilotDock: React.FC<Props> = ({
     setLoading(false);
     scanPendingRef.current = false;
     setScanPending(false);
+    setScanWaiting(false);
+    setScanProgress(null);
     setScanError('');
     if (!pendingApply.current) setProposal(null);
     setClipboardStatus('');
@@ -475,6 +502,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     else log.scrollTop = log.scrollHeight;
     pinnedRef.current = true;
     setPinned(true);
+    setJumpVisible(false);
   };
 
   /**
@@ -520,11 +548,15 @@ export const AiCopilotDock: React.FC<Props> = ({
   const onLogScroll = () => {
     const log = logRef.current;
     if (!log) return;
-    const next = log.scrollHeight - log.scrollTop - log.clientHeight <= NEAR_BOTTOM;
+    const away = log.scrollHeight - log.scrollTop - log.clientHeight;
+    const next = away <= NEAR_BOTTOM;
     if (next !== pinnedRef.current) {
       pinnedRef.current = next;
       setPinned(next);
     }
+    // Within a screen of the end the reader can see what is newest: no button.
+    const show = away > Math.max(300, log.clientHeight);
+    setJumpVisible(current => (current === show ? current : show));
   };
 
   // After a send the prompt sits at the top of the log with room for the answer;
@@ -543,7 +575,12 @@ export const AiCopilotDock: React.FC<Props> = ({
     // The answer to a question the reader just asked is always followed, even
     // when placing that question left the log short of the bottom. Cards render
     // after the message list, so scroll the answer itself into view, not the end.
-    if (followAnswer.current || pinnedRef.current) revealMessage(element, log);
+    if (followAnswer.current || pinnedRef.current) {
+      revealMessage(element, log);
+      return;
+    }
+    // Reading higher up: offer the jump only when the new answer is out of view.
+    if (element.getBoundingClientRect().bottom > log.getBoundingClientRect().bottom + 8) setJumpVisible(true);
   }, [messages]);
 
   // Reveal the newest card once per state change. A user-triggered card is
@@ -561,7 +598,10 @@ export const AiCopilotDock: React.FC<Props> = ({
       const changed = !sameCard || (wasBusy && !busyNow);
       if (!changed) return;
       const forced = !!revealIntent.current;
-      if (!forced && !pinnedRef.current) return;
+      if (!forced && !pinnedRef.current) {
+        if (card.getBoundingClientRect().top > (logRef.current?.getBoundingClientRect().bottom ?? 0) + 8) setJumpVisible(true);
+        return;
+      }
       revealedCard.current = card;
       revealedBusy.current = busyNow;
       revealCard(card, forced);
@@ -676,6 +716,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     setResultAnchorId(null);
     revealIntent.current = null;
     followAnswer.current = false;
+    setJumpVisible(false);
     pendingApply.current = null;
   };
 
@@ -731,6 +772,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     setResultAnchorId(null);
     revealIntent.current = null;
     followAnswer.current = false;
+    setJumpVisible(false);
   };
 
   const cancelPendingRequest = () => {
@@ -1035,7 +1077,15 @@ export const AiCopilotDock: React.FC<Props> = ({
       strategy: plan.strategy,
       limit: 100,
       ...(plan.asOf ? { asOf: plan.asOf } : {}),
-    }, controller.signal);
+    }, controller.signal, phase => {
+      if (generation.current === owned) setScanWaiting(phase === 'waiting');
+    }, progress => {
+      if (generation.current !== owned) return;
+      const match = /(\d+)\s*\/\s*(\d+)/.exec(progress.stage ?? '');
+      const done = match ? Number(match[1]) : NaN;
+      const total = match ? Number(match[2]) : NaN;
+      setScanProgress(Number.isFinite(done) && Number.isFinite(total) && total > 0 ? { done, total } : null);
+    });
     if (generation.current !== owned) return;
     if (scanned.mode === 'demo') {
       throw new Error('Real current data is unavailable. Demo results were not presented as stock matches.');
@@ -1049,6 +1099,27 @@ export const AiCopilotDock: React.FC<Props> = ({
     setScanResult(scanned);
     rememberPreference({ universe: 'NIFTY_50' });
   }
+
+  /** A scan failure in plain language: no transport text, no JSON parser detail. */
+  const scanFailureLine = (caught: unknown): string => {
+    const error = caught as { code?: string; message?: string; status?: number };
+    const code = (error?.code ?? '').toUpperCase();
+    const message = error?.message ?? '';
+    if (/JOB_LOST/.test(code)) return 'The server restarted and the scan was lost. Try again.';
+    if (/DEADLINE|TIMEOUT/.test(code) || /timed out|deadline/i.test(message)) return "The scan didn't finish in time. Try again.";
+    if (/RATE_LIMIT|RATE_LIMITED/.test(code) || error?.status === 429 || /rate limit/i.test(message)) {
+      return 'Angel One is busy right now. Try the scan again in a minute.';
+    }
+    if (/INVALID_RESPONSE|FETCH|NETWORK/.test(code) || /did not return JSON|failed to fetch|network/i.test(message)) {
+      return "The scan couldn't reach the server. Try again.";
+    }
+    if (/data source unverified|did not confirm real observed/i.test(message)) {
+      return "The scan didn't confirm real observed data. Nothing was presented as a match.";
+    }
+    if (/demo results|demo/i.test(message)) return 'Real current data is unavailable right now. Nothing was presented as a match.';
+    if (/real current data is unavailable/i.test(message)) return 'Real current data is unavailable right now. Nothing was presented as a match.';
+    return "The scan didn't finish. Try again.";
+  };
 
   const confirmChartScan = async (edited: StrategyAST) => {
     if (!screenPlan || scanPendingRef.current) return;
@@ -1071,7 +1142,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     try {
       await runScreenScan(plan, controller, owned);
     } catch (caught) {
-      if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
+      if (generation.current === owned && !controller.signal.aborted) setScanError(scanFailureLine(caught));
     } finally {
       if (generation.current === owned) {
         scanPendingRef.current = false;
@@ -1094,7 +1165,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     try {
       await runScreenScan(plan, controller, owned);
     } catch (caught) {
-      if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
+      if (generation.current === owned && !controller.signal.aborted) setScanError(scanFailureLine(caught));
     } finally {
       if (generation.current === owned) {
         scanPendingRef.current = false;
@@ -1219,6 +1290,8 @@ export const AiCopilotDock: React.FC<Props> = ({
     const hadPendingScan = scanPendingRef.current;
     scanPendingRef.current = false;
     setScanPending(false);
+    setScanWaiting(false);
+    setScanProgress(null);
     setScanError('');
     if (hadPendingScan) {
       setScanResult(null);
@@ -1326,7 +1399,7 @@ export const AiCopilotDock: React.FC<Props> = ({
           try {
             await runScreenScan(data, controller, owned);
           } catch (caught) {
-            if (generation.current === owned && !controller.signal.aborted) setScanError((caught as Error).message);
+            if (generation.current === owned && !controller.signal.aborted) setScanError(scanFailureLine(caught));
           } finally {
             if (generation.current === owned) {
               scanPendingRef.current = false;
@@ -1364,6 +1437,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     // The user asked for this: its answer and its card must come into view.
     requestReveal('send');
     followAnswer.current = true;
+    setJumpVisible(false);
     void submitText(text, image);
   };
 
@@ -1540,6 +1614,8 @@ export const AiCopilotDock: React.FC<Props> = ({
                   plan={screenPlan}
                   result={scanResult}
                   pending={scanPending}
+                  waiting={scanPending && scanWaiting}
+                  progress={scanPending ? scanProgress : null}
                   error={scanError}
                   busy={busy}
                   onPrepareBacktest={(symbolId, matchAsOf) => {
@@ -1583,6 +1659,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                 <BacktestReviewCard
                   review={review}
                   running={reviewStatus === 'running'}
+                  waiting={reviewStatus === 'running' && runPhase === 'waiting'}
                   error={reviewError}
                   onApprove={() => void runReview()}
                   onCancelReview={dismissReview}
@@ -1825,7 +1902,7 @@ export const AiCopilotDock: React.FC<Props> = ({
         {messages.length > 0 && (
           <div className="h-[52px] shrink-0 sm:h-10">
             <div className="mx-auto flex h-full w-full max-w-[832px] items-start justify-end px-4 sm:px-6">
-              {!pinned && (
+              {jumpVisible && (
                 <button
                   type="button"
                   data-testid="jump-to-latest"
@@ -1846,7 +1923,9 @@ export const AiCopilotDock: React.FC<Props> = ({
           {clipboardStatus && <p role="status" className="st-meta text-[var(--text-3)]">{clipboardStatus}</p>}
           {saveStatus && <p role="status" className="st-meta text-[var(--text-3)]">{saveStatus}</p>}
           {error && <p role="alert" className="st-meta text-[var(--down)]">{error}</p>}
-          {reviewStatus === 'running' && <p role="status" className="st-meta text-[var(--text-2)]">Backtest running on the reviewed assumptions…</p>}
+          {reviewStatus === 'running' && runPhase !== 'waiting' && (
+            <p role="status" className="st-meta text-[var(--text-2)]">Backtest running on the reviewed assumptions…</p>
+          )}
 
           <form
             onSubmit={send}

@@ -7,6 +7,8 @@ import { Disclosure } from '../common/Disclosure';
 interface Props {
   review: BacktestReview;
   running: boolean;
+  /** The job is queued behind another one. */
+  waiting?: boolean;
   error: string;
   onApprove: () => void;
   onCancelReview: () => void;
@@ -27,7 +29,7 @@ const ReviewRow: React.FC<{ label: string; children: React.ReactNode }> = ({ lab
 const secondaryClass = 'st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8';
 
 /** The last gate before execution: frozen assumptions, plain English, explicit consent. */
-export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, onApprove, onCancelReview, onCancelRun }) => {
+export const BacktestReviewCard: React.FC<Props> = ({ review, running, waiting = false, error, onApprove, onCancelReview, onCancelRun }) => {
   const assumptions = describeBacktestAssumptions(review.strategy, {
     asOf: review.asOf,
     sourceLabel: review.sourceLabel,
@@ -47,7 +49,7 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
           disabled={running}
           className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] bg-[var(--accent)] px-3.5 font-semibold text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
         >
-          {running ? 'Running backtest…' : error ? 'Retry' : 'Use these assumptions and run'}
+          {waiting ? 'Waiting…' : running ? 'Running backtest…' : error ? 'Retry' : 'Use these assumptions and run'}
         </button>
         {running && onCancelRun ? (
           <button type="button" onClick={onCancelRun} className={secondaryClass}>Cancel research</button>
@@ -66,7 +68,7 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
         title={'Backtest ' + review.symbol.ticker + ' with “' + review.strategy.name + '”'}
         meta={review.sourceLabel + ' · nothing has been run or applied.'}
         state={running ? 'pending' : error ? 'error' : 'idle'}
-        status={running ? 'Running' : error ? 'Could not complete' : 'Not run yet'}
+        status={waiting ? 'Waiting' : running ? 'Running' : error ? 'Could not complete' : 'Not run yet'}
         footer={footer}
       >
         <p className="text-[13px] leading-5 text-[var(--text-2)]">
@@ -78,17 +80,21 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
           )}
         </p>
 
-        <section aria-label="Key assumptions" className="space-y-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-3">
+        <section aria-label="Key assumptions" className="space-y-2">
           <SectionLabel>Key assumptions</SectionLabel>
-          <dl className="space-y-2">
+          <dl className="divide-y divide-[var(--line)]">
             {keyAssumptions.map(row => (
-              <div key={row.label} className="grid grid-cols-[3.5rem_1fr] gap-2">
+              <div key={row.label} className="grid grid-cols-[3.5rem_1fr] gap-2 py-1.5 first:pt-0 last:pb-0">
                 <dt className="st-meta text-[var(--text-3)]">{row.label}</dt>
                 <dd className="text-[13px] leading-5 text-[var(--text-2)]">{row.value}</dd>
               </div>
             ))}
           </dl>
         </section>
+
+        {waiting && (
+          <p className="st-meta text-[var(--text-2)]">Waiting for the current scan to finish…</p>
+        )}
 
         <Disclosure summary="Show all assumptions">
           <dl className="space-y-3">

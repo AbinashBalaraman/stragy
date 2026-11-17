@@ -12,6 +12,10 @@ interface Props {
   plan: ResearchScreenPlan;
   result: ScanResult | null;
   pending: boolean;
+  /** The scan is queued behind another job. */
+  waiting?: boolean;
+  /** Jobs that report "scan 42/50" show it while they run. */
+  progress?: { done: number; total: number } | null;
   error: string;
   busy?: boolean;
   onPrepareBacktest: (symbolId: number, asOf?: string) => void;
@@ -85,7 +89,7 @@ const scoreLabel = (match: ScanMatch, total: number) => {
  * A read-only screen: one headline, one table of matches, a quiet close-matches
  * section, and provenance behind a disclosure. No nested boxes, one status chip.
  */
-export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error, busy, onPrepareBacktest, onCancelScan, onRetryScan }) => {
+export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiting = false, progress = null, error, busy, onPrepareBacktest, onCancelScan, onRetryScan }) => {
   const observedInMatches = result
     ? result.matches.reduce((latest, match) => match.lastDate > latest ? match.lastDate : latest, '')
     : '';
@@ -126,7 +130,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
 
   const state: CardState = pending ? 'pending' : error && !result ? 'error' : partial ? 'partial' : 'idle';
   const status = pending
-    ? 'Scanning'
+    ? (waiting ? 'Waiting' : 'Scanning')
     : error && !result
       ? 'Could not complete'
       : partial && result
@@ -214,8 +218,13 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
         status={status}
         footer={footer}
       >
-        {pending && (
+        {pending && (waiting ? (
+          <p className="text-[15px] leading-6 text-[var(--text-2)]">Waiting for the current scan to finish…</p>
+        ) : (
           <div className="space-y-2">
+            <p className="text-[15px] leading-6 text-[var(--text-1)]">
+              {progress ? 'Checking prices · ' + progress.done + ' of ' + progress.total : 'Checking prices…'}
+            </p>
             <div className="st-prose space-y-2" aria-hidden="true">
               <div className="h-3 w-[35%] animate-pulse rounded bg-white/[0.06]" />
               <div className="h-3 w-[70%] animate-pulse rounded bg-white/[0.06]" />
@@ -223,12 +232,11 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
             </div>
             <p className="st-meta text-[var(--text-2)]">Results are pending, not zero matches.</p>
           </div>
-        )}
+        ))}
 
         {error && (
           <div role="alert" className="space-y-2">
             <p className="text-[15px] leading-6 text-[var(--text-1)]">{error.replace(/[.\s]+$/, '')}.</p>
-            {!/not a zero-match result/i.test(error) && <p className="st-meta text-[var(--text-2)]">No zero-match conclusion.</p>}
             {onRetryScan && (
               <button
                 type="button"

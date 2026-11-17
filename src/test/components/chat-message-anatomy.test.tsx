@@ -7,6 +7,7 @@ import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
 import { requestResearchChat } from '../../client/researchChat';
 import { ChartReadingCard } from '../../components/chat/ChartReadingCard';
+import { requestScan } from '../../client/api';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import type { BacktestResponse } from '../../shared/strategy/types';
@@ -277,5 +278,86 @@ describe('chat message anatomy', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     expect(paragraph.className).not.toContain('line-clamp-2');
     expect(screen.getByRole('button', { name: 'Less' })).toBeTruthy();
+  });
+
+  it('shows the queued-scan line instead of a skeleton while a scan waits its turn', async () => {
+    vi.mocked(requestResearchChat).mockResolvedValue({
+      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
+      method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
+      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
+    } as never);
+    vi.mocked(requestScan).mockImplementation(((_input: unknown, _signal?: unknown, onPhase?: (phase: string) => void) => {
+      onPhase?.('waiting');
+      return new Promise(() => {});
+    }) as never);
+    render(<AiCopilotDock strategy={validStrategy()} />);
+    send('Screen Nifty 50 for RSI below 30');
+    expect(await screen.findByText('Waiting for the current scan to finish…')).toBeTruthy();
+    expect(screen.queryByText('Results are pending, not zero matches.')).toBeNull();
+  });
+
+  it('maps a lost scan job to a plain line with a retry, never transport text', async () => {
+    vi.mocked(requestResearchChat).mockResolvedValue({
+      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
+      method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
+      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
+    } as never);
+    vi.mocked(requestScan).mockRejectedValue(Object.assign(new Error('Job not found'), { code: 'JOB_LOST' }));
+    render(<AiCopilotDock strategy={validStrategy()} />);
+    send('Screen Nifty 50 for RSI below 30');
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('The server restarted and the scan was lost. Try again.');
+    expect(screen.getByRole('button', { name: 'Retry scan' })).toBeTruthy();
+    expect(screen.queryByText(/No zero-match conclusion/)).toBeNull();
+
+    cleanup();
+    vi.mocked(requestScan).mockRejectedValue(Object.assign(new Error('The server did not return JSON.'), { code: 'INVALID_RESPONSE' }));
+    render(<AiCopilotDock strategy={validStrategy()} />);
+    send('Screen Nifty 50 for RSI below 30');
+    const second = await screen.findByRole('alert');
+    expect(second.textContent).toContain("The scan couldn't reach the server. Try again.");
+    expect(second.textContent).not.toContain('did not return JSON');
+  });
+
+  it('offers "Jump to latest" only when the newest content is a screen away', async () => {
+    vi.mocked(requestResearchChat).mockResolvedValue({
+      schemaVersion: 1, kind: 'conversation', originatingRevision: 1, message: 'A plain answer.',
+      method: 'local_heuristic', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
+    } as never);
+    render(<AiCopilotDock strategy={validStrategy()} />);
+    send('First question');
+    await screen.findByText('A plain answer.');
+
+    const log = screen.getByRole('log');
+    let top = 0;
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, value: 2000 });
+    Object.defineProperty(log, 'clientHeight', { configurable: true, value: 400 });
+    Object.defineProperty(log, 'scrollTop', { configurable: true, get: () => top, set: value => { top = value; } });
+
+    // 200 px from the end: the newest content is already on screen.
+    top = 1400;
+    fireEvent.scroll(log);
+    expect(screen.queryByTestId('jump-to-latest')).toBeNull();
+
+    // More than a screen away: the button appears.
+    top = 900;
+    fireEvent.scroll(log);
+    expect(await screen.findByTestId('jump-to-latest')).toBeTruthy();
+  });
+
+  it('shows scan progress from the job stage', async () => {
+    vi.mocked(requestResearchChat).mockResolvedValue({
+      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
+      method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
+      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
+    } as never);
+    vi.mocked(requestScan).mockImplementation(((_input: unknown, _signal: unknown, _onPhase: unknown, onProgress?: (progress: { status: string; stage: string }) => void) => {
+      onProgress?.({ status: 'running', stage: 'scan 42/50' });
+      return new Promise(() => {});
+    }) as never);
+    render(<AiCopilotDock strategy={validStrategy()} />);
+    send('Screen Nifty 50 for RSI below 30');
+    expect(await screen.findByText('Checking prices · 42 of 50')).toBeTruthy();
+    expect(screen.getByText('Results are pending, not zero matches.')).toBeTruthy();
   });
 });

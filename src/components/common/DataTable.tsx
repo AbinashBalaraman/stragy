@@ -51,7 +51,7 @@ export function DataTable<T>({ caption, columns, rows, rowKey, initialLimit = 8,
         aria-label={caption}
         aria-describedby={captionId}
         tabIndex={0}
-        className={'st-scroll-x overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' + (stickyLastColumn ? '' : 'st-fade-right')}
+        className={'st-scroll-x overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' + (stickyLastColumn || fitMobile ? '' : 'st-fade-right')}
       >
         <table className={'st-tnum w-full border-collapse text-left ' + (fitMobile ? 'min-w-0 sm:min-w-[560px]' : 'min-w-[560px]')}>
           <caption id={captionId} className="sr-only">{caption}</caption>

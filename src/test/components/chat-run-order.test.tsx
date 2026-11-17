@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
 import { requestResearchChat } from '../../client/researchChat';
+import { requestScan } from '../../client/api';
 import type { BacktestResponse } from '../../shared/strategy/types';
 
 vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
@@ -144,5 +145,60 @@ describe('a run that has already completed', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use these assumptions and run' }));
     expect(await screen.findByText("The backtest didn't finish in time. Try again in a minute.")).toBeTruthy();
     expect(screen.queryByText(/deadline exceeded/i)).toBeNull();
+  });
+
+  it('shows the queued-run line instead of the running skeleton', async () => {
+    let finish!: (value: BacktestResponse) => void;
+    const run = vi.fn(() => new Promise<BacktestResponse>(resolve => { finish = resolve; }));
+    render(<AiCopilotDock strategy={validStrategy()} symbols={[symbol]} onResearchBacktest={run} runPhase="waiting" />);
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Backtest RELIANCE with my current strategy' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    await screen.findByRole('article', { name: 'Backtest review' });
+    fireEvent.click(screen.getByRole('button', { name: 'Use these assumptions and run' }));
+
+    expect(await screen.findByText('Waiting for the current scan to finish…')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Waiting…' })).toBeTruthy();
+    // The card owns the progress line while the job is queued.
+    expect(screen.queryByText(/Backtest running on the reviewed assumptions/)).toBeNull();
+    finish(resultFor(validStrategy()));
+  });
+
+  it('accepts a run whose data ends before the reviewed cutoff', async () => {
+    // The screen says "cutoff 17 Nov"; the newest bar is 16 Nov.
+    vi.mocked(requestScan).mockResolvedValue({
+      mode: 'real', universe: 'NIFTY_50', scanned: 50, matched: 1, scannedAt: '2026-11-17T12:00:00Z',
+      dataSource: 'PROVENANCE_PER_SYMBOL', requested: 50, attempted: 50, succeeded: 50, unavailable: 0, failed: 0,
+      offset: 0, limit: 100, errors: [], sourceCoverage: { ANGEL_SMARTAPI: 50 }, warnings: [],
+      observationDates: { earliest: '2024-11-18', latest: '2026-11-17', staleSymbols: 0 },
+      matches: [{
+        symbolId: 7, ticker: 'RELIANCE', name: 'Reliance Industries', sector: 'Energy',
+        // The screen's cutoff is the session date (today); the newest bar is yesterday.
+        lastDate: '2026-11-17', lastClose: 2900, changePercent: 0.5, matchedRules: [], indicatorValues: {},
+        provenance: { mode: 'real', source: 'ANGEL_SMARTAPI', symbolId: 7, asOf: '2026-11-17', fetchedAt: '2026-11-17T12:00:00Z', requestedRange: {}, actualRange: { start: '2024-11-18', end: '2026-11-16' }, adjustment: 'split', checksum: 'fixture', coverage: 'full', freshness: 'FRESH', warnings: [], calendarVersion: 'v1' },
+      }],
+      nearMatches: [],
+    } as never);
+    vi.mocked(requestResearchChat).mockResolvedValue({
+      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
+      method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
+      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
+    } as never);
+
+    const withYesterday = (candidate: unknown) => ({
+      ...resultFor(candidate),
+      provenance: { mode: 'real', source: 'ANGEL_SMARTAPI', asOf: '2026-11-16', actualRange: { start: '2024-11-18', end: '2026-11-16' } },
+      bars: [{ date: '2024-11-18' }, { date: '2026-11-16' }],
+    } as unknown as BacktestResponse);
+
+    render(<AiCopilotDock strategy={validStrategy()} symbols={[symbol]} onResearchBacktest={async candidate => withYesterday(candidate)} />);
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Screen Nifty 50 for RSI below 30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    await screen.findByRole('article', { name: 'Research screen' });
+    fireEvent.click(screen.getByRole('button', { name: 'Prepare backtest for RELIANCE' }));
+    await screen.findByRole('article', { name: 'Backtest review' });
+    fireEvent.click(screen.getByRole('button', { name: 'Use these assumptions and run' }));
+
+    expect(await screen.findByRole('article', { name: 'Backtest result' })).toBeTruthy();
+    expect(screen.queryByText(/did not return a current validated result/)).toBeNull();
   });
 });

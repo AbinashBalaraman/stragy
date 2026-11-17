@@ -372,6 +372,7 @@ export default function App() {
           variant="full"
           strategy={strategy}
           symbols={symbols}
+          runPhase={runPhase}
           onApplyVariation={handleApplyVariation}
           onResearchBacktest={handleResearchBacktest}
           onOpenDetails={result => {
@@ -432,6 +433,7 @@ export default function App() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <MarketScannerView
             strategy={strategy}
+            symbols={symbols}
             prefill={scannerPrefill}
             onPrefillDismiss={() => setScannerPrefill(null)}
             initialUniverse={preferences.universe as MarketUniverseType}
