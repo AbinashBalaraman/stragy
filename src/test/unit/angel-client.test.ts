@@ -143,8 +143,8 @@ describe('Angel One client authentication', () => {
       if (String(url).includes('loginByPassword')) return loginOk();
       return json({ status: false, message: 'Too many requests', errorcode: 'AG8004', data: null }, 429);
     });
-    configureAngelTransport({ fetch: fetcher as typeof fetch, now: () => NOW, resetSession: true });
-    await expect(getAngelQuotes([{ exchange: 'NSE', tokens: ['2885'] }])).rejects.toMatchObject({ code: 'PROVIDER_RATE_LIMITED' });
+    configureAngelTransport({ fetch: fetcher as typeof fetch, now: () => NOW, resetSession: true, rateLimitBaseMs: 5 });
+    await expect(getAngelQuotes([{ exchange: 'NSE', tokens: ['2885'] }])).rejects.toMatchObject({ code: 'PROVIDER_RATE_LIMITED', message: 'Angel One is busy. Try again in a minute.' });
   });
 
   it('caps oversized responses and refuses non-allowlisted hosts', async () => {

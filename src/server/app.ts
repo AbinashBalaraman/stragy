@@ -8,6 +8,7 @@ import { ALL_SYMBOLS, NSE_SYMBOLS, UNIVERSE_OPTIONS, filterSymbolsByUniverse, ge
 import { loadMarketSeries, getAvailableTradingDates, findNearestTradingDate, MarketDataError } from './data/realMarketData';
 import { calculateStockTrends, calculateMarketMovers, getSmartApiStatus, getSmartApiRateLimitsAndSpecs, getOptionChainData, getVolumeProfileAndVWAP, calculateGttBracketOrder, getBasisAndCalendarSpreads } from './data/smartApi';
 import { getLiveQuotes } from './data/liveQuotes';
+import { ANGEL_RATE_LIMIT_MESSAGE } from './data/angelClient';
 import { scanUniverse } from './backtest/scanner';
 import { runBacktest } from './backtest/engine';
 import { STRATEGY_TEMPLATES } from '../shared/strategy/templates';
@@ -15,7 +16,7 @@ import { validateStrategy } from '../shared/strategy/schema';
 import { PATTERN_LIBRARY } from './ai/patterns';
 import { createProposal, getAIStatus, handleAIChat, parseStrategyPrompt, applyStrategyEdit, optimizeStrategyForProfitability } from './ai/copilot';
 import { ResearchRepository, StorageError } from './storage/repository';
-import { JobError, type ResearchPayload } from './jobs/manager';
+import { JobError, SCAN_HARD_CAP_MS, type ResearchPayload } from './jobs/manager';
 import { buildMarketSnapshot, type MarketSnapshot } from './backtest/marketSnapshot';
 import { scanUniverseAsync } from './backtest/scanner';
 import { parseBacktestResult } from '../shared/contracts/research';
@@ -193,8 +194,8 @@ export async function createApp(deps: AppDependencies = {}) {
   app.get('/api/market/universes', (_req, res) => res.json({ success: true, universes: UNIVERSE_OPTIONS }));
   app.get('/api/market/dates', wrap(async (_req, res) => { await loadMarketSeries(NSE_SYMBOLS[0].id,{mode:config.DATA_MODE});const dates = getAvailableTradingDates(250); res.json({ success: true, count: dates.length, dates, mode: config.DATA_MODE, warning: 'Calendar sessions are not evidence of observed price availability for every symbol.' }); }));
   app.get('/api/market/calendar', wrap(async (req, res) => { const requested = parse(DateSchema, req.query.date); await loadMarketSeries(NSE_SYMBOLS[0].id,{mode:config.DATA_MODE});const dates = getAvailableTradingDates(250), resolved = findNearestTradingDate(requested); res.json({ success: true, totalSessions: dates.length, minDate: dates.at(-1)?.date, maxDate: dates[0]?.date, latestSessionDate: dates[0]?.date, latestSessionLabel: dates[0]?.fullLabel, requestedDate: requested ?? dates[0]?.date, ...resolved, tradingDates: dates }); }));
-  async function waitResult(id: string): Promise<unknown> {
-    const deadline = Date.now() + config.MAX_JOB_MS + 5000;
+  async function waitResult(id: string, timeoutMs = config.MAX_JOB_MS + 5000): Promise<unknown> {
+    const deadline = Date.now() + timeoutMs;
     for (;;) { const job = deps.jobs?.get(id); if (!job) throw new ApiFailure(404, 'JOB_NOT_FOUND', 'Job expired.'); if (job.status === 'succeeded') return job.result; if (['failed','cancelled'].includes(job.status)) throw new ApiFailure(422, 'JOB_FAILED', 'Research job did not complete.', job.error); if (Date.now() > deadline) throw new ApiFailure(504, 'JOB_TIMEOUT', 'Research deadline exceeded.'); await new Promise(r => setTimeout(r, 30)); }
   }
   function checkedUniverse(raw: string): string { const normalized = ({ NIFTY50: 'NIFTY_50', BANKNIFTY: 'BANK_NIFTY', INDICES: 'POPULAR_INDICES' } as Record<string,string>)[raw.toUpperCase()] ?? raw.toUpperCase(); if (!UNIVERSE_OPTIONS.some(u => u.id === normalized)) throw new ApiFailure(422, 'UNKNOWN_UNIVERSE', 'Unknown universe.'); return normalized; }
@@ -202,7 +203,7 @@ export async function createApp(deps: AppDependencies = {}) {
   async function trendsFor(rawUniverse: string, date?: string): Promise<MarketSnapshot> {
     const universe = checkedUniverse(rawUniverse), key = universe + ':' + (date ?? 'latest');
     const existing = marketCache.get(key); if (existing && Date.now() - existing.time < 300000) return existing.value;
-    const value = (async () => { if (deps.jobs) return await waitResult(deps.jobs.enqueue({kind:'market',universe,asOf:date,mode:config.DATA_MODE}).id) as MarketSnapshot; if (config.NODE_ENV !== 'test') throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Bounded market worker is required.'); return buildMarketSnapshot(universe,date,config.DATA_MODE); })();
+    const value = (async () => { if (deps.jobs) return await waitResult(deps.jobs.enqueue({kind:'market',universe,asOf:date,mode:config.DATA_MODE}).id, SCAN_HARD_CAP_MS + 5_000) as MarketSnapshot; if (config.NODE_ENV !== 'test') throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Bounded market worker is required.'); return buildMarketSnapshot(universe,date,config.DATA_MODE); })();
     marketCache.set(key,{time:Date.now(),value}); while(marketCache.size>5)marketCache.delete(marketCache.keys().next().value!);
     value.catch(()=>{if(marketCache.get(key)?.value===value)marketCache.delete(key);});return value;
   }
@@ -241,7 +242,7 @@ export async function createApp(deps: AppDependencies = {}) {
   app.delete('/api/v2/jobs/:id', wrap(async (req, res) => { if (!deps.jobs?.get(req.params.id)) throw new ApiFailure(404, 'JOB_NOT_FOUND', 'Job not found.'); res.json(deps.jobs.cancel(req.params.id)); }));
   const getRun = wrap(async (req, res) => { const result = repository.getRun(req.params.id); if (!result) throw new ApiFailure(404, 'BACKTEST_NOT_FOUND', 'Backtest not found or expired.'); res.json({ success: true, result }); }); app.get('/api/backtests/:id', getRun); app.get('/api/v2/backtests/:id', getRun);
   async function scanPayload(body:unknown) { const p=parse(ScanRequest,body);return {kind:'scan' as const,strategy:executable(p.strategy??p.strategyJson??STRATEGY_TEMPLATES[0].strategy),universe:checkedUniverse(p.universe),asOf:p.asOf??p.date,mode:config.DATA_MODE,limit:p.limit}; }
-  const scan = wrap(async(req,res)=>{const payload=await scanPayload(req.body);const result=deps.jobs?await waitResult(deps.jobs.enqueue(payload,req.get('Idempotency-Key')).id):config.NODE_ENV==='test'?await scanUniverseAsync(payload.strategy,payload.universe,{asOf:payload.asOf,mode:payload.mode,limit:payload.limit}):undefined;if(!result)throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Bounded scan worker required.');res.json({success:true,...result as object});});app.post('/api/scan',scan);app.post('/api/market/scan',scan);
+  const scan = wrap(async(req,res)=>{const payload=await scanPayload(req.body);const result=deps.jobs?await waitResult(deps.jobs.enqueue(payload,req.get('Idempotency-Key')).id, SCAN_HARD_CAP_MS + 5_000):config.NODE_ENV==='test'?await scanUniverseAsync(payload.strategy,payload.universe,{asOf:payload.asOf,mode:payload.mode,limit:payload.limit}):undefined;if(!result)throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Bounded scan worker required.');res.json({success:true,...result as object});});app.post('/api/scan',scan);app.post('/api/market/scan',scan);
   app.post('/api/v2/scans',wrap(async(req,res)=>{if(!deps.jobs)throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Scan worker unavailable.');const job=deps.jobs.enqueue(await scanPayload(req.body),req.get('Idempotency-Key'));res.status(202).json({schemaVersion:2,jobId:job.id,status:job.status});}));
   app.get('/api/ai/status', (_req, res) => res.json({ success: true, ...getAIStatus() }));
   const promptInput = z.object({ prompt: z.string().min(1).max(4000), symbolId: IdSchema.optional() });
@@ -280,7 +281,8 @@ export async function createApp(deps: AppDependencies = {}) {
     const bodyError = err as { type?: string; status?: number };
     const status = err instanceof ApiFailure || err instanceof JobError || err instanceof StorageError ? err.status : err instanceof UnknownSymbolError || err instanceof SimulationInputError ? 422 : err instanceof MarketDataError ? (/^(UNKNOWN|INVALID|OUT_OF_COVERAGE)/.test(err.code) ? 422 : 503) : bodyError.type === 'entity.too.large' ? 413 : bodyError.type === 'entity.parse.failed' ? 400 : 500;
     const code = err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? err.code : status === 413 ? 'BODY_TOO_LARGE' : status === 400 ? 'MALFORMED_JSON' : 'INTERNAL_ERROR';
-    const message = err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.';
+    const rateLimited = err instanceof MarketDataError && err.code === 'PROVIDER_RATE_LIMITED';
+    const message = rateLimited ? ANGEL_RATE_LIMIT_MESSAGE : err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.';
     res.status(status).json({ success: false, error: { code, message, requestId: res.locals.requestId, retryable: [429, 503, 504].includes(status), ...(err instanceof ApiFailure && err.details ? { fieldErrors: err.details } : {}) } });
   });
   app.use((req, res, next) => { if (/\.(?:cjs|map)$|(?:^|\/)\.env|(?:^|\/)server(?:\/|\.)/i.test(req.path)) return res.status(404).end(); next(); });

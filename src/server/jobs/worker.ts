@@ -10,11 +10,11 @@ async function main() {
   const payload = workerData as ResearchPayload;
   parentPort?.postMessage({ type: 'progress', stage: payload.kind ?? 'backtest' });
   if (payload.kind === 'scan') {
-    const result = await scanUniverseAsync(payload.strategy, payload.universe, { mode: payload.mode, asOf: payload.asOf, limit: payload.limit, offset: payload.offset });
+    const result = await scanUniverseAsync(payload.strategy, payload.universe, { mode: payload.mode, asOf: payload.asOf, limit: payload.limit, offset: payload.offset, onProgress: stage => parentPort?.postMessage({ type: 'progress', stage }) });
     parentPort?.postMessage({ type:'result',result }); return;
   }
   if (payload.kind === 'market') {
-    const result = await buildMarketSnapshot(payload.universe, payload.asOf, payload.mode);
+    const result = await buildMarketSnapshot(payload.universe, payload.asOf, payload.mode, stage => parentPort?.postMessage({ type: 'progress', stage }));
     parentPort?.postMessage({ type:'result',result }); return;
   }
   const result = runBacktest(payload.strategy, payload.bars, payload.options);

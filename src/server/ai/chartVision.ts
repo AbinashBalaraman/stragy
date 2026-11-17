@@ -26,6 +26,40 @@ import { buildScreenTitle, cleanScreenSummary } from '../../shared/strategy/scre
 import { describeConfigState } from './proposals';
 import { chartReadingCacheKey, readChartReading, writeChartReading } from './chartReadingCache';
 
+const CHART_READ_FAILURE_MESSAGE = "I couldn't read this chart. The AI models didn't return a reading. Try again, or describe the setup in words.";
+/** Keeps two passes plus one repair inside the client's 180 s chart deadline. */
+export const VISION_ATTEMPT_TIMEOUT_MS = 25_000;
+
+/** Clone a provider config with a shorter per-attempt timeout, preserving the non-enumerable key. */
+export function withVisionTimeout(config: AIRuntimeConfig): AIRuntimeConfig {
+  const timeoutMs = Math.min(config.timeoutMs, VISION_ATTEMPT_TIMEOUT_MS);
+  if (timeoutMs === config.timeoutMs) return config;
+  const clone: AIRuntimeConfig = { ...config, timeoutMs };
+  const key = (config as AIRuntimeConfig & { apiKey?: string }).apiKey;
+  if (key) Object.defineProperty(clone, 'apiKey', { value: key, enumerable: false });
+  if (config.fallbackTargets) {
+    clone.fallbackTargets = config.fallbackTargets.map(target => target.config
+      ? { ...target, config: withVisionTimeout(target.config) }
+      : target);
+  }
+  return clone;
+}
+
+/** One model only, so a retry/repair pass cannot restart the whole fallback chain. */
+function singleModelConfig(config: AIRuntimeConfig): AIRuntimeConfig {
+  const clone: AIRuntimeConfig = { ...config, fallbackTargets: [] };
+  const key = (config as AIRuntimeConfig & { apiKey?: string }).apiKey;
+  if (key) Object.defineProperty(clone, 'apiKey', { value: key, enumerable: false });
+  return clone;
+}
+
+/** Use the model that answered the previous pass for the next chart call. */
+function configForAnswer(base: AIRuntimeConfig, provider: string, model: string): AIRuntimeConfig {
+  if (base.provider === provider && base.model === model) return singleModelConfig(base);
+  const target = base.fallbackTargets?.find(item => item.config && item.provider === provider && item.model === model)
+    ?? base.fallbackTargets?.find(item => item.config && item.provider === provider);
+  return target?.config ? singleModelConfig(target.config) : singleModelConfig(base);
+}
 export const CHART_IMAGE_LIMITS = {
   maxDataUrlChars: 7_000_000,
   /** Decoded image bytes; 5 MB decimal, matching the documented upload limit. */
@@ -662,14 +696,16 @@ export async function analyzeChart(input: ChartAnalysisInput, deps: ChartVisionD
   return task;
 }
 
-/** Two-pass chart analysis. One provider only; no fallback and no fabricated reading. */
+/** Two-pass chart analysis with a bounded fallback chain; never fabricates a reading. */
 async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVisionDeps, hint: string): Promise<ResearchChatResponse> {
   const cfg = deps.config ?? resolveVisionConfig(deps.env ?? process.env);
+  const visionOutputTokens = Math.min(AI_LIMITS.maxOutputTokens, Math.max(cfg.maxOutputTokens, 8_000));
   if (!cfg.ready) return unavailable(describeConfigState(cfg) + ' Chart reading is unavailable; no observations were invented.');
   const currentValidation = input.currentStrategy ? validateStrategy(input.currentStrategy) : null;
   if (!input.currentStrategy || !currentValidation?.success || !currentValidation.data) return unavailable('A valid executable workspace strategy is required to preserve exits, risk, sizing, execution and costs. No chart reading was fabricated.');
   const current = currentValidation.data;
   const providerDeps = { fetch: deps.fetch, budget: deps.budget };
+  const visionCfg = withVisionTimeout(cfg);
   const pass2System = [
     PASS2_SYSTEM,
     STRATEGY_JSON_RULES,
@@ -678,7 +714,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
   ].join('\n');
 
   // Pass 1: observations only.
-  const pass1 = await callProvider(cfg, {
+  const pass1 = await callProvider(visionCfg, {
     system: PASS1_SYSTEM,
     user: JSON.stringify({ hint: hint || null }),
     json: true,
@@ -687,40 +723,41 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     maxRequestBodyBytes: AI_LIMITS.maxVisionRequestBodyBytes,
     // Free reasoning-vision models can spend most of the budget before emitting
     // the JSON; the observation pass gets the full bounded output allowance.
-    maxOutputTokens: AI_LIMITS.maxOutputTokens,
+    maxOutputTokens: visionOutputTokens,
     reasoningEffort: 'low',
   }, providerDeps);
-  if (!pass1.ok) return unavailable('Chart reading failed: ' + pass1.message + ' No reading was fabricated.');
+  if (!pass1.ok) return unavailable(CHART_READ_FAILURE_MESSAGE);
   const parsed1 = safeParseJson(pass1.text);
-  if (!parsed1.ok) return unavailable('The vision model did not return usable observations: ' + parsed1.message + ' No reading was fabricated.');
+  if (!parsed1.ok) return unavailable(CHART_READ_FAILURE_MESSAGE);
   const rawObservations = parsed1.value && typeof parsed1.value === 'object' && 'observations' in parsed1.value
     ? (parsed1.value as Record<string, unknown>).observations
     : parsed1.value;
   const observations = ChartObservationsSchema.safeParse(rawObservations);
   if (!observations.success) {
     const issue = observations.error.issues[0];
-    return unavailable('The vision model returned observations outside the fixed chart-reading schema'
-      + (issue ? ': ' + (issue.path.join('.') || 'observations') + ' ' + issue.message : '')
-      + '. No reading was fabricated.');
+    return unavailable(CHART_READ_FAILURE_MESSAGE);
   }
 
   // Pass 2: catalog conditions only, with one repair attempt driven by validation errors.
   let lastErrors: string[] = [];
   let previousRaw = '';
   let accepted: { plan: ChartPlan; strategy: StrategyAST; assumptions: string[] } | null = null;
+  let answering: { provider: string; model: string } | null = null;
+  let pass2Cfg = visionCfg;
   for (let attempt = 0; attempt < 2 && !accepted; attempt++) {
     const retry = attempt > 0;
-    const pass2 = await callProvider(cfg, {
+    const pass2 = await callProvider(visionCfg, {
       system: pass2System + (retry ? RETRY_SUFFIX + JSON.stringify(lastErrors.slice(0, 8)) : ''),
       user: JSON.stringify({ observations: normalizeObservations(observations.data), hint: hint || null, ...(retry ? { rejected: previousRaw.slice(0, 6_000), errors: lastErrors.slice(0, 8) } : {}) }),
       json: true,
       temperature: 0,
       maxRequestBodyBytes: AI_LIMITS.maxRequestBodyBytes,
-      maxOutputTokens: AI_LIMITS.maxOutputTokens,
+      maxOutputTokens: visionOutputTokens,
       reasoningEffort: 'low',
     }, providerDeps);
     if (!pass2.ok) { lastErrors = [pass2.message]; break; }
     previousRaw = pass2.text;
+    const pass2Answer = { provider: pass2.provider, model: pass2.model };
     const parsed2 = safeParseJson(pass2.text);
     if (!parsed2.ok) { lastErrors = [parsed2.message]; continue; }
     const plan = ChartPlanSchema.safeParse(parsed2.value);
@@ -730,12 +767,14 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
       const validated = validateStrategy(built.strategy);
       if (!validated.success || !validated.data) { lastErrors = validated.errors ?? ['strategy: is not executable']; continue; }
       accepted = { plan: plan.data, strategy: validated.data, assumptions: built.assumptions };
+      answering = pass2Answer;
+      pass2Cfg = configForAnswer(visionCfg, pass2.provider, pass2.model);
     } catch (error) {
       lastErrors = [error instanceof Error ? error.message : 'The plan could not be mapped to the catalog'];
     }
   }
   if (!accepted) {
-    return unavailable('The chart reading could not be converted into a validated, executable setup. ' + (lastErrors.length ? lastErrors.slice(0, 6).join('; ') : 'No valid catalog plan was returned.') + ' No scan or backtest was run.');
+    return unavailable(CHART_READ_FAILURE_MESSAGE);
   }
 
   // Guide step 7: check the charted stock itself. One repair pass may loosen the
@@ -753,7 +792,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     try {
       let evaluation = await evaluator({ symbol: chartedSymbol, strategy: finalStrategy });
       if (evaluation.matched < evaluation.total) {
-        const repair = await callProvider(cfg, {
+        const repair = await callProvider(pass2Cfg, {
           system: REPAIR_SYSTEM,
           user: JSON.stringify({
             observations: normalizeObservations(observations.data),
@@ -764,7 +803,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
           json: true,
           temperature: 0,
           maxRequestBodyBytes: AI_LIMITS.maxRequestBodyBytes,
-          maxOutputTokens: AI_LIMITS.maxOutputTokens,
+          maxOutputTokens: visionOutputTokens,
           reasoningEffort: 'low',
         }, providerDeps);
         if (repair.ok) {
@@ -781,6 +820,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
                 finalAssumptions = built.assumptions;
                 evaluation = repairedEvaluation;
                 selfRepairApplied = true;
+                answering = { provider: repair.provider, model: repair.model };
               }
             } catch { /* Keep the first valid plan when the repair cannot be built. */ }
           }
@@ -814,7 +854,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     originatingRevision: null,
     message: 'Chart image screen plan. No workspace change or backtest has occurred.',
     method: 'external_ai',
-    provider: { name: cfg.provider, model: cfg.model, aiGenerated: true },
+    provider: { name: answering?.provider ?? cfg.provider, model: answering?.model ?? cfg.model, aiGenerated: true },
     warnings: [
       'Chart reading is an interpretation of the image, not a forecast.',
       ...(lastErrors.length ? ['One plan repair pass was required before the setup validated.'] : []),

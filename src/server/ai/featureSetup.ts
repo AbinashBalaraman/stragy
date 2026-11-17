@@ -3,6 +3,7 @@ import { validateStrategy } from '../../shared/strategy/schema';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { truncateAtWord } from '../../shared/format';
 import { ALL_SYMBOLS } from '../../shared/data/symbols';
+import { applyExplicitNumbers, mergeExplicitAssumptions } from './explicitNumbers';
 import {
   DEFAULT_USER_PREFERENCES, FeatureSetupRequestSchema, FeatureSetupResponseSchema,
   MarketScannerInputSchema, StrategyTesterInputSchema, UserPreferencesSchema,
@@ -412,13 +413,19 @@ export function resolveFeatureSetup(raw: unknown, options: FeatureSetupOptions =
     return needsInput(featureId, 'What exact exit rule should I use with this entry? For example: close below SMA 20.', []);
   }
   const built = buildIntentStrategy(base, symbol, intent, preferences, featureId === 'strategy_tester');
-  const validated = validateStrategy(built.strategy);
+  // A stated stop, target, trailing stop, RSI level or MA period overrides the
+  // template defaults and any exit indicator the template happened to carry.
+  const explicit = applyExplicitNumbers(built.strategy, message, {
+    dropUnrequestedExits: featureId === 'strategy_tester',
+    clearUnrequestedTrailing: featureId === 'strategy_tester',
+  });
+  const validated = validateStrategy(explicit.strategy);
   if (!validated.success || !validated.data) {
-    return needsInput(featureId, 'The filled strategy did not pass validation: ' + (validated.errors?.[0] ?? 'unknown rule error') + '. What should I change?', built.assumptions);
+    return needsInput(featureId, 'The filled strategy did not pass validation: ' + (validated.errors?.[0] ?? 'unknown rule error') + '. What should I change?', mergeExplicitAssumptions(built.assumptions, explicit));
   }
   const strategy = validated.data;
   const window = dateWindow(preferences, now);
-  const assumptions = [...built.assumptions, window.label];
+  const assumptions = [...mergeExplicitAssumptions(built.assumptions, explicit), window.label];
 
   if (featureId === 'market_scanner') {
     const scanInput = { universe: 'NIFTY_50' as const, strategy, limit: 100 };

@@ -10,6 +10,7 @@ import {
 import { INPUT_LIMITS, boundHistory, describeStrategyChanges, diffStrategies, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
 import { buildStrategySystemPrompt } from './strategyPrompt';
 import { LOCAL_LABEL, localCreateFromPrompt, localEditStrategy } from './heuristics';
+import { applyExplicitNumbers, mergeExplicitAssumptions } from './explicitNumbers';
 import type {
   CreateProposalFailure, CreateProposalResult, ProposalErrorCode, StrategyProposalV2,
 } from './types';
@@ -181,9 +182,22 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
       if (!sv.success) return maybeLocal('ai_invalid_schema', 'The model output did not match the strategy schema.', modelWarnings, sv.errors);
       repaired = true;
     }
-    const candidate: StrategyAST = { ...sv.data!, id: current?.id ?? sv.data!.id ?? `cand_${newId()}` };
+    const draft: StrategyAST = { ...sv.data!, id: current?.id ?? sv.data!.id ?? `cand_${newId()}` };
+    // Literal numbers in the request win over the model draft. A full backtest
+    // setup also drops an exit indicator the user never named when a stop/target
+    // was stated; a simple edit keeps the existing exits.
+    const fullSetup = /\b(?:backtest|build|create|new\s+strategy|set\s+up)\b/i.test(prompt);
+    const replaceExits = mode === 'create' || fullSetup;
+    const explicit = applyExplicitNumbers(draft, prompt, {
+      dropUnrequestedExits: replaceExits,
+      clearUnrequestedTrailing: replaceExits,
+    });
+    const explicitChecked = explicit.matched ? strictValidateStrategy(explicit.strategy) : null;
+    const candidate: StrategyAST = explicitChecked?.success && explicitChecked.data ? explicitChecked.data : draft;
     const extra = Object.keys(out).filter((k) => !['rationale', 'warnings', 'strategy'].includes(k));
     const w = [...warnings, ...modelWarnings];
+    if (explicitChecked && !explicitChecked.success) w.push('Explicit numbers from your message could not be applied safely; review the draft.');
+    else w.push(...explicit.assumptions);
     if (repaired) w.push('The model draft required one repair attempt after schema validation failed.');
     if (extra.length) w.push(`Ignored unexpected model fields: ${extra.slice(0, 5).map((k) => sanitizeText(k, 40)).join(', ')}.`);
     const stripped = Object.keys(out.strategy as object).filter((k) => !(k in candidate));
@@ -214,18 +228,27 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
     if (mode === 'edit' && current) {
       const e = localEditStrategy(current, prompt);
       if (!e.recognised) return failure('no_local_match', e.warnings[0] ?? 'No local edit recognised.', rev as number | string | null, [...warnings, ...e.warnings], e.errors);
+      const explicit = applyExplicitNumbers(e.strategy, prompt, { dropUnrequestedExits: false, clearUnrequestedTrailing: false });
+      const checked = explicit.matched ? strictValidateStrategy(explicit.strategy) : null;
       return {
         ok: true,
-        proposal: mk({ method: 'local_heuristic', provider, candidate: e.strategy, rationale: 'Applied only the explicit edits found in your text using local keyword rules (not AI).', warnings: [...warnings, ...e.warnings, 'Local keyword edit. Review before applying.'] }),
+        proposal: mk({ method: 'local_heuristic', provider, candidate: checked?.success && checked.data ? checked.data : e.strategy, rationale: 'Applied only the explicit edits found in your text using local keyword rules (not AI).', warnings: [...warnings, ...e.warnings, ...mergeExplicitAssumptions([], explicit), 'Local keyword edit. Review before applying.'] }),
       };
     }
     const c = localCreateFromPrompt(prompt, input.symbolId ?? current?.universe.symbolId ?? 1);
     if (!c.variations.length) return failure('no_local_match', c.warnings[0] ?? 'No local match.', rev as number | string | null, [...warnings, ...c.warnings]);
+    let explicitAssumptions: string[] = [];
+    const variations = c.variations.map(variation => {
+      const explicit = applyExplicitNumbers(variation.strategy, prompt, { dropUnrequestedExits: true, clearUnrequestedTrailing: true });
+      explicitAssumptions = mergeExplicitAssumptions(explicitAssumptions, explicit);
+      const checked = explicit.matched ? strictValidateStrategy(explicit.strategy) : null;
+      return checked?.success && checked.data ? { ...variation, strategy: checked.data } : variation;
+    });
     return {
       ok: true,
-      variations: c.variations,
+      variations,
       detectedPattern: c.detectedPattern,
-      proposal: mk({ method: 'local_heuristic', provider, candidate: c.variations[0].strategy, rationale: `Matched the local pattern "${c.detectedPattern}" by keyword. This is a library lookup, not AI interpretation.`, warnings: [...warnings, ...c.warnings] }),
+      proposal: mk({ method: 'local_heuristic', provider, candidate: variations[0].strategy, rationale: `Matched the local pattern "${c.detectedPattern}" by keyword. This is a library lookup, not AI interpretation.`, warnings: [...warnings, ...c.warnings, ...explicitAssumptions] }),
     };
   }
 }

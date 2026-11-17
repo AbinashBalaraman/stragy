@@ -221,6 +221,16 @@ describe('OpenCode Go provider', () => {
     expect(JSON.parse(f.calls[1].init.body).model).toBe('longcat-2.5-free');
   });
 
+  it('treats finish_reason=length with no content as retryable and moves to the fallback', async () => {
+    const cfg = resolveAIConfig({ ...GO_ENV, AI_MODEL: 'hy4-flash-free', AI_FALLBACK_MODELS: 'opencode-go:longcat-2.5-free', AI_COST_POLICY: 'free-only' });
+    const limited = { choices: [{ message: { content: '' }, finish_reason: 'length' }] };
+    const responses = [fakeResponse({ body: limited }), fakeResponse({ body: openAIBody('Fallback answer after length') })];
+    const f = recordingFetch(() => responses.shift());
+    const r = await callProvider(cfg, req, { fetch: f, budget: createRequestBudget(), sleep: async () => {} });
+    expect(r).toMatchObject({ ok: true, model: 'longcat-2.5-free', text: 'Fallback answer after length' });
+    expect(f.calls).toHaveLength(2);
+  });
+
   it('moves to the fallback when reasoning arrives without answer content', async () => {
     const cfg = resolveAIConfig({ ...GO_ENV, AI_MODEL: 'hy4-flash-free', AI_FALLBACK_MODELS: 'opencode-go:longcat-2.5-free', AI_COST_POLICY: 'free-only' });
     const reasoningOnly = { choices: [{ message: { content: '', reasoning_content: 'internal reasoning only' }, finish_reason: 'stop' }] };
@@ -325,6 +335,26 @@ describe('D01 rate-limit retry, fallback models and last-call status', () => {
     expect(r).toMatchObject({ ok: true, text: 'fallback answer', model: 'gpt-fallback-b' });
     expect(f.calls).toHaveLength(3);
     expect(getAIStatus({ AI_PROVIDER: 'openai', OPENAI_API_KEY: SECRET_B, AI_MODEL: 'gpt-test' }).lastCall).toMatchObject({ ok: true, model: 'gpt-fallback-b' });
+  });
+
+  it('tries an approved paid fallback for a vision request even when the catalog marks it text-only', async () => {
+    const cfg = resolveAIConfig({
+      AI_PROVIDER: 'opencode-go', OPENCODE_API_KEY: SECRET_E, AI_MODEL: 'hy4-flash-free',
+      AI_COST_POLICY: 'free-only', AI_APPROVED_PAID_MODELS: 'opencode-go:deepseek-v4.1-flash',
+      AI_FALLBACK_MODELS: 'opencode-go:deepseek-v4.1-flash',
+    });
+    expect(cfg.fallbackTargets?.[0]).toMatchObject({ label: 'opencode-go:deepseek-v4.1-flash', approvedPaid: true, supportsImages: false, status: 'ready' });
+    const f = recordingFetch((_url, init) => {
+      const body = JSON.parse(init.body);
+      return body.model === 'hy4-flash-free'
+        ? { ok: false, status: 403, headers: { get: () => null }, text: async () => '{}' }
+        : fakeResponse({ body: openAIBody('paid vision answer') });
+    });
+    const r = await callProvider(cfg, {
+      system: 'read', user: '{"hint":null}', json: true, images: ['data:image/png;base64,AAAA'],
+    }, { fetch: f, budget: createRequestBudget() });
+    expect(r).toMatchObject({ ok: true, provider: 'opencode-go', model: 'deepseek-v4.1-flash', text: 'paid vision answer' });
+    expect(f.calls).toHaveLength(2);
   });
 
   it('keeps free targets ready, paid targets blocked unless approved, and lists missing keys', () => {

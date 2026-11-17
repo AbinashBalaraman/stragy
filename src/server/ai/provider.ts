@@ -477,12 +477,12 @@ function extractText(provider: AIProviderName, data: any): ProviderCallFailure |
   else if (content && typeof content === 'object' && typeof content.text === 'string') text = content.text;
   else return reasoningOnly
     ? fail('empty_response', 'Provider returned reasoning without answer text.')
-    : fail('invalid_response', choice.finish_reason === 'length' ? 'Provider reached its output limit before returning text.' : 'Provider message content was not text.');
+    : fail(choice.finish_reason === 'length' ? 'empty_response' : 'invalid_response', choice.finish_reason === 'length' ? 'Provider returned no answer text. This is retryable.' : 'Provider message content was not text.');
   return text.trim()
     ? { text }
     : fail('empty_response', reasoningOnly
       ? 'Provider returned reasoning without answer text.'
-      : choice.finish_reason === 'length' ? 'Provider reached its output limit before returning text.' : 'Provider returned empty text.');
+      : choice.finish_reason === 'length' ? 'Provider returned no answer text. This is retryable.' : 'Provider returned empty text.');
 }
 
 /**
@@ -625,7 +625,10 @@ export async function callProvider(cfg: AIRuntimeConfig, req: ProviderRequest, d
   const attempts: { config: AIRuntimeConfig; fallback: boolean }[] = [{ config: cfg, fallback: false }];
   for (const target of cfg.fallbackTargets ?? []) {
     if (!target.configured || target.status !== 'ready' || !target.config) continue;
-    if (req.images?.length && !target.supportsImages) continue;
+    // An owner-approved paid fallback is a last resort for vision too; the
+    // provider is allowed to reject images, and that attempt is logged.
+    const imageCapable = target.supportsImages || (target.approvedPaid && target.configured);
+    if (req.images?.length && !imageCapable) continue;
     attempts.push({ config: target.config, fallback: true });
   }
 
@@ -638,6 +641,9 @@ export async function callProvider(cfg: AIRuntimeConfig, req: ProviderRequest, d
       console.info(JSON.stringify({ event: 'ai_paid_fallback', provider: attemptCfg.provider, model: attemptCfg.model, at: new Date().toISOString() }));
     }
     const result = await attemptWithRetry(attemptCfg, req, deps, fetchImpl);
+    if (req.images?.length) {
+      console.info(JSON.stringify({ event: 'ai_vision_attempt', provider: attemptCfg.provider, model: attemptCfg.model, fallback: attempt.fallback, ok: result.ok, code: result.ok ? undefined : result.code, at: new Date().toISOString() }));
+    }
     if (result.ok) {
       recordProviderCall(result, result.provider, result.model);
       return result;

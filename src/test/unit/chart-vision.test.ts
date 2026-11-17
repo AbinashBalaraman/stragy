@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CHART_IMAGE_LIMITS, ChartImageError, analyzeChart, legendBand, parseChartImageDataUrl,
+  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, analyzeChart, legendBand, parseChartImageDataUrl, withVisionTimeout,
 } from '../../server/ai/chartVision';
 import { callProvider, createRequestBudget, resolveAIConfig, resolveVisionConfig } from '../../server/ai/provider';
 import { getAIStatus } from '../../server/ai/copilot';
@@ -106,6 +106,18 @@ describe('vision provider image payloads', () => {
   });
 });
 
+describe('vision time budget', () => {
+  it('caps every chart attempt and its fallback chain without losing the key', () => {
+    const cfg = resolveAIConfig({ ...visionEnv, AI_TIMEOUT_MS: '60000', AI_MODEL: 'gpt-primary', AI_FALLBACK_MODELS: 'openai:gpt-fallback', AI_COST_POLICY: 'operator-approved' });
+    const capped = withVisionTimeout(cfg);
+    expect(capped.timeoutMs).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+    expect(capped.fallbackTargets?.[0]?.config?.timeoutMs).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+    expect((capped as unknown as { apiKey?: string }).apiKey).toBe('fixture-vision-key');
+    expect((capped.fallbackTargets?.[0]?.config as unknown as { apiKey?: string } | undefined)?.apiKey).toBe('fixture-vision-key');
+    expect(VISION_ATTEMPT_TIMEOUT_MS * 7).toBeLessThan(180_000);
+  });
+});
+
 describe('chart analysis', () => {
   it('returns unavailable without a configured provider and never calls fetch', async () => {
     const f = vi.fn();
@@ -137,6 +149,8 @@ describe('chart analysis', () => {
     expect(result.strategy.rules.entry.some(r => r.rightIndicator?.includes('rsi_tl') && r.operator === 'crossesAbove')).toBe(true);
     expect(result.strategy.rules.entry.some(r => r.lookback?.bars === 10)).toBe(true);
     expect(pass2Calls(f)).toHaveLength(1);
+    const firstBody = JSON.parse(f.calls[0].init.body);
+    expect(firstBody.max_completion_tokens).toBe(8000);
     const pass2System = JSON.parse(f.calls[1].init.body).messages[0].content;
     expect(pass2System).toContain('Exact strategy JSON requirements');
     expect(pass2System).toContain('FLAT NUMBERS');
@@ -144,6 +158,22 @@ describe('chart analysis', () => {
     expect(pass2System).toContain('Do NOT output the AST');
     expect(parseResearchChatResponse(result)).toEqual(result);
     expect(JSON.stringify(result)).not.toContain('fixture-vision-key');
+  });
+
+  it('reports the fallback model that actually answered, not the primary', async () => {
+    const env = { ...visionEnv, AI_MODEL: 'gpt-primary', AI_FALLBACK_MODELS: 'openai:gpt-fallback', AI_COST_POLICY: 'operator-approved' };
+    const f = recordingFetch((_url, init) => {
+      const body = JSON.parse(init.body);
+      if (body.model === 'gpt-primary') {
+        return fakeResponse({ body: { choices: [{ message: { content: '' }, finish_reason: 'length' }] } });
+      }
+      const content = Array.isArray(body.messages[1].content) ? observations : plan;
+      return fakeResponse({ body: openAIBody(JSON.stringify(content)) });
+    });
+    const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env, fetch: f, budget: createRequestBudget() });
+    expect(result.kind).toBe('screen');
+    expect(result.provider).toEqual({ name: 'openai', model: 'gpt-fallback', aiGenerated: true });
+    expect(f.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it('retries pass 2 once with the validation errors when the plan is unusable', async () => {
@@ -173,7 +203,7 @@ describe('chart analysis', () => {
     });
     const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env: visionEnv, fetch: f, budget: createRequestBudget() });
     expect(result).toMatchObject({ kind: 'conversation', method: 'unavailable' });
-    expect(result.message).toMatch(/validated, executable setup/i);
+    expect(result.message).toBe("I couldn't read this chart. The AI models didn't return a reading. Try again, or describe the setup in words.");
     expect(JSON.stringify(result)).not.toContain('fixture-vision-key');
   });
 

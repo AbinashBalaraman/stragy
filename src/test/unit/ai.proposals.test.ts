@@ -160,6 +160,50 @@ describe('createProposal: external AI (fake fetch)', () => {
     expect(r.proposal.executes).toBe(false);
   });
 
+  it('overrides an AI draft with the stop and target the user stated', async () => {
+    const aiDraft = validStrategy({
+      name: 'AI draft',
+      indicators: [
+        { id: 'rsi14', type: 'RSI', params: { period: 14 } },
+        { id: 'st1', type: 'SUPERTREND', params: { period: 10, multiplier: 3 } },
+      ],
+      rules: {
+        entry: [{ leftIndicator: 'rsi14', operator: 'lt', rightValue: 30 }],
+        exit: [{ leftIndicator: 'close', operator: 'lt', rightIndicator: 'st1' }],
+      },
+      risk: {
+        stopLoss: { type: 'percent', value: 3.5 },
+        takeProfit: { type: 'percent', value: 14 },
+        trailingStop: { type: 'percent', value: 2.5 },
+        positionSizing: { type: 'fixedFraction', fraction: 0.1 },
+        maxDrawdownCutoff: null,
+      },
+    });
+    const f = recordingFetch(() => ok(aiDraft));
+    const r = await createProposal({
+      prompt: 'Backtest RELIANCE with RSI below 30 entry, 5% stop loss, 10% target',
+    }, deps(f));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.proposal.method).toBe('external_ai');
+    expect(r.proposal.candidate.risk.stopLoss).toEqual({ type: 'percent', value: 5 });
+    expect(r.proposal.candidate.risk.takeProfit).toEqual({ type: 'percent', value: 10 });
+    expect(r.proposal.candidate.risk.trailingStop).toBeNull();
+    expect(r.proposal.candidate.rules.exit).toEqual([]);
+    expect(r.proposal.warnings.join(' ')).toContain('Target: 10% above entry');
+    expect(r.proposal.warnings.join(' ')).toMatch(/no indicator exit rule/i);
+
+    const editing = await createProposal({
+      prompt: 'Backtest RELIANCE with RSI below 30 entry, 5% stop loss, 10% target',
+      currentStrategy: validStrategy(),
+    }, deps(recordingFetch(() => ok(aiDraft))));
+    expect(editing.ok).toBe(true);
+    if (!editing.ok) return;
+    expect(editing.proposal.candidate.risk.stopLoss).toEqual({ type: 'percent', value: 5 });
+    expect(editing.proposal.candidate.risk.takeProfit).toEqual({ type: 'percent', value: 10 });
+    expect(editing.proposal.candidate.rules.exit).toEqual([]);
+  });
+
   it('repairs a schema-invalid draft once with the previous JSON and field errors', async () => {
     const bad: any = validStrategy();
     delete bad.risk;

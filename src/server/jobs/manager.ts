@@ -14,7 +14,9 @@ export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancell
 export interface ResearchJob { id: string; kind: 'backtest' | 'scan' | 'market'; status: JobStatus; stage: string; createdAt: string; queuedBehind?: number; startedAt?: string; finishedAt?: string; result?: ResearchResult; error?: { code: string; message: string }; }
 export class JobError extends Error { constructor(public code: string, message: string, public status = 422) { super(message); } }
 type Lane = 'backtest' | 'scan';
-interface JobRecord { job: ResearchJob; payload: ResearchPayload; hash: string; lane: Lane; controller: AbortController; stop?: () => Promise<void>; timer?: ReturnType<typeof setTimeout>; }
+interface JobRecord { job: ResearchJob; payload: ResearchPayload; hash: string; lane: Lane; controller: AbortController; stop?: () => Promise<void>; timer?: ReturnType<typeof setTimeout>; hardDeadlineAt?: number; }
+export const SCAN_IDLE_MS = 90_000;
+export const SCAN_HARD_CAP_MS = 300_000;
 type Executor = (payload: ResearchPayload, context: { signal: AbortSignal; progress: (stage: string) => void }) => Promise<ResearchResult>;
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 function canonical(v: unknown): unknown { return Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, value]) => [k, canonical(value)])) : v; }
@@ -27,7 +29,7 @@ export class JobManager {
   };
   private closed = false;
   private terminations = new Set<Promise<void>>();
-  constructor(private options: { maxQueue?: number; maxMs?: number; maxRetained?: number; workers?: number; workerPath?: string; executor?: Executor } = {}) {}
+  constructor(private options: { maxQueue?: number; maxMs?: number; scanIdleMs?: number; scanHardCapMs?: number; maxRetained?: number; workers?: number; workerPath?: string; executor?: Executor } = {}) {}
   enqueue(input: ResearchPayload, key?: string): ResearchJob {
     if (this.closed) throw new JobError('SHUTTING_DOWN', 'New jobs are disabled during shutdown.', 503);
     if (!input || typeof input !== 'object') throw new JobError('INVALID_JOB_INPUT', 'A normalized research payload is required.');
@@ -93,8 +95,32 @@ export class JobManager {
         record.job.startedAt = new Date().toISOString();
         delete record.job.queuedBehind;
         // The deadline starts with the run, never with time spent in the lane queue.
-        record.timer = setTimeout(() => { this.finish(record, 'failed', undefined, { code: 'JOB_TIMEOUT', message: 'Execution deadline exceeded.' }); record.controller.abort(); }, this.options.maxMs ?? 30000);
-        const progress = (stage: string) => { if (record.job.status === 'running') record.job.stage = stage.slice(0, 80); };
+        const timeout = () => {
+          const message = record.lane === 'scan'
+            ? 'The scan took too long and was stopped. Try again.'
+            : 'The backtest took too long and was stopped. Try again.';
+          this.finish(record, 'failed', undefined, { code: 'JOB_TIMEOUT', message });
+          record.controller.abort();
+        };
+        let armTimer = () => {
+          record.timer = setTimeout(timeout, this.options.maxMs ?? 30000);
+        };
+        if (record.lane === 'scan') {
+          const hardCap = this.options.scanHardCapMs ?? SCAN_HARD_CAP_MS;
+          const idle = this.options.scanIdleMs ?? SCAN_IDLE_MS;
+          record.hardDeadlineAt = Date.now() + hardCap;
+          armTimer = () => {
+            if (record.timer) clearTimeout(record.timer);
+            const remaining = Math.max(0, (record.hardDeadlineAt ?? 0) - Date.now());
+            record.timer = setTimeout(timeout, Math.min(idle, remaining));
+          };
+        }
+        armTimer();
+        const progress = (stage: string) => {
+          if (record.job.status !== 'running') return;
+          record.job.stage = stage.slice(0, 80);
+          if (record.lane === 'scan') armTimer();
+        };
         const work = Promise.resolve().then(() => { if (record.job.status !== 'running') throw new JobError('JOB_CANCELLED', 'Work cancelled before execution.'); return this.options.executor ? this.options.executor(record.payload, { signal: record.controller.signal, progress }) : this.runWorker(record, progress); });
         Promise.resolve(work).then(result => this.finish(record, 'succeeded', result), error => this.finish(record, 'failed', undefined, { code: error instanceof JobError ? error.code : 'WORKER_FAILED', message: error instanceof JobError ? error.message : 'The computation worker did not complete.' }));
       }

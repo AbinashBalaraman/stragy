@@ -13,7 +13,7 @@ export const NEAR_MATCH_LIMIT = 10;
 export interface ScanRuleDiagnostic {rule:string;ruleIndex?:number;actualLeft:number|null;actualRight:number|null;matchedIndex?:number;matchedDate?:string;currentActualLeft?:number|null;currentActualRight?:number|null;}
 export interface ScanMatchResult{symbolId:number;ticker:string;name:string;sector:string;lastDate:string;lastClose:number;currency?:'INR';changePercent:number;score?:number;matchedRules:ScanRuleDiagnostic[];unmatchedRules?:ScanRuleDiagnostic[];indicatorValues:Record<string,number>;provenance:MarketSeries['provenance'];}
 export interface UniverseScanResponse{mode:'demo'|'real';universe:string;scanned:number;matched:number;scannedAt:string;dataSource:string;matches:ScanMatchResult[];nearMatches:ScanMatchResult[];requested:number;attempted:number;succeeded:number;unavailable:number;failed:number;asOf?:string;offset:number;limit:number;errors:{symbolId:number;code:string;message:string;ticker?:string}[];sourceCoverage:Record<string,number>;warnings:string[];observationDates?:{earliest:string;latest:string;staleSymbols:number};membership?:Omit<ObservedUniverse,'symbols'>;status?:'complete'|'partial'|'unavailable';}
-export interface ScanOptions extends LoadMarketOptions{offset?:number;limit?:number;}
+export interface ScanOptions extends LoadMarketOptions{offset?:number;limit?:number;onProgress?:(stage:string)=>void;}
 
 function universe(name:string):SymbolMeta[]{
   const aliases:Record<string,string>={NIFTY50:'NIFTY_50',BANKNIFTY:'BANK_NIFTY',INDICES:'POPULAR_INDICES'};
@@ -81,7 +81,7 @@ function error(sym:SymbolMeta,e:unknown,r:UniverseScanResponse):void{
   const code=e instanceof MarketDataError?e.code:'EVALUATION_FAILED';
   if(['PROVIDER_UNAVAILABLE','OUT_OF_COVERAGE','INSUFFICIENT_HISTORY','PROVIDER_BUSY','IDENTITY_UNVERIFIED','PROVIDER_HTTP'].includes(code))r.unavailable++;
   else r.failed++;
-  r.errors.push({symbolId:sym.id,ticker:sym.ticker,code,message:e instanceof Error?e.message:'Scan failed'});
+  r.errors.push({symbolId:sym.id,ticker:sym.ticker,code,message:code==='PROVIDER_RATE_LIMITED'?'Angel One is busy. Try again in a minute.':e instanceof Error?e.message:'Scan failed'});
 }
 
 function validateStrategy(s:StrategyAST):void{if(!s||!Array.isArray(s.indicators)||!Array.isArray(s.rules?.entry))throw new Error('Invalid strategy');}
@@ -115,7 +115,7 @@ export async function scanUniverseAsync(strategy:StrategyAST,name='nifty50',o:Sc
     r.warnings=[...membership.warnings,'Public delayed/end-of-day observations, not live streaming'];
     for(const missing of membership.unmapped){r.unavailable++;r.errors.push({symbolId:0,ticker:missing.ticker,code:'IDENTITY_UNVERIFIED',message:missing.reason});}
   }
-  await forEachMarketSymbol(symbols,async sym=>{r.attempted++;try{evaluate(sym,await loadMarketSeries(sym.id,o),strategy,r);}catch(e){error(sym,e,r);}});
+  await forEachMarketSymbol(symbols,async sym=>{r.attempted++;o.onProgress?.('scan '+r.attempted+'/'+symbols.length);try{evaluate(sym,await loadMarketSeries(sym.id,o),strategy,r);}catch(e){error(sym,e,r);}});
   if(r.observationDates&&r.observationDates.earliest!==r.observationDates.latest)r.warnings.push('Latest observed dates vary across symbols: '+r.observationDates.earliest+' through '+r.observationDates.latest);
   r.scanned=r.attempted;
   r.status=r.succeeded===0?'unavailable':r.succeeded===r.requested?'complete':'partial';

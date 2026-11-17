@@ -74,3 +74,41 @@ describe('immutable atomic storage',()=>{
   it('D03 persistence survives reopen with an original backup',async()=>{const base=path.resolve('src/test/.tmp');await mkdir(base,{recursive:true});const folder=await mkdtemp(path.join(base,'repo-'));folders.push(folder);const file=path.join(folder,'research.json');const repo=await ResearchRepository.open({filePath:file}),r=result();await repo.putRun(r);await repo.close();const reopened=await ResearchRepository.open({filePath:file});expect(reopened.getRun(r.backtestId)).toEqual(r);});
   it('D04 failed disk writes make no in-memory commit and a later retry works',async()=>{const base=path.resolve('src/test/.tmp');await mkdir(base,{recursive:true});const folder=await mkdtemp(path.join(base,'failure-'));folders.push(folder);const parent=path.join(folder,'target'),file=path.join(parent,'research.json');const repo=await ResearchRepository.open({filePath:file});await writeFile(parent,'blocking file');const r=result();await expect(repo.putRun(r)).rejects.toThrow('No in-memory commit');expect(repo.getRun(r.backtestId)).toBeUndefined();await rm(parent);await mkdir(parent);await repo.putRun(r);expect(repo.getRun(r.backtestId)).toEqual(r);});
 });
+
+describe('scan idle deadline',()=>{
+  const scanInput:ResearchPayload={kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'};
+  it('keeps a scan alive when progress arrives, even beyond maxMs',async()=>{
+    const m=new JobManager({maxMs:15,scanIdleMs:25,scanHardCapMs:500,executor:async(payload,{progress})=>{
+      if(payload.kind!=='scan')return result();
+      for(let i=0;i<4;i++){await new Promise(r=>setTimeout(r,10));progress('scan '+(i+1)+'/4');}
+      return result();
+    }});pendingManagers.push(m);
+    const j=m.enqueue(scanInput);
+    expect((await terminal(m,j.id)).status).toBe('succeeded');
+  });
+  it('stops a silent scan with a plain user message',async()=>{
+    const m=new JobManager({maxMs:200,scanIdleMs:20,scanHardCapMs:500,executor:async payload=>{
+      if(payload.kind==='scan')await new Promise(()=>{});
+      return result();
+    }});pendingManagers.push(m);
+    const j=m.enqueue(scanInput);
+    const done=await terminal(m,j.id);
+    expect(done.status).toBe('failed');
+    expect(done.error?.code).toBe('JOB_TIMEOUT');
+    expect(done.error?.message).toMatch(/scan took too long/i);
+    expect(done.error?.message).not.toMatch(/Execution deadline exceeded/i);
+    expect(done.error?.message).not.toMatch(/cached/i);
+  });
+  it('applies the hard cap even while progress keeps arriving',async()=>{
+    const m=new JobManager({maxMs:500,scanIdleMs:20,scanHardCapMs:45,executor:async(payload,{progress})=>{
+      if(payload.kind!=='scan')return result();
+      for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,10));progress('scan '+(i+1));}
+      return result();
+    }});pendingManagers.push(m);
+    const j=m.enqueue(scanInput);
+    const done=await terminal(m,j.id);
+    expect(done.status).toBe('failed');
+    expect(done.error?.code).toBe('JOB_TIMEOUT');
+    expect(done.error?.message).toMatch(/scan took too long/i);
+  });
+});

@@ -7,7 +7,7 @@ import { redact } from '../config';
 import { tradingSessionsFromDates } from '../data/realMarketData';
 export interface MarketSnapshot { trends: StockTrendData[]; movers?: MarketMoversData; errors: {symbolId:number;code:string;ticker?:string}[]; provenance?: unknown; coverage:{requested:number;succeeded:number;unavailable:number}; sourceCoverage:Record<string,number>; universe:string; requestedDate?:string; mode:DataMode; observationDates?:{earliest:string;latest:string;staleSymbols:number};membership?:Omit<ObservedUniverse,'symbols'>;warnings?:string[];status?:'complete'|'partial'|'unavailable'; }
 /** Runs on the bounded computation worker, not the HTTP event loop. */
-export async function buildMarketSnapshot(universe:string,date?:string,mode:DataMode='demo'):Promise<MarketSnapshot> {
+export async function buildMarketSnapshot(universe:string,date?:string,mode:DataMode='demo',onProgress?:(stage:string)=>void):Promise<MarketSnapshot> {
   if(!UNIVERSE_OPTIONS.some(u=>u.id===universe))throw new MarketDataError('INVALID_UNIVERSE','Unknown universe.');
   const membership=mode==='real'?await resolveObservedUniverse(universe):undefined;
   const symbols=membership?.symbols??filterSymbolsByUniverse(universe as MarketUniverseType);
@@ -16,6 +16,7 @@ export async function buildMarketSnapshot(universe:string,date?:string,mode:Data
   if(membership){const {symbols:_,...metadata}=membership;result.membership=metadata;result.coverage.requested=membership.requested;result.warnings=membership.warnings;for(const m of membership.unmapped)result.errors.push({symbolId:0,ticker:m.ticker,code:'IDENTITY_UNVERIFIED'});}
   const observedDates=new Set<string>();
   await forEachMarketSymbol(symbols,async symbol=>{
+    onProgress?.('market symbols');
     try{const series=await loadMarketSeries(symbol.id,{mode,asOf:date});if(series.bars.length<252)throw new MarketDataError('INSUFFICIENT_HISTORY','At least 252 bars required for the available-history snapshot indicators.');const trend=calculateStockTrends(series.bars,symbol,date);for(const bar of series.bars)observedDates.add(bar.date);const asOf=series.provenance.asOf;const dates=result.observationDates??{earliest:asOf,latest:asOf,staleSymbols:0};dates.earliest=dates.earliest<asOf?dates.earliest:asOf;dates.latest=dates.latest>asOf?dates.latest:asOf;if(series.provenance.freshness.startsWith('stale'))dates.staleSymbols++;result.observationDates=dates;result.provenance=series.provenance;result.sourceCoverage[series.provenance.source]=(result.sourceCoverage[series.provenance.source]??0)+1;result.trends.push(trend);}
     catch(error){result.errors.push({symbolId:symbol.id,code:error instanceof MarketDataError?error.code:redact('DATA_UNAVAILABLE')});}
   });

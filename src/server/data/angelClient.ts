@@ -63,8 +63,10 @@ export interface AngelCredentialStatus {
   envSource: 'ANGEL' | 'SMARTAPI' | 'MIXED' | 'NONE';
 }
 
+export const ANGEL_RATE_LIMIT_MESSAGE = 'Angel One is busy. Try again in a minute.';
+
 export class AngelRequestError extends MarketDataError {
-  constructor(public status: number, public errorCode: string, message: string, public authFailure: boolean, public rateLimited: boolean, code: 'PROVIDER_UNAVAILABLE' | 'PROVIDER_AUTH_FAILED' | 'PROVIDER_RATE_LIMITED') {
+  constructor(public status: number, public errorCode: string, message: string, public authFailure: boolean, public rateLimited: boolean, code: 'PROVIDER_UNAVAILABLE' | 'PROVIDER_AUTH_FAILED' | 'PROVIDER_RATE_LIMITED', public retryAfterMs?: number) {
     super(code, message);
   }
 }
@@ -96,6 +98,8 @@ let nowImpl: () => number = () => Date.now();
 let pacingEnabled = true;
 let loginFailureBackoffMs = LOGIN_FAILURE_BACKOFF_MS;
 let reloginCooldownMs = RELOGIN_COOLDOWN_MS;
+let rateLimitBaseMs = 1_000;
+let rateLimitBudgetMs = 30_000;
 const brokerEnabled = process.env.NODE_ENV !== 'test';
 const sessionAuthority = isMainThread || !brokerEnabled;
 let brokerChannel: BroadcastChannel | null = null;
@@ -110,12 +114,17 @@ export function configureAngelTransport(options: {
   pacing?: boolean;
   loginFailureBackoffMs?: number;
   reloginCooldownMs?: number;
+  /** Test seam: shorten the bounded rate-limit wait. */
+  rateLimitBaseMs?: number;
+  rateLimitBudgetMs?: number;
 }): void {
   if (options.fetch) fetchImpl = options.fetch;
   if (options.now) nowImpl = options.now;
   if (options.pacing !== undefined) pacingEnabled = options.pacing;
   if (options.loginFailureBackoffMs !== undefined) loginFailureBackoffMs = options.loginFailureBackoffMs;
   if (options.reloginCooldownMs !== undefined) reloginCooldownMs = options.reloginCooldownMs;
+  if (options.rateLimitBaseMs !== undefined) rateLimitBaseMs = options.rateLimitBaseMs;
+  if (options.rateLimitBudgetMs !== undefined) rateLimitBudgetMs = options.rateLimitBudgetMs;
   if (options.resetSession) {
     cachedSession = null;
     loginPromise = null;
@@ -137,6 +146,8 @@ export function resetAngelTransportForTests(): void {
   pacingEnabled = true;
   loginFailureBackoffMs = LOGIN_FAILURE_BACKOFF_MS;
   reloginCooldownMs = RELOGIN_COOLDOWN_MS;
+  rateLimitBaseMs = 1_000;
+  rateLimitBudgetMs = 30_000;
   buckets.clear();
   lastSlotAt.clear();
   gate = Promise.resolve();
@@ -489,6 +500,16 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
 
 interface AngelEnvelope<T> { status?: boolean; message?: string; errorcode?: string; data?: T }
 
+/** Respect Retry-After when Angel supplies it (seconds or HTTP date). */
+function retryAfterMs(response: Response, now: number): number | undefined {
+  const raw = response.headers.get('retry-after');
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(60_000, Math.round(seconds * 1_000));
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.max(0, Math.min(60_000, at - now)) : undefined;
+}
+
 async function angelPost<T>(kind: keyof typeof LIMITS, url: string, body: unknown, jwt: string | undefined, signal?: AbortSignal, fetcher?: typeof fetch): Promise<T> {
   assertEndpoint(url);
   const { credentials } = readCredentials();
@@ -521,7 +542,7 @@ async function angelPost<T>(kind: keyof typeof LIMITS, url: string, body: unknow
       || /exceed|rate limit|too many requests/i.test(text)
       || /^AG8004$/.test(errorCode)
       || (kind === 'login' && response.status === 403 && !/totp|client|password|\bpin\b|api key|whitelist|ip address/i.test(message));
-    if (rateLimited) throw new AngelRequestError(response.status, errorCode || 'RATE_LIMIT', 'Angel One rate limit reached; the request will be retried after a short backoff', false, true, 'PROVIDER_RATE_LIMITED');
+    if (rateLimited) throw new AngelRequestError(response.status, errorCode || 'RATE_LIMIT', ANGEL_RATE_LIMIT_MESSAGE, false, true, 'PROVIDER_RATE_LIMITED', retryAfterMs(response, nowImpl()));
     // Angel reports login throttling as 403 before it ever checks the PIN/TOTP.
     // Only 401 and the documented token errors may trigger a re-login.
     const credentialFailure = kind === 'login' && response.status === 403 && /totp|client|password|\bpin\b|api key|whitelist|ip address/i.test(message);
@@ -753,23 +774,45 @@ export async function getAngelQuotes(requests: AngelQuoteRequest[], options: { s
   return out;
 }
 
-async function withAuthRetry<T>(fn: (session: AngelSession) => Promise<T>, signal?: AbortSignal, fetcher?: typeof fetch): Promise<T> {
+interface RateLimitBudget {
+  /** Absolute time after which a retry must not start. Defaults to a short budget. */
+  deadlineAt?: number;
+  /** How many throttle responses to wait out before giving up. */
+  maxRetries?: number;
+  baseMs?: number;
+}
+
+async function withAuthRetry<T>(
+  fn: (session: AngelSession) => Promise<T>,
+  signal?: AbortSignal,
+  fetcher?: typeof fetch,
+  budget: RateLimitBudget = {},
+): Promise<T> {
   const session = await getSession(signal, fetcher);
   try {
     return await fn(session);
   } catch (error) {
     if (error instanceof AngelRequestError && error.rateLimited) {
-      // Angel's per-second/per-minute limiter answers with 403, not 401. Never re-login
-      // for it; wait for the next window and retry this one request (three tries total).
-      for (let attempt = 0; ; attempt++) {
-        if (attempt >= 2) throw error;
-        await sleep(900 + attempt * 1_100 + Math.floor(Math.random() * 400), signal);
+      // Angel's per-second/per-minute limiter answers with 403, not 401. Never
+      // re-login for it. Wait out the throttle instead, bounded by the caller's
+      // deadline, so a backtest does not fail just because a scan is running.
+      const maxRetries = budget.maxRetries ?? 2;
+      const baseMs = Math.max(1, budget.baseMs ?? rateLimitBaseMs);
+      const deadlineAt = budget.deadlineAt ?? Date.now() + rateLimitBudgetMs;
+      let current = error;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const remaining = deadlineAt - Date.now();
+        if (remaining <= 0) throw current;
+        const wait = current.retryAfterMs ?? Math.min(rateLimitBudgetMs, baseMs * 2 ** attempt + Math.floor(Math.random() * baseMs * 0.2));
+        if (wait > remaining) throw current;
+        await sleep(wait, signal);
         try { return await fn(session); }
         catch (retryError) {
           if (!(retryError instanceof AngelRequestError && retryError.rateLimited)) throw retryError;
-          error = retryError;
+          current = retryError;
         }
       }
+      throw current;
     }
     if (!isAuthFailure(error)) throw error;
     const refreshed = await refreshSession(session.jwt, fetcher, signal);
@@ -778,7 +821,7 @@ async function withAuthRetry<T>(fn: (session: AngelSession) => Promise<T>, signa
 }
 
 /** ONE_DAY candles. Callers must pace scans; the global limiter also applies. */
-export async function getAngelCandles(request: AngelCandleRequest, options: { signal?: AbortSignal; fetch?: typeof fetch } = {}): Promise<AngelCandle[]> {
+export async function getAngelCandles(request: AngelCandleRequest, options: { signal?: AbortSignal; fetch?: typeof fetch; retryDeadlineAt?: number } = {}): Promise<AngelCandle[]> {
   const body = {
     exchange: request.exchange,
     symboltoken: request.symbolToken,
@@ -788,7 +831,7 @@ export async function getAngelCandles(request: AngelCandleRequest, options: { si
   };
   const rows = await withAuthRetry(session => angelPost<unknown[][]>(
     'candles', ENDPOINTS.candles, body, session.jwt, options.signal, options.fetch
-  ), options.signal, options.fetch);
+  ), options.signal, options.fetch, { deadlineAt: options.retryDeadlineAt, maxRetries: 6 });
   if (!Array.isArray(rows)) throw new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel One returned no candle series');
   const candles: AngelCandle[] = [];
   for (const row of rows) {

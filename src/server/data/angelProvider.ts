@@ -63,7 +63,8 @@ export function createAngelProvider(
       const at = now();
       const candles = await getAngelCandles(
         { exchange: 'NSE', symbolToken: instrument.token, interval: 'ONE_DAY', fromDate: new Date(at - 1100 * 86_400_000), toDate: new Date(at) },
-        { signal, fetch: fetcher }
+        // Wait out a rate-limit window, but never past the provider deadline.
+        { signal, fetch: fetcher, retryDeadlineAt: Date.now() + 35_000 }
       );
       const { bars, skipped, incomplete } = completedAngelBars(candles, at);
       if (!bars.length) throw new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel One returned no completed daily bars');
