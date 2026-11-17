@@ -30,29 +30,31 @@ import { chartReadingCacheKey, readChartReading, writeChartReading } from './cha
 const CHART_READ_FAILURE_MESSAGE = "I couldn't read this chart. The AI models didn't return a reading. Try again, or describe the setup in words.";
 /** Reasoning vision models can need most of a minute; this is the per-model ceiling. */
 export const VISION_ATTEMPT_TIMEOUT_MS = 55_000;
-/** Keep the whole chart request inside the client's 180 s deadline, with margin. */
-export const VISION_TOTAL_BUDGET_MS = 170_000;
-/** The plan pass needs roughly 45–55 s; keep 60 s so a slow plan call still fits. */
-export const VISION_PLAN_RESERVE_MS = 60_000;
+/** The plan's first call gets a little longer so a slow plan model can finish. */
+export const VISION_PLAN_ATTEMPT_TIMEOUT_MS = 65_000;
+/** Keep the whole chart request inside the client's 210 s deadline, with margin. */
+export const VISION_TOTAL_BUDGET_MS = 200_000;
+/** The plan pass needs roughly 45–65 s; keep 65 s so a slow plan call still fits. */
+export const VISION_PLAN_RESERVE_MS = 65_000;
 /** Observations may use at most this much of the total budget. */
 export const VISION_OBSERVATIONS_BUDGET_MS = VISION_TOTAL_BUDGET_MS - VISION_PLAN_RESERVE_MS;
 
 /**
  * Audited observations split for the default chain [free primary, free probe,
  * paid fallback]. Logged cold reads show the primary needs ~50 s and the second
- * free model has never answered within 55 s; the paid fallback needs ~50 s.
- * Sum = 110 s, exactly the observations budget.
+ * free model has never answered within 55 s; the paid fallback can need 55–65 s.
+ * Sum = 135 s, exactly the observations budget.
  */
 export const VISION_OBSERVATION_ALLOCATION_MS = {
-  primaryFree: 50_000,
+  primaryFree: 55_000,
   secondFree: 10_000,
-  paid: 50_000,
+  paid: 70_000,
 } as const;
 
 /**
  * Split the observations budget by chain role. The primary free model gets a
  * real attempt, the second free model is a short probe, and the approved paid
- * fallback keeps 50 s. Extra free models get no time so they cannot starve the
+ * fallback keeps 70 s. Extra free models get no time so they cannot starve the
  * paid attempt. A chain without a paid entry falls back to an equal split.
  */
 export function observationAttemptTimeouts(
@@ -162,13 +164,14 @@ async function callChartModel(
 ): Promise<ProviderCallResult> {
   const remaining = Math.max(0, deadlineAt - Date.now());
   if (remaining <= 0) return { ok: false, code: 'timeout', message: 'Chart analysis budget exhausted.' };
+  const planFirst = pass === 'plan' && allowAllRemaining;
   const timeoutMs = timeoutOverride !== undefined
     ? Math.min(remaining, Math.max(0, Math.floor(timeoutOverride)))
     : allowAllRemaining
-      ? Math.min(VISION_ATTEMPT_TIMEOUT_MS, remaining)
+      ? Math.min(planFirst ? VISION_PLAN_ATTEMPT_TIMEOUT_MS : VISION_ATTEMPT_TIMEOUT_MS, remaining)
       : visionAttemptTimeout(remaining, attemptsLeft);
   if (timeoutMs <= 0) return { ok: false, code: 'timeout', message: 'Chart analysis budget exhausted.' };
-  const cfg = withVisionTimeout(attempt.config, timeoutMs, timeoutOverride !== undefined && attempt.approvedPaid);
+  const cfg = withVisionTimeout(attempt.config, timeoutMs, (timeoutOverride !== undefined && attempt.approvedPaid) || planFirst);
   if (attempt.approvedPaid && cfg.costPolicy === 'free-only') {
     console.info(JSON.stringify({ event: 'ai_paid_fallback', provider: attempt.provider, model: attempt.model, at: new Date().toISOString() }));
   }
