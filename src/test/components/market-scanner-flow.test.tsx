@@ -190,6 +190,17 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.queryByText('Refreshing…')).toBeNull();
   });
 
+  it('maps an unsupported-universe rejection to the compact inline status', async () => {
+    market.mockRejectedValueOnce(Object.assign(
+      new Error('I can only screen the Nifty 50 with verified membership. Use the Market scanner for NIFTY IT.'),
+      { status: 422, code: 'UNIVERSE_UNSUPPORTED' },
+    ));
+    render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} initialUniverse="NIFTY_IT" />);
+
+    expect(await screen.findByText('No verified data for NIFTY IT in the current feed')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('shows running job progress from the server stage and cancels the load', async () => {
     market.mockReturnValueOnce(new Promise(() => {}));
     renderScanner();
@@ -238,6 +249,7 @@ describe('bounded lazy market scanner flow', () => {
     expect(await screen.findByText(/49 of 50 stocks priced · partial coverage · TATAMOTORS unavailable/)).toBeTruthy();
     expect(screen.getByText('Two symbols had no close for this session.')).toBeTruthy();
     expect(screen.getByText(/Membership: 50 requested, 1 unmapped/)).toBeTruthy();
+    expect(screen.getByText(/Membership check: 50 requested · 1 unmapped · official feed observed/)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(document.body.textContent).not.toContain('symbolId');
     expect(document.body.textContent).not.toContain('PROVIDER_RATE_LIMITED');

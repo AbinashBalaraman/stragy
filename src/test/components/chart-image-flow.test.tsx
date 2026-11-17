@@ -20,6 +20,8 @@ vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
 // The preview comes from a FileReader and the reading from a mocked fetch; on
 // a loaded box both can take longer than the 1 s query default to settle.
 configure({ asyncUtilTimeout: 5000 });
+// Cold chart reads and the job polling path can exceed the 15 s default under load.
+vi.setConfig({ testTimeout: 30_000 });
 
 let dom: JSDOM;
 let fetchMock: ReturnType<typeof vi.fn>;

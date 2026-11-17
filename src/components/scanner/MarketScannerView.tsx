@@ -436,7 +436,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         setMarketError('');
       } else {
         const message = e instanceof Error ? e.message : 'Market data unavailable';
-        if (selectedUniverse !== 'NIFTY_50' && /only.*nifty\s*50|verified membership|unsupported universe/i.test(message)) {
+        const failure = e as Error & { code?: string; status?: number };
+        if (selectedUniverse !== 'NIFTY_50' && (
+          /only.*nifty\s*50|verified membership|unsupported universe|no verified data/i.test(message)
+          || /UNIVERSE|MEMBERSHIP|NO_DATA|NO_MEMBERSHIP|UNSUPPORTED/i.test(failure.code ?? '')
+          || failure.status === 422
+        )) {
           setUniverseNoData(true);
           setMarketError('');
         } else {
@@ -739,7 +744,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 </>
               )}
             </p>
-            {dataEvidence && marketCoverage && (
+            {!isStrategyView && dataEvidence && marketCoverage && (
               <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
                 {marketCoverage.succeeded} of {marketCoverage.requested} stocks priced
                 {dataEvidence.status ? ' · ' + dataEvidence.status + ' coverage' : ''}
@@ -750,6 +755,14 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             )}
             {dataEvidence?.warnings && dataEvidence.warnings.length > 0 && (
               <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">{dataEvidence.warnings.join(' · ')}</p>
+            )}
+            {dataEvidence?.membership && (
+              <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
+                Membership check: {dataEvidence.membership.requested} requested · {dataEvidence.membership.unmapped.length} unmapped · {dataEvidence.membership.freshness}
+              </p>
+            )}
+            {dataEvidence?.membership?.warnings && dataEvidence.membership.warnings.length > 0 && (
+              <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">{dataEvidence.membership.warnings.join(' · ')}</p>
             )}
             {dataEvidence && marketCoverage && marketUnavailable.length > 3 && (
               <details className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">

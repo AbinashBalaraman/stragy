@@ -32,7 +32,10 @@ export interface MarketSnapshot {
 export interface MarketSnapshotOptions { deadlineMs?: number; concurrency?: number; signal?: AbortSignal }
 
 const BROAD_UNIVERSES = new Set(['NSE', 'BSE', 'ALL']);
-const BROAD_DEADLINE_MS = 150_000;
+// Angel's documented historical ceiling is 76 requests/minute, so 200 symbols
+// cannot finish inside 150 s even at perfect pacing (200/76*60 = 158 s). The
+// broad budget covers the cap plus login and retry overhead.
+const BROAD_DEADLINE_MS = 210_000;
 const DEFAULT_DEADLINE_MS = 90_000;
 
 /** A cold Nifty 50 snapshot is provider-paced at 2 req/s: 50 symbols never needs 4 minutes. */
@@ -144,7 +147,7 @@ export async function buildMarketSnapshot(universe: string, date?: string, mode:
   }
   result.deadline = { budgetMs, reached, truncated: skipped > 0, elapsedMs: Date.now() - startedAt };
   if (skipped > 0) {
-    result.warnings = [...(result.warnings ?? []), 'Snapshot deadline (' + Math.round(budgetMs / 1000) + ' s) reached after ' + (symbols.length - skipped) + ' of ' + symbols.length + ' symbols; ' + skipped + ' were not evaluated. Retry to continue.'];
+    result.warnings = [...(result.warnings ?? []), 'Snapshot deadline (' + Math.round(budgetMs / 1000) + ' s) reached after ' + (symbols.length - skipped) + ' of ' + symbols.length + ' symbols; ' + skipped + ' were not evaluated. A retry starts a fresh run.'];
   }
   const unmappedErrorCount = result.errors.filter(error => error.code === 'UNKNOWN_MAPPING').length;
   if (unmappedErrorCount > 0) {

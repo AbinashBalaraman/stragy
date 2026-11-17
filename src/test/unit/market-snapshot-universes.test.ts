@@ -96,7 +96,7 @@ describe('market snapshot universe contract', () => {
   it('publishes a 90 s Nifty 50 deadline and a longer broad-universe deadline', () => {
     expect(marketSnapshotDeadlineMs('NIFTY_50')).toBe(90_000);
     expect(marketSnapshotDeadlineMs('BANK_NIFTY')).toBe(90_000);
-    expect(marketSnapshotDeadlineMs('NSE')).toBe(150_000);
-    expect(marketSnapshotDeadlineMs('BSE')).toBe(150_000);
+    expect(marketSnapshotDeadlineMs('NSE')).toBe(210_000);
+    expect(marketSnapshotDeadlineMs('BSE')).toBe(210_000);
   });
 });

@@ -149,12 +149,14 @@ describe('bounded offline API contracts', () => {
   });
   it('validates chart image types and the route-scoped body limit', async () => {
     const { app, executor } = await setup();
+    // The 6.4 MB body below can take a moment to parse on a loaded machine.
+    const slowBound = (test: Test) => test.timeout({ response: 8000, deadline: 12000 });
     const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString('base64');
     const badMime = 'data:image/gif;base64,' + png.split(',')[1];
     errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: badMime, currentStrategy: strategy() })), 422, 'INVALID_IMAGE');
     const jpeg = 'data:image/png;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString('base64');
     errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: jpeg, currentStrategy: strategy() })), 422, 'IMAGE_TYPE_MISMATCH');
-    errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: 'data:image/png;base64,' + Buffer.alloc(6_400_000).toString('base64') })), 413, 'BODY_TOO_LARGE');
+    errorContract(await slowBound(request(app).post('/api/v2/chart-analysis').send({ image: 'data:image/png;base64,' + Buffer.alloc(6_400_000).toString('base64') })), 413, 'BODY_TOO_LARGE');
     expect(executor).not.toHaveBeenCalled();
   });
   it('accepts a 4.9 MB decoded chart image through the raised 8 MB route parser', async () => {
@@ -306,8 +308,10 @@ describe('bounded offline API contracts', () => {
     'https://stragy.onrender.com/', 'null',
   ])('keeps foreign or malformed origins rejected behind a proxy: %s', async origin => {
     const { app, enqueue } = await setup({ NODE_ENV: 'production', EXPOSURE_MODE: 'demo-public', PUBLIC_ORIGIN: 'https://stragy.onrender.com' });
+    // A same-host write is allowed on purpose (TLS tunnels present https while
+    // Express sees http), so this foreign-origin case uses a different host.
     errorContract(await bounded(request(app).post('/api/v2/backtests')
-      .set('Host', 'untrusted.invalid').set('Origin', origin)
+      .set('Host', 'internal-proxy.test:10000').set('Origin', origin)
       .set('X-Forwarded-Host', 'stragy.onrender.com').set('X-Forwarded-Proto', 'https')
       .send(body())), 403, 'ORIGIN_REJECTED');
     expect(enqueue).not.toHaveBeenCalled();

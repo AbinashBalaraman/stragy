@@ -9,10 +9,11 @@ export type ResearchPhase = 'waiting' | 'preparing' | 'running';
 export interface ResearchJobProgress { status: 'queued' | 'running'; stage?: string; queuedBehind?: number; progress?: { processed: number; total: number }; }
 /**
  * Execution deadlines start only when the job leaves the queue. The server caps a
- * market snapshot at 90 s (150 s for the broad 200-symbol universes), so the
- * client never waits the old 600 s for a blank screen.
+ * market snapshot at 90 s (210 s for the broad 200-symbol universes, which are
+ * limited by Angel's 76 historical requests/minute), so the client never waits
+ * the old 600 s for a blank screen.
  */
-export const RESEARCH_DEADLINE_MS = { backtest: 45_000, scan: 300_000, market: 240_000 } as const;
+export const RESEARCH_DEADLINE_MS = { backtest: 45_000, scan: 300_000, market: 300_000 } as const;
 /** A queued job may wait behind long work, but never forever. */
 export const RESEARCH_QUEUE_LIMIT_MS = 300_000;
 /**
