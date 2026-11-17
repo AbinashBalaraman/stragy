@@ -52,6 +52,10 @@ export interface MarketQuote {
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   rsi14?: number | null;
+  ytdReturnPercent?: number;
+  oneYearReturnPercent?: number;
+  distanceFromHighPercent?: number;
+  distanceFromLowPercent?: number;
   /** Human-readable provenance. Internal provider codes are never exposed here. */
   provenance?: { source: string; asOf?: string; fetchedAt: string; mode: MarketMode };
   /** Present only when the daily closes predate the last completed trading session. */
@@ -62,8 +66,8 @@ export interface MarketQuote {
 }
 export interface MarketContext { mode: MarketMode; quotes: MarketQuote[] }
 
-const PRICE_TERMS = /\b(?:price|quote|quotes|current|last|close|closing|level|trend|trending|trading|trade|high|low|52[\s-]?week|up|down|gain|loss|change|percent|rsi|move|moves|moving|how\s+much)\b|%/i;
-const QUESTION_SHAPE = /\?|\b(?:price|quote|level|trend|trading\s+at|last\s+close|52[\s-]?week|how\s+much)\b/i;
+const PRICE_TERMS = /\b(?:price|quote|quotes|current|last|close|closing|level|trend|trending|trading|trade|high|low|52[\s-]?week|up|down|gain|gained|loss|lost|change|percent|rsi|move|moves|moving|how\s+much|done|doing|perform(?:ed|ance)?|return|returns|ytd|year[\s-]*to[\s-]*date|this\s+year|last\s+year|1[\s-]?year|one[\s-]?year)\b|%/i;
+const QUESTION_SHAPE = /\?|\b(?:price|quote|level|trend|trading\s+at|last\s+close|52[\s-]?week|how\s+much|done|doing|perform(?:ed|ance)?|return|returns|ytd|this\s+year|last\s+year|1[\s-]?year|one[\s-]?year)\b/i;
 const BY_TICKER = new Map(ALL_SYMBOLS.map(symbol => [symbol.ticker.toUpperCase(), symbol]));
 
 /**
@@ -257,14 +261,31 @@ export async function buildMarketContext(ids: number[], deps: MarketContextDeps 
       const window = bars.slice(-250);
       const rsi = calcRSI(bars, 14).at(-1);
       const note = dailyClosesNote(last.date, now);
+      const high = Math.max(...window.map(bar => bar.high));
+      const low = Math.min(...window.map(bar => bar.low));
+      // YTD compares with the last close before this calendar year; 1-year
+      // compares with the last close on or before the same date last year.
+      const priorYear = [...bars].reverse().find(bar => bar.date < `${last.date.slice(0, 4)}-01-01`);
+      const oneYearTargetDate = new Date(last.date + 'T00:00:00Z');
+      oneYearTargetDate.setUTCFullYear(oneYearTargetDate.getUTCFullYear() - 1);
+      const oneYearTarget = oneYearTargetDate.toISOString().slice(0, 10);
+      const oneYearBar = [...bars].reverse().find(bar => bar.date <= oneYearTarget);
+      const ytdReturnPercent = priorYear && priorYear.close > 0 ? (last.close / priorYear.close - 1) * 100 : undefined;
+      const oneYearReturnPercent = bars[0].date <= oneYearTarget && oneYearBar && oneYearBar.close > 0
+        ? (last.close / oneYearBar.close - 1) * 100
+        : undefined;
       const quote: MarketQuote = {
         symbolId: symbol.id, ticker: symbol.ticker, name: displayName(symbol.ticker, symbol.name),
         lastClose: last.close, lastDate: last.date, previousClose: previous.close,
         changePercent: previous.close > 0 ? (last.close / previous.close - 1) * 100 : undefined,
         recentCloses: bars.slice(-5).map(bar => ({ date: bar.date, close: bar.close })),
-        fiftyTwoWeekHigh: Math.max(...window.map(bar => bar.high)),
-        fiftyTwoWeekLow: Math.min(...window.map(bar => bar.low)),
+        fiftyTwoWeekHigh: high,
+        fiftyTwoWeekLow: low,
         rsi14: typeof rsi === 'number' && Number.isFinite(rsi) ? rsi : null,
+        ...(ytdReturnPercent !== undefined ? { ytdReturnPercent } : {}),
+        ...(oneYearReturnPercent !== undefined ? { oneYearReturnPercent } : {}),
+        ...(high > 0 ? { distanceFromHighPercent: ((high - last.close) / high) * 100 } : {}),
+        ...(low > 0 ? { distanceFromLowPercent: ((last.close - low) / low) * 100 } : {}),
         provenance: { source: humanSource(series.provenance.source, series.provenance.mode), asOf: last.date, fetchedAt: series.provenance.fetchedAt, mode: series.provenance.mode },
         ...(note ? { dailyClosesNote: note } : {}),
       };
@@ -343,3 +364,46 @@ export function renderMarketAnswer(context: MarketContext): string {
   });
   return parts.join('\n\n');
 }
+
+function barsSourceLine(quote: MarketQuote): string {
+  const source = quote.provenance?.source ?? 'Daily bars';
+  if (/demo/i.test(source)) return 'Generated demo data · not observed';
+  if (/angel/i.test(source)) return 'Angel One daily bars · not AI';
+  if (/yahoo/i.test(source)) return 'Yahoo daily bars · not AI';
+  return source.replace(/\s+close$/i, '') + ' · not AI';
+}
+
+function rangeDistance(value: number | undefined, label: string): string {
+  if (value === undefined || !Number.isFinite(value)) return '';
+  return value < 0.005 ? `at the ${label}` : `${formatPercent(value, { decimals: 1 })} below the ${label}`;
+}
+
+function lowDistance(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return '';
+  return value < 0.005 ? 'at the 52-week low' : `${formatPercent(value, { decimals: 1 })} above the 52-week low`;
+}
+
+/**
+ * Deterministic single-stock performance answer from observed daily bars.
+ * Never invents a return when the history does not cover the window.
+ */
+export function renderPerformanceAnswer(context: MarketContext): string {
+  return context.quotes.map(quote => {
+    if (quote.unavailable || quote.lastClose === undefined || !quote.lastDate) {
+      return `I couldn't load daily bars for ${headlineName(quote)}. No performance was invented.`;
+    }
+    const returns: string[] = [];
+    if (quote.ytdReturnPercent !== undefined) returns.push(`YTD ${percentText(quote.ytdReturnPercent)}`);
+    if (quote.oneYearReturnPercent !== undefined) returns.push(`1-year ${percentText(quote.oneYearReturnPercent)}`);
+    const first = `**${headlineName(quote)}: ${priceText(quote, quote.lastClose)}** last close on ${formatDate(quote.lastDate)}`;
+    const performance = returns.length
+      ? returns.join(' · ')
+      : 'Return unavailable: the daily history is shorter than the requested window.';
+    const range = quote.fiftyTwoWeekHigh !== undefined && quote.fiftyTwoWeekLow !== undefined
+      ? `52-week range ${priceText(quote, quote.fiftyTwoWeekLow)} – ${priceText(quote, quote.fiftyTwoWeekHigh)}; `
+        + [rangeDistance(quote.distanceFromHighPercent, '52-week high'), lowDistance(quote.distanceFromLowPercent)].filter(Boolean).join(' and ') + '.'
+      : '';
+    return [first, performance, range, `Observed through ${formatDate(quote.lastDate)}.`, barsSourceLine(quote)].filter(Boolean).join('\n');
+  }).join('\n\n');
+}
+

@@ -16,7 +16,8 @@ export class JobError extends Error { constructor(public code: string, message: 
 type Lane = 'backtest' | 'scan';
 interface JobRecord { job: ResearchJob; payload: ResearchPayload; hash: string; lane: Lane; controller: AbortController; stop?: () => Promise<void>; timer?: ReturnType<typeof setTimeout>; hardDeadlineAt?: number; }
 export const SCAN_IDLE_MS = 90_000;
-export const SCAN_HARD_CAP_MS = 300_000;
+export const SCAN_HARD_CAP_MS = 600_000;
+export const MARKET_SNAPSHOT_TTL_MS = 300_000;
 type Executor = (payload: ResearchPayload, context: { signal: AbortSignal; progress: (stage: string) => void }) => Promise<ResearchResult>;
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 function canonical(v: unknown): unknown { return Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, value]) => [k, canonical(value)])) : v; }
@@ -29,6 +30,7 @@ export class JobManager {
   };
   private closed = false;
   private terminations = new Set<Promise<void>>();
+  private snapshotCache = new Map<string, { at: number; job: ResearchJob }>();
   constructor(private options: { maxQueue?: number; maxMs?: number; scanIdleMs?: number; scanHardCapMs?: number; maxRetained?: number; workers?: number; workerPath?: string; executor?: Executor } = {}) {}
   enqueue(input: ResearchPayload, key?: string): ResearchJob {
     if (this.closed) throw new JobError('SHUTTING_DOWN', 'New jobs are disabled during shutdown.', 503);
@@ -39,9 +41,32 @@ export class JobManager {
     const hash = createHash('sha256').update(JSON.stringify(canonical({ ...payload, provenance: undefined }))).digest('hex');
     if (key && (key.length > 100 || !/^[A-Za-z0-9_.:-]+$/.test(key))) throw new JobError('INVALID_IDEMPOTENCY_KEY', 'Invalid idempotency key.');
     if (key && this.keys.has(key)) { const existing = this.keys.get(key)!; if (existing.hash !== hash) throw new JobError('IDEMPOTENCY_CONFLICT', 'The key was already used with different inputs.', 409); const record = this.records.get(existing.id); if (record) return clone(record.job); this.keys.delete(key); }
+    const kind = payload.kind ?? 'backtest';
+    // Identical scans share one active job: a double-click, a reload or a
+    // duplicate chat action must not queue a second cold Angel scan.
+    if (kind === 'scan') {
+      const existing = [...this.records.values()].find(record =>
+        record.job.kind === 'scan' && record.hash === hash
+        && (record.job.status === 'queued' || record.job.status === 'running'));
+      if (existing) return clone(existing.job);
+    }
+    if (kind === 'market') {
+      const cached = this.snapshotCache.get(hash);
+      if (cached && Date.now() - cached.at < MARKET_SNAPSHOT_TTL_MS) {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        const job: ResearchJob = { ...clone(cached.job), id, status: 'succeeded', stage: 'succeeded', createdAt: now, startedAt: now, finishedAt: now };
+        this.records.set(id, { job, payload: clone(payload), hash, lane: 'scan', controller: new AbortController() });
+        return clone(job);
+      }
+      if (cached) this.snapshotCache.delete(hash);
+      const existing = [...this.records.values()].find(record =>
+        record.job.kind === 'market' && record.hash === hash
+        && (record.job.status === 'queued' || record.job.status === 'running'));
+      if (existing) return clone(existing.job);
+    }
     const queued = this.lanes.backtest.queue.length + this.lanes.scan.queue.length;
     if (queued >= (this.options.maxQueue ?? 8)) throw new JobError('QUEUE_FULL', 'Research queue is full. Retry later.', 429);
-    const kind = payload.kind ?? 'backtest';
     const lane: Lane = kind === 'backtest' ? 'backtest' : 'scan';
     const id = randomUUID(), job: ResearchJob = { id, kind, status: 'queued', stage: 'waiting', createdAt: new Date().toISOString() };
     this.records.set(id, { job, payload, hash, lane, controller: new AbortController() });
@@ -62,6 +87,9 @@ export class JobManager {
     if (!['queued', 'running'].includes(record.job.status)) return;
     if (record.timer) clearTimeout(record.timer);
     Object.assign(record.job, { status, stage: status, finishedAt: new Date().toISOString(), ...(result ? { result: clone(result) } : {}), ...(error ? { error } : {}) });
+    if (record.job.kind === 'market' && status === 'succeeded' && result) {
+      this.snapshotCache.set(record.hash, { at: Date.now(), job: clone(record.job) });
+    }
     this.lanes[record.lane].queue = this.lanes[record.lane].queue.filter(id => id !== record.job.id);
     this.refreshQueuePositions();
     // Release large request snapshots after work, keeping only immutable public result/status.

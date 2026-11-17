@@ -2,6 +2,11 @@ import { z } from 'zod';
 import { StrategySchema, validateStrategy } from '../strategy/schema';
 import { StrategyProposalSchema, ProposalProviderSchema } from './ai-proposal';
 const revision = z.union([z.number().finite(), z.string().min(1).max(100), z.null()]);
+/** Universes the research chat can name and pass to the scanner. */
+export const CHAT_UNIVERSES = ['NIFTY_50', 'BANK_NIFTY', 'NIFTY_IT', 'NIFTY_AUTO', 'NIFTY_PHARMA', 'NIFTY_METAL', 'NIFTY_FMCG', 'NSE'] as const;
+export const ChatUniverseSchema = z.enum(CHAT_UNIVERSES);
+export type ChatUniverse = z.infer<typeof ChatUniverseSchema>;
+
 const strategy = z.unknown().transform((raw, ctx) => {
   const v=validateStrategy(raw);
   if(!v.success||!v.data){ctx.addIssue({code:'custom',message:v.errors?.join('; ')??'Invalid strategy'});return z.NEVER;}
@@ -10,7 +15,7 @@ const strategy = z.unknown().transform((raw, ctx) => {
 export const ResearchChatInputSchema = z.object({
   message:z.string().trim().min(1).max(4000), history:z.array(z.object({role:z.enum(['user','assistant']),text:z.string().max(6000)}).strict()).max(40).optional(),
   currentStrategy:strategy.optional(), originatingRevision:revision.optional(), allowLocalFallback:z.boolean().optional(),
-  screenContext:z.object({strategy,universe:z.literal('NIFTY_50'),asOf:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict().optional(),
+  screenContext:z.object({strategy,universe:ChatUniverseSchema,asOf:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict().optional(),
 }).strict();
 const base={schemaVersion:z.literal(1),originatingRevision:revision,message:z.string().max(12000),method:z.enum(['external_ai','local_heuristic','rule_parser','unavailable']),provider:ProposalProviderSchema,warnings:z.array(z.string().max(2000)).max(40)};
 /** Small vision models often write "14" or "14, 14" where an array belongs. */
@@ -95,7 +100,7 @@ export const ChartSelfCheckSchema=z.object({
   line:z.string().min(1).max(300),
   repaired:z.boolean().optional(),
 }).strict();
-export const ResearchScreenPlanSchema=z.object({...base,kind:z.literal('screen'),universe:z.literal('NIFTY_50'),strategy:StrategySchema,assumptions:z.array(z.string()),missingBacktestRules:z.array(z.enum(['exits','positionSizing','executionAndCosts'])).min(1),backtestReady:z.literal(false),asOf:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+export const ResearchScreenPlanSchema=z.object({...base,kind:z.literal('screen'),universe:ChatUniverseSchema,strategy:StrategySchema,assumptions:z.array(z.string()),missingBacktestRules:z.array(z.enum(['exits','positionSizing','executionAndCosts'])).min(1),backtestReady:z.literal(false),asOf:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   /** Chart-image extensions. All four are present together on chart-derived screens. */
   observations:ChartObservationsSchema.optional(),confidence:z.number().min(0).max(1).optional(),summary:z.string().max(2000).optional(),source:z.literal('chart_image').optional(),selfCheck:ChartSelfCheckSchema.optional(),
 }).strict();

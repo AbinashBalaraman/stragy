@@ -15,8 +15,10 @@ export async function buildMarketSnapshot(universe:string,date?:string,mode:Data
   const result:MarketSnapshot={trends:[],errors:[],coverage:{requested:symbols.length,succeeded:0,unavailable:0},sourceCoverage:{},universe,requestedDate:date,mode};
   if(membership){const {symbols:_,...metadata}=membership;result.membership=metadata;result.coverage.requested=membership.requested;result.warnings=membership.warnings;for(const m of membership.unmapped)result.errors.push({symbolId:0,ticker:m.ticker,code:'IDENTITY_UNVERIFIED'});}
   const observedDates=new Set<string>();
+  let processed=0;
   await forEachMarketSymbol(symbols,async symbol=>{
-    onProgress?.('market symbols');
+    processed++;
+    onProgress?.('market symbols '+processed+'/'+symbols.length);
     try{const series=await loadMarketSeries(symbol.id,{mode,asOf:date});if(series.bars.length<252)throw new MarketDataError('INSUFFICIENT_HISTORY','At least 252 bars required for the available-history snapshot indicators.');const trend=calculateStockTrends(series.bars,symbol,date);for(const bar of series.bars)observedDates.add(bar.date);const asOf=series.provenance.asOf;const dates=result.observationDates??{earliest:asOf,latest:asOf,staleSymbols:0};dates.earliest=dates.earliest<asOf?dates.earliest:asOf;dates.latest=dates.latest>asOf?dates.latest:asOf;if(series.provenance.freshness.startsWith('stale'))dates.staleSymbols++;result.observationDates=dates;result.provenance=series.provenance;result.sourceCoverage[series.provenance.source]=(result.sourceCoverage[series.provenance.source]??0)+1;result.trends.push(trend);}
     catch(error){result.errors.push({symbolId:symbol.id,code:error instanceof MarketDataError?error.code:redact('DATA_UNAVAILABLE')});}
   });

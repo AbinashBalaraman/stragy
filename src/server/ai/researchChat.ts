@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ResearchChatInputSchema, parseResearchChatResponse, type ResearchChatResponse } from '../../shared/contracts/research-chat';
+import { ResearchChatInputSchema, parseResearchChatResponse, type ChatUniverse, type ResearchChatResponse } from '../../shared/contracts/research-chat';
 import { validateStrategy } from '../../shared/strategy/schema';
 import type { StrategyAST } from '../../shared/strategy/types';
 import { createProposal, describeConfigState, type AIServiceDeps } from './proposals';
@@ -8,11 +8,12 @@ import { AI_LIMITS, callProvider, resolveAIConfig } from './provider';
 import { resolveFeatureSetup } from './featureSetup';
 import { buildScreenTitle, cleanScreenSummary } from '../../shared/strategy/screenTitle';
 import { truncateAtWord } from '../../shared/format';
-import { boundHistory, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
+import { boundHistory, looksLikeReasoning, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
 import { isInformationalQuestion } from './intent';
 import { resolveActiveConfig } from './providerRegistry';
 import { filterSymbolsByUniverse } from '../../shared/data/symbols';
 import { getLiveQuotes, type LiveQuotesResult } from '../data/liveQuotes';
+import { buildMarketContext, detectMarketSymbols, renderPerformanceAnswer } from './marketContext';
 import { formatPercent } from '../../shared/format';
 
 /** A screen needs a user-stated condition, not just a stock question. */
@@ -31,6 +32,58 @@ function hasExplicitCondition(text: string): boolean {
 function isSectorQuestion(text: string): boolean {
   return /\bsectors?\b/i.test(text)
     && /\b(?:strongest|weakest|best|worst|ranking|ranked|today|performance|performing)\b/i.test(text);
+}
+
+interface ChatUniverseChoice { id: ChatUniverse; label: string; pattern: RegExp }
+
+const CHAT_UNIVERSE_CHOICES: ChatUniverseChoice[] = [
+  { id: 'BANK_NIFTY', label: 'Bank NIFTY', pattern: /\b(?:bank\s*nifty|nifty\s*bank|banknifty)\b/i },
+  { id: 'NIFTY_IT', label: 'NIFTY IT', pattern: /\b(?:nifty\s*(?:it|information\s+technology)|it\s+sector)\b/i },
+  { id: 'NIFTY_AUTO', label: 'NIFTY Auto', pattern: /\b(?:nifty\s*auto|auto\s+sector)\b/i },
+  { id: 'NIFTY_PHARMA', label: 'NIFTY Pharma', pattern: /\b(?:nifty\s*pharma|pharma\s+sector)\b/i },
+  { id: 'NIFTY_METAL', label: 'NIFTY Metal', pattern: /\b(?:nifty\s*metal|metal\s+sector)\b/i },
+  { id: 'NIFTY_FMCG', label: 'NIFTY FMCG', pattern: /\b(?:nifty\s*fmcg|fmcg\s+sector)\b/i },
+  { id: 'NIFTY_50', label: 'Nifty 50', pattern: /\b(?:nifty\s*(?:50|fifty)|nifty50)\b/i },
+  { id: 'NSE', label: 'all NSE stocks', pattern: /\b(?:all|entire)\s+nse\b|\bnse\s+(?:stocks?|equit(?:y|ies)|listed|universe)\b/i },
+];
+
+const UNSUPPORTED_UNIVERSE_CHOICES: { label: string; pattern: RegExp }[] = [
+  { label: 'BSE Sensex', pattern: /\bsensex\b/i },
+  { label: 'Nasdaq', pattern: /\bnasdaq\b/i },
+  { label: 'S&P 500', pattern: /\bs&p\b/i },
+  { label: 'Dow Jones', pattern: /\bdow\b/i },
+  { label: 'that NIFTY index', pattern: /\bnifty\s*(?:midcap|smallcap|next\s*50|100|500)\b/i },
+  { label: 'BSE stocks', pattern: /\bbse\b/i },
+  { label: 'all markets', pattern: /\ball\s+markets\b/i },
+];
+
+/** The message wins over a previous screen context; an unknown request is refused, never substituted. */
+function resolveChatUniverse(message: string, fallback?: ChatUniverse): { id: ChatUniverse; label: string; fromMessage: boolean } | { unsupported: string } {
+  const supported = CHAT_UNIVERSE_CHOICES.find(choice => choice.pattern.test(message));
+  if (supported) return { id: supported.id, label: supported.label, fromMessage: true };
+  const unsupported = UNSUPPORTED_UNIVERSE_CHOICES.find(choice => choice.pattern.test(message));
+  if (unsupported) return { unsupported: unsupported.label };
+  const id = fallback ?? 'NIFTY_50';
+  return { id, label: CHAT_UNIVERSE_CHOICES.find(choice => choice.id === id)?.label ?? 'Nifty 50', fromMessage: false };
+}
+
+function isPerformanceQuestion(text: string): boolean {
+  return /\b(?:done|doing|performed?|performance|return|returns|gained|lost|ytd|year[\s-]*to[\s-]*date|this\s+year|last\s+year|1[\s-]?year|one[\s-]?year|52[\s-]?week)\b/i.test(text)
+    && !/\b(?:screen|scan|backtest|build|create|set|change|strategy|rsi|sma|ema|macd|bollinger|supertrend)\b/i.test(text);
+}
+
+async function performanceAnswer(message: string, deps: AIServiceDeps): Promise<{ text: string; available: boolean; sourceName: string; warnings: string[] } | null> {
+  const ids = detectMarketSymbols(message);
+  if (!ids.length) return null;
+  const env = { ...(deps.market?.env ?? deps.env ?? process.env), QUOTES_PROVIDER: 'none' };
+  try {
+    const context = await buildMarketContext(ids, { ...(deps.market ?? {}), env });
+    const available = context.quotes.some(quote => quote.lastClose !== undefined);
+    const sourceName = context.quotes.find(quote => quote.provenance)?.provenance?.source ?? 'Observed daily bars';
+    return { text: renderPerformanceAnswer(context), available, sourceName, warnings: [] };
+  } catch {
+    return { text: 'I couldn\'t load daily bars for that stock right now. No performance was invented.', available: false, sourceName: 'none', warnings: [] };
+  }
 }
 
 /** Do not let the model add conditions the user never mentioned. */
@@ -149,7 +202,9 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
   const screenVerb=/\b(?:find|screen|scan|show\s+me|list|which)\b/i.test(message);
   const wantsScreen=!scanForbidden&&screenVerb&&hasExplicitCondition(message);
   if(wantsScreen){
-    if(!/nifty\s*50/i.test(message)&&!input.screenContext&&/\b(?:bank\s+nifty|sensex|nasdaq|s&p|dow)\b/i.test(message))return unavailable('Only the Nifty 50 universe is supported in research chat. No scan was run.',rev);
+    const requested=resolveChatUniverse(message,input.screenContext?.universe);
+    if('unsupported' in requested)return unavailable(`I can't screen ${requested.unsupported} in chat. Supported chat universes are Nifty 50, Bank NIFTY, NIFTY IT, NIFTY Auto, NIFTY Pharma, NIFTY Metal, NIFTY FMCG and all NSE stocks. Use the Market scanner for ${requested.unsupported}. No scan was run.`,rev);
+    const universe=requested.id,universeLabel=requested.label;
     const current=input.currentStrategy;
     if(!current)return unavailable('A valid workspace is required to hold unused risk and exit placeholders. No scan or backtest was run.',rev);
     const temporal=/overbought/i.test(message)&&/oversold/i.test(message)&&message.toLowerCase().indexOf('oversold')<message.toLowerCase().indexOf('overbought')&&/\b(recently|previously|after|last|past|within|preceding)\b/i.test(message)&&!/\b(?:not|never|no longer)\s+(?:\w+\s+){0,2}(?:oversold|overbought)\b/i.test(message);
@@ -168,8 +223,8 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
       if(!candidate.indicators.some((i:{id:string})=>i.id===indicatorId))candidate.indicators.push({id:indicatorId,type:'RSI',params:{period:14}});
       candidate.rules.entry=[{leftIndicator:indicatorId,operator:'lt',rightValue:30},{leftIndicator:indicatorId,operator:'gte',rightValue:70,lookback:{bars:20,includeCurrent:false,match:'any'}}];
       const title=buildScreenTitle(candidate,70);
-      candidate.name=truncateAtWord(title+' · Nifty 50',70);
-      screenMessage='Scanning Nifty 50 for '+title+'. Nothing is changed or run.';
+      candidate.name=truncateAtWord(title+' · '+universeLabel,70);
+      screenMessage='Scanning '+universeLabel+' for '+title+'. Nothing is changed or run.';
       if(!/rsi\s*\(?14/i.test(message))assumptions.push('RSI period 14, Wilder smoothing (default).');
       if(!/30/.test(message))assumptions.push('Oversold means current RSI < 30 (default).');
       if(!/70/.test(message))assumptions.push('Previously overbought means RSI >= 70 (default).');
@@ -185,8 +240,9 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
         candidate.rules.exit=current.rules.exit;candidate.risk=current.risk;candidate.execution=current.execution;candidate.costs=current.costs;
         for(const indicator of current.indicators)if(!candidate.indicators.some((i:{id:string})=>i.id===indicator.id))candidate.indicators.push(indicator);
         assumptions.push(...deterministic.setup.assumptions);
-        const label=deterministic.setup.strategy.name.replace(/\s*·\s*(?:Nifty 50|NIFTY 50)$/i,'').trim();
-        screenMessage='Scanning Nifty 50 for '+(label||'this setup')+'. Nothing is changed or run.';
+        const label=deterministic.setup.strategy.name.split(/\s*·\s*/)[0]?.trim()||deterministic.setup.strategy.name;
+        candidate.name=truncateAtWord((label||'Screen setup')+' · '+universeLabel,70);
+        screenMessage='Scanning '+universeLabel+' for '+(label||'this setup')+'. Nothing is changed or run.';
       }else{
         if(!cfg.ready)return unavailable(describeConfigState(cfg)+' This screen is outside the deterministic rule parser. No matches were invented.',rev);
         const plannerSystem=[
@@ -222,14 +278,19 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
         if(!planMentionsOnlyRequestedConditions(planned.strategy,message))return unavailable("I couldn't turn that into scan rules: the plan added conditions you didn't ask for. Try 'RSI above 60' or 'break above the 20-day high'.",rev);
         Object.assign(candidate,planned.strategy);candidate.rules.exit=current.rules.exit;candidate.risk=current.risk;candidate.execution=current.execution;candidate.costs=current.costs;
         for(const indicator of current.indicators)if(!candidate.indicators.some((i:{id:string})=>i.id===indicator.id))candidate.indicators.push(indicator);
-        candidate.name=buildScreenTitle(candidate,70);
+        const title=buildScreenTitle(candidate,70);
+        candidate.name=truncateAtWord(title+' · '+universeLabel,70);
         candidate.description=cleanScreenSummary(candidate.description,'Screen setup');
-        screenMessage='Scanning Nifty 50 for '+candidate.name+'. Nothing is changed or run.';
+        screenMessage='Scanning '+universeLabel+' for '+title+'. Nothing is changed or run.';
         assumptions.push(...planned.assumptions);method='external_ai';provider={name:cfg.provider,model:cfg.model,aiGenerated:true};
       }
     }
     const check=strictValidateStrategy(candidate); if(!check.success)return unavailable('Screen strategy is invalid: '+check.errors?.join('; '),rev);
-    return parseResearchChatResponse({...base,kind:'screen',message:screenMessage,method,provider,universe:'NIFTY_50',strategy:check.data,assumptions:[...assumptions,'Workspace exits, risk, sizing, execution and costs are unused placeholders for screening only.'],missingBacktestRules:['exits','positionSizing','executionAndCosts'],backtestReady:false,...(method==='external_ai'?{summary:cleanScreenSummary(candidate.description,'Screen setup')}:{})});
+    return parseResearchChatResponse({...base,kind:'screen',message:screenMessage,method,provider,universe,strategy:check.data,assumptions:[`Universe: ${universeLabel}${requested.fromMessage?' (from your message)':' (default)'}.`,...assumptions,'Workspace exits, risk, sizing, execution and costs are unused placeholders for screening only.'],missingBacktestRules:['exits','positionSizing','executionAndCosts'],backtestReady:false,...(method==='external_ai'?{summary:cleanScreenSummary(candidate.description,'Screen setup')}:{})});
+  }
+  if(isPerformanceQuestion(message)){
+    const answer=await performanceAnswer(message,deps);
+    if(answer)return parseResearchChatResponse({...base,kind:'conversation',message:answer.text,method:answer.available?'rule_parser':'unavailable',provider:answer.available?{name:answer.sourceName,model:null,aiGenerated:false}:{name:'none',model:null,aiGenerated:false},warnings:answer.warnings});
   }
   if(isSectorQuestion(message)){
     const answer=await sectorAnswer(message,deps);
@@ -246,5 +307,6 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
     return parseResearchChatResponse({...base,kind:'proposal',message:result.proposal.rationale,method:result.proposal.method,provider:result.proposal.provider,warnings:result.proposal.warnings,proposal:result.proposal});
   }
   const chat=await handleAIChat({...input,message},d);
-  return parseResearchChatResponse({...base,kind:'conversation',message:chat.reply,method:chat.aiConnected?'external_ai':'unavailable',provider:{name:chat.providerUsed,model:chat.aiConnected?cfg.model:null,aiGenerated:chat.aiConnected},warnings:chat.warnings??[]});
+  const reply=looksLikeReasoning(chat.reply)?'I couldn’t produce a clean answer from the model output. Try again, or ask for a price, a scan, or a backtest.':chat.reply;
+  return parseResearchChatResponse({...base,kind:'conversation',message:reply,method:chat.aiConnected?'external_ai':'unavailable',provider:{name:chat.providerUsed,model:chat.aiConnected?cfg.model:null,aiGenerated:chat.aiConnected},warnings:chat.warnings??[]});
 }

@@ -108,7 +108,7 @@ it('derives an external screen title from rules and keeps the model summary sepa
  const fetch=vi.fn().mockResolvedValue(fakeResponse({body:openAIBody(JSON.stringify({strategy:planned,assumptions:['Fixture.']}))}));
  const out=await researchChat({message:'Screen Nifty 50 for a rare EMA and RSI divergence with SMA pattern',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-title-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
  if(out.kind!=='screen')throw Error('Screen absent: '+JSON.stringify(out));
- expect(out.strategy.name).toBe('Above 50 EMA · RSI 62–82');
+ expect(out.strategy.name).toBe('Above 50 EMA · RSI 62–82 · Nifty 50');
  expect(out.strategy.description).toBe('Daily long setup above the 50-day EMA');
  expect(out.summary).toBe('Daily long setup above the 50-day EMA');
 });
@@ -221,4 +221,51 @@ it('surfaces key-free field errors when an AI draft fails schema validation',asy
  expect(out.warnings.join(' ')).toMatch(/schema validation/i);
  expect(out.warnings.join(' ')).toMatch(/risk|execution/);
  expect(JSON.stringify(out)).not.toContain('fixture-warning-key');
+});
+
+it('uses the universe the user named and says it in the message and title',async()=>{
+ const cases:[string,string,string,string][]=[
+  ['Screen NIFTY IT for close above the 20-day high','NIFTY_IT','NIFTY IT','20-day high breakout'],
+  ['Screen NIFTY Metal for RSI below 40','NIFTY_METAL','NIFTY Metal','RSI below 40'],
+  ['Screen all NSE stocks for RSI above 70','NSE','all NSE stocks','RSI above 70'],
+  ['Screen Bank NIFTY for RSI above 60','BANK_NIFTY','Bank NIFTY','RSI above 60'],
+  ['Screen NIFTY Auto for RSI above 55','NIFTY_AUTO','NIFTY Auto','RSI above 55'],
+  ['Screen NIFTY Pharma for RSI below 45','NIFTY_PHARMA','NIFTY Pharma','RSI below 45'],
+  ['Screen NIFTY FMCG for RSI above 65','NIFTY_FMCG','NIFTY FMCG','RSI above 65'],
+  ['Screen Nifty 50 for RSI above 60','NIFTY_50','Nifty 50','RSI above 60'],
+ ];
+ for(const [message,universe,label,title] of cases){
+  const fetch=vi.fn();
+  const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'},fetch});
+  expect(out.kind,message).toBe('screen');
+  if(out.kind!=='screen')throw Error('Screen absent: '+message);
+  expect(out.universe,message).toBe(universe);
+  expect(out.message,message).toBe(`Scanning ${label} for ${title}. Nothing is changed or run.`);
+  expect(out.strategy.name,message).toBe(`${title} · ${label}`);
+  expect(out.assumptions.join(' '),message).toContain(`Universe: ${label}`);
+  expect(fetch,message).not.toHaveBeenCalled();
+ }
+});
+
+it('refuses an unsupported universe plainly instead of substituting Nifty 50',async()=>{
+ for(const message of ['Screen BSE Sensex for RSI above 60','Screen Nifty Midcap for RSI below 40']){
+  const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
+  expect(out.kind,message).toBe('conversation');
+  expect(out.message,message).toMatch(/I can't screen .* in chat/);
+  expect(out.message,message).toContain('No scan was run');
+  expect(out.message,message).not.toContain('Scanning Nifty 50');
+ }
+});
+
+it('resolves TCS from the catalog and never returns model deliberation',async()=>{
+ const reasoning='The request is to backtest TCS with an RSI-below-30 entry. The hard schema rules require that when a current_strategy is supplied, its symbolId and instrumentId are preserved exactly. All indicators, entry rules, risk, execution and cost settings are therefore carried over unchanged.';
+ const fetch=vi.fn(async()=>fakeResponse({body:openAIBody(JSON.stringify({rationale:reasoning,warnings:[],strategy:validStrategy()}))}));
+ const out=await researchChat({message:'Backtest TCS with RSI below 30',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-reasoning-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ expect(out.kind).toBe('proposal');
+ if(out.kind!=='proposal')throw Error('Proposal absent');
+ expect(out.proposal.candidate.universe.symbolId).toBe(11);
+ expect(out.proposal.candidate.universe.ticker).toBe('TCS');
+ expect(out.message).toBe('I prepared a draft from your request. Nothing is applied until you review and apply it.');
+ expect(out.message).not.toMatch(/schema|symbolId|instrumentId|current_strategy|The request is/i);
+ expect(JSON.stringify(out)).not.toContain('fixture-reasoning-key');
 });

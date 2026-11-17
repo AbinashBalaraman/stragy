@@ -278,3 +278,21 @@ export function describeStrategyChanges(before: unknown, after: unknown, limit =
 export function diffStrategies(before: unknown, after: unknown, limit = 40): string[] {
   return describeStrategyChanges(before, after, limit).changes;
 }
+const REASONING_MARKERS = /\b(?:schema|current_strategy|system\s+prompt|hard\s+schema|instrumentId|symbolId|previous_output|validation_errors|the\s+request\s+is|the\s+user\s+(?:wants|asked)|looking\s+at\s+the\s+(?:request|schema)|we\s+need\s+to)\b/i;
+
+/** Model deliberation is not an answer. Detect the internal-analysis shape, not normal prose. */
+export function looksLikeReasoning(text: string): boolean {
+  const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!value) return false;
+  if (value.length > 420) return true;
+  if (REASONING_MARKERS.test(value)) return true;
+  if (/^(?:the request|the user|looking at|we need|first,? i)\b/i.test(value)) return true;
+  return (value.match(/\bI\b/g) ?? []).length >= 2;
+}
+
+export function plainRationale(text: string): string {
+  return looksLikeReasoning(text)
+    ? 'I prepared a draft from your request. Nothing is applied until you review and apply it.'
+    : text;
+}
+

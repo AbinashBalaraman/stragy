@@ -7,9 +7,10 @@ import type { StrategyAST } from '../../shared/strategy/types';
 import {
   AIRuntimeConfig, EnvLike, FetchLike, RequestBudget, callProvider, resolveAIConfig,
 } from './provider';
-import { INPUT_LIMITS, boundHistory, describeStrategyChanges, diffStrategies, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
+import { INPUT_LIMITS, boundHistory, describeStrategyChanges, diffStrategies, parseModelJson, plainRationale, sanitizeText, strictValidateStrategy } from './validation';
 import { buildStrategySystemPrompt } from './strategyPrompt';
-import { LOCAL_LABEL, localCreateFromPrompt, localEditStrategy } from './heuristics';
+import { LOCAL_LABEL, localCreateFromPrompt, localEditStrategy, resolveSymbolFromPrompt } from './heuristics';
+import { ALL_SYMBOLS } from '../data/symbols';
 import { applyExplicitNumbers, mergeExplicitAssumptions } from './explicitNumbers';
 import type {
   CreateProposalFailure, CreateProposalResult, ProposalErrorCode, StrategyProposalV2,
@@ -156,7 +157,7 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
     let modelWarnings = Array.isArray(out.warnings) ? out.warnings.filter((w): w is string => typeof w === 'string').slice(0, 10).map((w) => sanitizeText(w, 300)) : [];
     let rationale = sanitizeText(out.rationale, 2_000);
     if (out.strategy === null || out.strategy === undefined) {
-      return maybeLocal('ai_refusal', rationale || 'The model did not return a strategy.', modelWarnings);
+      return maybeLocal('ai_refusal', plainRationale(rationale || 'The model did not return a strategy.'), modelWarnings);
     }
     let sv = strictValidateStrategy(out.strategy);
     let repaired = false;
@@ -176,7 +177,7 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
       modelWarnings = Array.isArray(out.warnings) ? out.warnings.filter((w): w is string => typeof w === 'string').slice(0, 10).map((w) => sanitizeText(w, 300)) : [];
       rationale = sanitizeText(out.rationale, 2_000);
       if (out.strategy === null || out.strategy === undefined) {
-        return maybeLocal('ai_refusal', rationale || 'The model did not return a strategy after the repair attempt.', modelWarnings, firstErrors);
+        return maybeLocal('ai_refusal', plainRationale(rationale || 'The model did not return a strategy after the repair attempt.'), modelWarnings, firstErrors);
       }
       sv = strictValidateStrategy(out.strategy);
       if (!sv.success) return maybeLocal('ai_invalid_schema', 'The model output did not match the strategy schema.', modelWarnings, sv.errors);
@@ -194,6 +195,18 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
     });
     const explicitChecked = explicit.matched ? strictValidateStrategy(explicit.strategy) : null;
     const candidate: StrategyAST = explicitChecked?.success && explicitChecked.data ? explicitChecked.data : draft;
+    // The catalog knows the requested stock even when the model repeats the
+    // workspace symbol. Prefer the user's explicit ticker.
+    const promptSymbolId = resolveSymbolFromPrompt(prompt);
+    if (promptSymbolId) {
+      const meta = ALL_SYMBOLS.find(symbol => symbol.id === promptSymbolId);
+      candidate.universe = {
+        ...candidate.universe,
+        symbolId: promptSymbolId,
+        instrumentId: `legacy:${promptSymbolId}`,
+        ...(meta?.ticker ? { ticker: meta.ticker } : {}),
+      };
+    }
     const extra = Object.keys(out).filter((k) => !['rationale', 'warnings', 'strategy'].includes(k));
     const w = [...warnings, ...modelWarnings];
     if (explicitChecked && !explicitChecked.success) w.push('Explicit numbers from your message could not be applied safely; review the draft.');
@@ -206,7 +219,7 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
     if (current && diffStrategies(current, candidate).length === 0) w.push('The proposal is identical to the current strategy.');
     return {
       ok: true,
-      proposal: mk({ method: 'external_ai', provider: { name: cfg.provider, model: cfg.model, aiGenerated: true }, candidate, rationale, warnings: w }),
+      proposal: mk({ method: 'external_ai', provider: { name: cfg.provider, model: cfg.model, aiGenerated: true }, candidate, rationale: plainRationale(rationale), warnings: w }),
     };
   }
 

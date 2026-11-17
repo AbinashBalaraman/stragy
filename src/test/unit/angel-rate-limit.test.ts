@@ -141,3 +141,24 @@ describe('Angel rate limiting is not an expired session', () => {
     expect([...attempts.values()].every(count => count === 2)).toBe(true);
   });
 });
+
+describe('Angel limiter holds the published rate under concurrency', () => {
+  it('starts no more than 2 candle requests in any sliding second with 8 concurrent callers', async () => {
+    const starts: number[] = [];
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes('loginByPassword')) return loginOk();
+      starts.push(Date.now());
+      return candlesOk();
+    });
+    configureAngelTransport({ fetch: fetcher as unknown as typeof fetch, resetSession: true, pacing: true });
+    await Promise.all(Array.from({ length: 8 }, (_, index) => request(String(4100 + index))));
+    expect(starts).toHaveLength(8);
+    // The published ceiling is 2/s: the third start can never follow the first
+    // inside the same second, and starts stay smooth at ~500 ms apart.
+    for (let index = 2; index < starts.length; index += 1) {
+      expect(starts[index] - starts[index - 2]).toBeGreaterThanOrEqual(995);
+    }
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(495);
+    expect(starts.at(-1)! - starts[0]).toBeGreaterThanOrEqual(3_400);
+  }, 20_000);
+});

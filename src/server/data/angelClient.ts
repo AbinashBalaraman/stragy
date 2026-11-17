@@ -100,6 +100,9 @@ let loginFailureBackoffMs = LOGIN_FAILURE_BACKOFF_MS;
 let reloginCooldownMs = RELOGIN_COOLDOWN_MS;
 let rateLimitBaseMs = 1_000;
 let rateLimitBudgetMs = 30_000;
+const debugMetrics = { requests: 0, candleRequests: 0, quoteRequests: 0, loginRequests: 0, throttles: 0, retrySleepMs: 0, relogins: 0 };
+export function getAngelDebugMetrics(): typeof debugMetrics { return { ...debugMetrics }; }
+export function resetAngelDebugMetrics(): void { Object.assign(debugMetrics, { requests: 0, candleRequests: 0, quoteRequests: 0, loginRequests: 0, throttles: 0, retrySleepMs: 0, relogins: 0 }); }
 const brokerEnabled = process.env.NODE_ENV !== 'test';
 const sessionAuthority = isMainThread || !brokerEnabled;
 let brokerChannel: BroadcastChannel | null = null;
@@ -148,9 +151,11 @@ export function resetAngelTransportForTests(): void {
   reloginCooldownMs = RELOGIN_COOLDOWN_MS;
   rateLimitBaseMs = 1_000;
   rateLimitBudgetMs = 30_000;
+  resetAngelDebugMetrics();
   buckets.clear();
   lastSlotAt.clear();
   gate = Promise.resolve();
+  rateGate = Promise.resolve();
 }
 
 function toWire(session: AngelSession): SessionWire {
@@ -415,10 +420,11 @@ function isAuthFailure(error: unknown): boolean {
 // One global gate serialises every outbound Angel request, so the sliding-window
 // budgets below are enforced across concurrent callers and route handlers.
 let gate: Promise<unknown> = Promise.resolve();
+let rateGate: Promise<unknown> = Promise.resolve();
 const buckets = new Map<string, number[]>();
 const lastSlotAt = new Map<string, number>();
 
-async function acquire(kind: keyof typeof LIMITS, signal?: AbortSignal): Promise<void> {
+async function reserveSlot(kind: keyof typeof LIMITS, signal?: AbortSignal): Promise<void> {
   const spacing = Math.max(...LIMITS[kind].map(rule => rule.minIntervalMs ?? 0));
   if (spacing > 0) {
     const last = lastSlotAt.get(kind) ?? 0;
@@ -439,17 +445,29 @@ async function acquire(kind: keyof typeof LIMITS, signal?: AbortSignal): Promise
   }
 }
 
+// Worker threads ask the main thread for a slot over BroadcastChannel, so
+// several acquire() calls can be in flight at once. Reservations must be
+// atomic: without this chain two callers read the same last slot and start
+// together, turning a smooth 2/s into a burst Angel answers with 403.
+function acquire(kind: keyof typeof LIMITS, signal?: AbortSignal): Promise<void> {
+  const run = rateGate.then(() => reserveSlot(kind, signal));
+  rateGate = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 function schedule<T>(kind: keyof typeof LIMITS, signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
-  const run = gate.then(async () => {
+  // Reserve the next allowed start slot under the gate, then release it before
+  // the HTTP request. Slow responses must not serialise the whole scan; the
+  // documented starts-per-second limit is still enforced by acquire().
+  const slot = gate.then(async () => {
     if (pacingEnabled) {
       if (sessionAuthority || kind === 'login') await acquire(kind, signal);
       else await requestRateSlot(kind as 'quote' | 'candles', signal);
     }
     if (signal?.aborted) throw abortError(signal);
-    return task();
   });
-  gate = run.then(() => undefined, () => undefined);
-  return run;
+  gate = slot.then(() => undefined, () => undefined);
+  return slot.then(() => task());
 }
 
 function classifyLoginFailure(status: number, message: string): string {
@@ -513,6 +531,10 @@ function retryAfterMs(response: Response, now: number): number | undefined {
 async function angelPost<T>(kind: keyof typeof LIMITS, url: string, body: unknown, jwt: string | undefined, signal?: AbortSignal, fetcher?: typeof fetch): Promise<T> {
   assertEndpoint(url);
   const { credentials } = readCredentials();
+  debugMetrics.requests++;
+  if (kind === 'candles') debugMetrics.candleRequests++;
+  if (kind === 'quote') debugMetrics.quoteRequests++;
+  if (kind === 'login') debugMetrics.loginRequests++;
   return schedule(kind, signal, async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel request exceeded 10 seconds')), REQUEST_TIMEOUT_MS);
@@ -542,7 +564,7 @@ async function angelPost<T>(kind: keyof typeof LIMITS, url: string, body: unknow
       || /exceed|rate limit|too many requests/i.test(text)
       || /^AG8004$/.test(errorCode)
       || (kind === 'login' && response.status === 403 && !/totp|client|password|\bpin\b|api key|whitelist|ip address/i.test(message));
-    if (rateLimited) throw new AngelRequestError(response.status, errorCode || 'RATE_LIMIT', ANGEL_RATE_LIMIT_MESSAGE, false, true, 'PROVIDER_RATE_LIMITED', retryAfterMs(response, nowImpl()));
+    if (rateLimited) { debugMetrics.throttles++; throw new AngelRequestError(response.status, errorCode || 'RATE_LIMIT', ANGEL_RATE_LIMIT_MESSAGE, false, true, 'PROVIDER_RATE_LIMITED', retryAfterMs(response, nowImpl())); }
     // Angel reports login throttling as 403 before it ever checks the PIN/TOTP.
     // Only 401 and the documented token errors may trigger a re-login.
     const credentialFailure = kind === 'login' && response.status === 403 && /totp|client|password|\bpin\b|api key|whitelist|ip address/i.test(message);
@@ -625,6 +647,7 @@ async function refreshSession(failedJwt: string, fetcher?: typeof fetch, signal?
     throw new MarketDataError(code, failure?.message ?? 'Angel One session expired; re-login is cooling down after a recent attempt');
   }
   lastReloginAttempt = now;
+  debugMetrics.relogins++;
   reloginPromise = (async () => {
     try {
       return await login(fetcher);
@@ -805,6 +828,7 @@ async function withAuthRetry<T>(
         if (remaining <= 0) throw current;
         const wait = current.retryAfterMs ?? Math.min(rateLimitBudgetMs, baseMs * 2 ** attempt + Math.floor(Math.random() * baseMs * 0.2));
         if (wait > remaining) throw current;
+        debugMetrics.retrySleepMs += wait;
         await sleep(wait, signal);
         try { return await fn(session); }
         catch (retryError) {

@@ -192,3 +192,37 @@ describe('market-data grounding', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 });
+
+it('answers single-stock performance from observed daily bars, not an unavailable line', async () => {
+  const bars: OHLCVBar[] = [];
+  for (let t = Date.UTC(2024, 0, 1); t <= Date.UTC(2026, 10, 13); t += 86_400_000) {
+    const day = new Date(t);
+    if (day.getUTCDay() === 0 || day.getUTCDay() === 6) continue;
+    const close = 100 + bars.length * 0.05;
+    bars.push({ date: day.toISOString().slice(0, 10), timestamp: t, open: close - 1, high: close + 2, low: close - 2, close, volume: 1_000 });
+  }
+  const last = bars[bars.length - 1];
+  const series: MarketSeries = {
+    bars,
+    provenance: {
+      mode: 'real', source: 'ANGEL_SMARTAPI', symbolId: 9, asOf: last.date, fetchedAt: '2026-11-13T10:00:00.000Z',
+      requestedRange: {}, actualRange: { start: bars[0].date, end: last.date }, adjustment: 'unadjusted', checksum: 'fixture',
+      coverage: 'available-history', freshness: 'last-completed-session', warnings: [], calendarVersion: 'fixture',
+    },
+  };
+  const load = vi.fn(async () => series);
+  const out = await researchChat({ message: 'How has RELIANCE done this year?' }, {
+    env: { AI_PROVIDER: 'none' },
+    market: { mode: 'real', env: { QUOTES_PROVIDER: 'none' }, load, now: () => NOW },
+  });
+  expect(out.kind).toBe('conversation');
+  expect(out.method).toBe('rule_parser');
+  expect(out.message).toContain('Reliance Industries (RELIANCE)');
+  expect(out.message).toMatch(/YTD [+-]\d+\.\d+%/);
+  expect(out.message).toMatch(/1-year [+-]\d+\.\d+%/);
+  expect(out.message).toContain('52-week range');
+  expect(out.message).toMatch(/Observed through 13 Nov 2026/);
+  expect(out.message).toContain('Angel One daily bars · not AI');
+  expect(out.message).not.toMatch(/unavailable|ANGEL_SMARTAPI|Market data is unavailable/i);
+  expect(load).toHaveBeenCalledWith(9, { mode: 'real' });
+});

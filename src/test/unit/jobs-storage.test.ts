@@ -3,7 +3,7 @@ import { mkdir,mkdtemp,writeFile,readFile,rm } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateStrategy, canonicalStrategyJSON } from '../../shared/strategy/schema';
-import { JobManager,type ResearchPayload } from '../../server/jobs/manager';
+import { JobManager,SCAN_HARD_CAP_MS,type ResearchPayload } from '../../server/jobs/manager';
 import { ResearchRepository } from '../../server/storage/repository';
 import { simulate } from '../../server/backtest/engine';
 import { strategy,bars } from '../fixtures/research';
@@ -40,7 +40,7 @@ describe('bounded jobs',()=>{
     const m=new JobManager({maxMs:1000,executor:async payload=>{if(payload.kind==='scan'&&scanCalls++===0)await firstScan;return result();}});
     pendingManagers.push(m);
     const first=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
-    const second=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    const second=m.enqueue({kind:'scan',strategy:strategy(),universe:'BANK_NIFTY',mode:'demo'});
     await new Promise(resolve=>setTimeout(resolve,5));
     expect(m.get(first.id)?.status).toBe('running');
     expect(m.get(second.id)).toMatchObject({status:'queued',stage:'waiting',queuedBehind:1});
@@ -52,6 +52,38 @@ describe('bounded jobs',()=>{
     expect(started.queuedBehind).toBeUndefined();
     expect(started.startedAt).toBeTruthy();
   });
+  it('J08 identical active scans share one job and one run',async()=>{
+    let releaseScan!:()=>void;
+    const scanBlocked=new Promise<void>(resolve=>{releaseScan=resolve;});
+    let runs=0;
+    const m=new JobManager({maxMs:1000,executor:async payload=>{if(payload.kind==='scan'){runs++;await scanBlocked;}return result();}});
+    pendingManagers.push(m);
+    const scanInput:ResearchPayload={kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo',limit:50};
+    const first=m.enqueue(scanInput);
+    const second=m.enqueue(JSON.parse(JSON.stringify(scanInput)));
+    expect(second.id).toBe(first.id);
+    await new Promise(resolve=>setTimeout(resolve,5));
+    expect(runs).toBe(1);
+    releaseScan();
+    expect((await terminal(m,first.id)).status).toBe('succeeded');
+    expect(runs).toBe(1);
+  });
+  it('J09 cancelling a scan frees the lane for the next scan',async()=>{
+    let blockFirst=true;
+    const m=new JobManager({maxMs:1000,executor:async(payload,{signal})=>{
+      if(payload.kind==='scan'&&blockFirst){
+        blockFirst=false;
+        await new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}));
+      }
+      return result();
+    }});pendingManagers.push(m);
+    const first=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    const second=m.enqueue({kind:'scan',strategy:strategy(),universe:'BANK_NIFTY',mode:'demo'});
+    await new Promise(resolve=>setTimeout(resolve,5));
+    expect(m.cancel(first.id)?.status).toBe('cancelled');
+    expect((await terminal(m,second.id)).status).toBe('succeeded');
+    expect(SCAN_HARD_CAP_MS).toBe(600_000);
+  });
   it('J07 the execution deadline starts when the run starts, not while queued',async()=>{
     let releaseScan!:()=>void;
     const firstScan=new Promise<void>(resolve=>{releaseScan=resolve;});
@@ -59,7 +91,7 @@ describe('bounded jobs',()=>{
     const m=new JobManager({maxMs:25,executor:async payload=>{if(payload.kind==='scan'&&scanCalls++===0)await firstScan;return result();}});
     pendingManagers.push(m);
     m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
-    const queued=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    const queued=m.enqueue({kind:'scan',strategy:strategy(),universe:'BANK_NIFTY',mode:'demo'});
     await new Promise(resolve=>setTimeout(resolve,60));
     releaseScan();
     expect((await terminal(m,queued.id)).status).toBe('succeeded');
@@ -110,5 +142,45 @@ describe('scan idle deadline',()=>{
     expect(done.status).toBe('failed');
     expect(done.error?.code).toBe('JOB_TIMEOUT');
     expect(done.error?.message).toMatch(/scan took too long/i);
+  });
+});
+
+describe('market snapshot cache',()=>{
+  const marketInput:ResearchPayload={kind:'market',universe:'NIFTY_50',mode:'demo'};
+  const snapshot=()=>({trends:[],errors:[],coverage:{requested:0,succeeded:0,unavailable:0},sourceCoverage:{},universe:'NIFTY_50',mode:'demo'}) as any;
+  it('J10 returns a finished snapshot within the TTL and starts no second run',async()=>{
+    let runs=0;
+    const m=new JobManager({executor:async payload=>{if(payload.kind==='market')runs++;return payload.kind==='market'?snapshot():result();}});
+    pendingManagers.push(m);
+    const first=m.enqueue(marketInput);
+    const done=await terminal(m,first.id);
+    expect(done.status).toBe('succeeded');
+    const second=m.enqueue(JSON.parse(JSON.stringify(marketInput)));
+    expect(second.status).toBe('succeeded');
+    expect(second.id).not.toBe(first.id);
+    expect(runs).toBe(1);
+    expect(m.get(second.id)?.result).toEqual(done.result);
+  });
+  it('J11 shares one in-flight snapshot job',async()=>{
+    let release!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    let runs=0;
+    const m=new JobManager({executor:async payload=>{if(payload.kind==='market'){runs++;await gate;return snapshot();}return result();}});
+    pendingManagers.push(m);
+    const first=m.enqueue(marketInput);
+    const second=m.enqueue(JSON.parse(JSON.stringify(marketInput)));
+    expect(second.id).toBe(first.id);
+    release();
+    expect((await terminal(m,first.id)).status).toBe('succeeded');
+    expect(runs).toBe(1);
+  });
+  it('J12 a different universe misses the snapshot cache',async()=>{
+    let runs=0;
+    const m=new JobManager({executor:async payload=>{if(payload.kind==='market')runs++;return payload.kind==='market'?snapshot():result();}});
+    pendingManagers.push(m);
+    await terminal(m,m.enqueue(marketInput).id);
+    const other=m.enqueue({kind:'market',universe:'BANK_NIFTY',mode:'demo'});
+    expect((await terminal(m,other.id)).status).toBe('succeeded');
+    expect(runs).toBe(2);
   });
 });
