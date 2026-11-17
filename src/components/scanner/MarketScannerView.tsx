@@ -492,6 +492,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const latestSessionSelected = !selectedDate || (!!latestDataCutoff && selectedDate === latestDataCutoff);
   const latestOnlyUnavailable = latestOnlyView && !latestSessionSelected;
   const modelModeUnavailable = latestOnlyView && !latestOnlyUnavailable && dataEvidence?.mode === 'real';
+  const modelOnlyTabs = ['option_chain', 'volume_profile', 'gtt_bracket', 'basis_spreads'];
+  const modelOnlyTab = modelOnlyTabs.includes(activeTab);
+  const modelPending = modelOnlyTab && !dataEvidence;
   const latestOnlyLabel = activeTab === 'option_chain' ? 'Option chain & Greeks'
     : activeTab === 'volume_profile' ? 'Volume profile & VWAP'
       : activeTab === 'gtt_bracket' ? 'GTT bracket & trailing stop'
@@ -720,7 +723,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         />
       )}
 
-      {initialLoading ? <ScannerLoadingSkeleton /> : (<>
+      {initialLoading && !modelOnlyTab ? <ScannerLoadingSkeleton /> : (<>
       {/* TAB 1: TOP GAINERS & TOP LOSERS */}
       {activeTab === 'movers' && (
         <section aria-label="Top gainers and losers" className="space-y-3">
@@ -939,16 +942,18 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </section>
       )}
 
-      {modelModeUnavailable && (
-        <div role="status" className="rounded-2xl border border-dashed border-[rgba(236,236,237,0.16)] bg-[#171719]/40 p-8 text-center space-y-3">
-          <p className="text-sm font-semibold text-neutral-200">The {latestOnlyLabel} view is a fictional demo model</p>
-          <p className="mx-auto max-w-xl text-xs leading-5 text-neutral-400">
-            This server is running real observed market data, so model-only derivatives are disabled. No observed derivative, synthetic price or live quote is substituted here.
+      {(modelModeUnavailable || modelPending) && (
+        <div role="status" className="space-y-3 rounded-[var(--r-card)] border border-dashed border-[var(--line-strong)] px-4 py-10 text-center">
+          <p className="text-sm font-medium text-[var(--text-1)]">The {latestOnlyLabel} view is a fictional demo model</p>
+          <p className="mx-auto max-w-xl text-xs leading-5 text-[var(--text-3)]">
+            {dataEvidence?.mode === 'real'
+              ? 'This server is running real observed market data, so model-only derivatives are disabled. No observed derivative, synthetic price or live quote is substituted here.'
+              : 'Model-only fields are demo values, not observed derivatives. Nothing here is live or an observed quote.'}
           </p>
           <button
             type="button"
             onClick={() => setActiveTab('movers')}
-            className="rounded-lg border border-[rgba(236,236,237,0.16)] bg-[#1e1e21] px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-[#27272a]"
+            className="rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
           >
             Back to gainers &amp; losers
           </button>
@@ -1287,7 +1292,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         selectedDate={selectedDate || dataCutoff}
         onSelectDate={(date) => handleDateChange(date)}
         availableDates={coveredTradingDates}
-        activeUniverseLabel={currentUniverseConfig.label}
+        activeUniverseLabel={currentUniverseConfig.shortLabel}
         totalAssetsCount={trends.length}
       />
     </div>

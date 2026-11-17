@@ -50,7 +50,7 @@ const NavItems: React.FC<{
       <button
         type="button"
         onClick={onNewChat}
-        className="flex items-center gap-2.5 rounded-xl bg-white/[0.06] px-3 py-2.5 text-left text-sm font-medium text-neutral-100 hover:bg-white/[0.1]"
+        className="flex items-center gap-2.5 rounded-xl border border-[var(--line)] px-3 py-2.5 text-left text-sm font-medium text-[var(--text-1)] transition-colors hover:border-[var(--line-strong)] hover:bg-white/[0.04]"
       >
         <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
         New chat
@@ -71,7 +71,7 @@ const NavItems: React.FC<{
         );
       })}
       <div className="mt-auto space-y-1 border-t border-white/8 pt-3">
-        <p className="px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-600">Settings</p>
+        <p className="px-3 text-[11px] text-[var(--text-3)]">Settings</p>
         <button
           type="button"
           onClick={() => onNavigate('settings')}
@@ -240,8 +240,9 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
               onNavigate={navigate}
               onNewChat={newChat}
             />
-            <div className="mt-auto space-y-2 pt-6 text-[11px] text-neutral-500">
+            <div className="mt-auto space-y-2 pt-6 text-[11px] text-[var(--text-3)]">
               {statusFooter}
+              <p className="text-[10px] leading-4 text-[var(--text-3)]">Backtests use daily bars</p>
               {footer}
             </div>
           </div>

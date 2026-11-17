@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, X } from 'lucide-react';
+import { Disclosure } from './Disclosure';
 
 interface Props {
   /** Assumptions the setup came with; shown behind a disclosure, never as a wall. */
@@ -10,36 +10,37 @@ interface Props {
 }
 
 /**
- * A quiet, dismissible note that a feature was filled from a hand-off rather
- * than typed here. It never claims anything was run or applied.
+ * A quiet hand-off marker: one line, no icon and no tint. The assumptions live
+ * behind a disclosure; nothing here claims the setup was run.
  */
 export const PrefillNote: React.FC<Props> = ({ assumptions = [], origin = 'chat', onDismiss }) => {
   const [open, setOpen] = useState(false);
+  const count = assumptions.length;
   return (
-    <div className="flex flex-wrap items-start gap-x-2 gap-y-1 rounded-lg border border-[#a8c7fa]/25 bg-[#a8c7fa]/[0.06] px-3 py-2 text-[11px] leading-5 text-neutral-300" role="status">
-      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#a8c7fa]" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <p>
-          Filled from {origin} · review before running
-          {assumptions.length > 0 && (
-            <>
-              {' · '}
-              <button type="button" className="underline decoration-neutral-500 underline-offset-2 hover:text-neutral-100" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-                {assumptions.length} assumption{assumptions.length === 1 ? '' : 's'}
-              </button>
-            </>
-          )}
-        </p>
-        {open && assumptions.length > 0 && (
-          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-neutral-400">
+    <div className="space-y-1 text-xs text-[var(--text-3)]" role="status">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>Filled from {origin}</span>
+        {count > 0 && (
+          <>
+            <span aria-hidden="true">·</span>
+            <button type="button" className="underline decoration-[var(--line-strong)] underline-offset-2 hover:text-[var(--text-1)]" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+              {count} assumption{count === 1 ? '' : 's'}
+            </button>
+          </>
+        )}
+        {onDismiss && (
+          <>
+            <span aria-hidden="true">·</span>
+            <button type="button" onClick={onDismiss} className="underline decoration-[var(--line-strong)] underline-offset-2 hover:text-[var(--text-1)]">Dismiss</button>
+          </>
+        )}
+      </p>
+      {open && count > 0 && (
+        <Disclosure summary="Assumptions">
+          <ul className="list-disc space-y-0.5 pl-4">
             {assumptions.map((assumption, index) => <li key={index}>{assumption}</li>)}
           </ul>
-        )}
-      </div>
-      {onDismiss && (
-        <button type="button" onClick={onDismiss} aria-label="Dismiss filled-from note" className="shrink-0 rounded p-0.5 text-neutral-500 hover:bg-white/5 hover:text-neutral-200">
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
-        </button>
+        </Disclosure>
       )}
     </div>
   );

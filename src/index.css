@@ -294,6 +294,14 @@ body {
   }
 }
 
+/* Browser surfaces: selection and focus rings already use the accent above;
+   the caret was still the browser default. */
+input,
+textarea,
+select {
+  caret-color: var(--accent);
+}
+
 /* P2-4: honour reduced motion globally (research/chat-ui-research.md §2.7). */
 @media (prefers-reduced-motion: reduce) {
   *,

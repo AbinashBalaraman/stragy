@@ -87,7 +87,7 @@ describe('comparison sweeps', () => {
     vi.mocked(requestBacktest).mockReturnValue(pending);
 
     render(<Harness initial={[baseline, removable]} />);
-    fireEvent.click(screen.getByRole('button', { name: /Stop-Loss Sweep/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Try stop loss/ }));
     await waitFor(() => expect(requestBacktest).toHaveBeenCalled());
     fireEvent.click(screen.getByTitle('Remove variation from matrix'));
     await waitFor(() => expect(screen.getByTestId('ids').textContent).toBe('run-a'));
@@ -107,7 +107,7 @@ describe('comparison sweeps', () => {
     vi.mocked(requestBacktest).mockImplementation(async () => copy(baseline, 'run-sweep-' + (++count)));
 
     render(<Harness initial={[baseline]} />);
-    fireEvent.click(screen.getByRole('button', { name: /Indicator Period Sweep/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Try shorter and longer/ }));
     await waitFor(() => expect(requestBacktest).toHaveBeenCalledTimes(2));
 
     const candidates = vi.mocked(requestBacktest).mock.calls.map(call => call[0]);
@@ -122,7 +122,7 @@ describe('comparison sweeps', () => {
     vi.mocked(requestBacktest).mockResolvedValue(copy(baseline, 'run-sweep'));
 
     render(<Harness initial={[baseline]} />);
-    fireEvent.click(screen.getByRole('button', { name: /Stop-Loss Sweep/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Try stop loss/ }));
     expect(await screen.findByText(/sweep could not be prepared/i)).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toContain('Nothing was run');
     expect(requestBacktest).not.toHaveBeenCalled();

@@ -7,7 +7,7 @@ import type {
   AIChainEntryPublic, AIProviderPublic, AIProvidersResponse,
 } from '../../shared/contracts/aiProviders';
 import {
-  getAIProviderModels, getAIProviders, saveAIChain, updateAIProvider,
+  createAIProvider, getAIProviderModels, getAIProviders, saveAIChain, updateAIProvider,
 } from '../../client/aiProviders';
 
 vi.mock('../../client/aiProviders', () => ({
@@ -73,6 +73,43 @@ afterEach(() => {
 });
 
 describe('provider settings', () => {
+  it('shows inline field errors, focuses the first invalid field and leaves native validation off', async () => {
+    render(<ProviderSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    const form = screen.getByRole('form', { name: 'Provider form' });
+    expect(form.hasAttribute('novalidate')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save provider' }));
+    const label = screen.getByLabelText('Label');
+    const baseUrl = screen.getByLabelText('Base URL');
+    expect(document.activeElement).toBe(label);
+    expect(label.getAttribute('aria-invalid')).toBe('true');
+    expect(label.getAttribute('aria-describedby')).toBe('provider-label-error');
+    expect(baseUrl.getAttribute('aria-invalid')).toBe('true');
+    expect(baseUrl.getAttribute('aria-describedby')).toBe('provider-base-url-error');
+    expect(screen.getByText('Add a label')).toBeTruthy();
+    expect(screen.getByText('Add a base URL starting with https://')).toBeTruthy();
+    expect(vi.mocked(createAIProvider)).not.toHaveBeenCalled();
+
+    fireEvent.change(label, { target: { value: 'Test provider' } });
+    expect(label.getAttribute('aria-invalid')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'Save provider' }));
+    expect(document.activeElement).toBe(baseUrl);
+    expect(screen.queryByText('Add a label')).toBeNull();
+    expect(screen.getByText('Add a base URL starting with https://')).toBeTruthy();
+  });
+
+  it('rejects a non-https base URL with the same inline message', async () => {
+    render(<ProviderSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Local' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'http://localhost:11434/v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save provider' }));
+    expect(document.activeElement).toBe(screen.getByLabelText('Base URL'));
+    expect(screen.getByText('Add a base URL starting with https://')).toBeTruthy();
+    expect(vi.mocked(createAIProvider)).not.toHaveBeenCalled();
+  });
+
   it('lists provider key status and never prefills the saved key when editing', async () => {
     render(<ProviderSettings />);
 

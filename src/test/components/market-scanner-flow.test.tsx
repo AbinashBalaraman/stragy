@@ -70,7 +70,7 @@ describe('bounded lazy market scanner flow', () => {
       asOf: '2025-01-01', limit: 12, source: 'chat', assumptions: ['Uses the active entry rules'],
     } as ScannerPrefill;
     render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} prefill={prefill} />);
-    expect(await screen.findByText(/Filled from chat · review before running/)).toBeTruthy();
+    expect(await screen.findByText(/Filled from chat/)).toBeTruthy();
     expect((screen.getByLabelText('Market universe') as HTMLSelectElement).value).toBe('NIFTY_IT');
     await waitFor(() => expect(scan).toHaveBeenCalledWith(expect.objectContaining({ universe: 'NIFTY_IT', limit: 12, asOf: '2025-01-01' }), expect.anything()));
   });
@@ -116,6 +116,15 @@ describe('bounded lazy market scanner flow', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('renders the demo-model note immediately for a model-only tab', () => {
+    market.mockImplementationOnce(() => new Promise(() => {}));
+    renderScanner();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
+    expect(screen.getByText(/fictional demo model/)).toBeTruthy();
+    expect(screen.queryByText(/Loading market snapshot/)).toBeNull();
   });
 
   it('says market data is still loading after ten seconds', () => {

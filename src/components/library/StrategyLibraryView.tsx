@@ -23,18 +23,6 @@ const errorMessage = (error: unknown) => {
   return 'Local library operation failed.';
 };
 
-const PLAIN_DESCRIPTIONS: Record<string, string> = {
-  reliance_supertrend_ema_volume: 'Buys while price is above Supertrend and the 200-day average with volume above normal; exits below Supertrend.',
-  supertrend_trend_following: 'Follows Supertrend while price stays above the 50-day average, with an ATR trailing stop.',
-  golden_cross_sma: 'Buys when the 50-day average crosses above the 200-day average with volume expansion.',
-  rsi_mean_reversion: 'Buys oversold pullbacks (RSI below 32) while price is above the 100-day average; exits when RSI is above 68.',
-  bollinger_squeeze_breakout: 'Buys when price closes above the upper Bollinger band with an expanding candle body.',
-  macd_momentum_crossover: 'Buys when the MACD line crosses above its signal line; an ATR stop trails the move.',
-  atr_volatility_breakout: 'Buys when price breaks above the 20-day average plus two ATRs, with a trailing stop.',
-  nr7_volatility_compression: 'Buys a narrow-range (NR7) breakout after a Bollinger squeeze.',
-  rsi_trendline_breakout_near_lows: 'Buys when RSI recovers from below 36, breaks its falling trendline, and price sits near a 250-day low.',
-};
-
 const categoryLabel = (category: string) => {
   if (category === 'Institutional') return 'Systematic';
   return category.toLowerCase().replace(/^./, letter => letter.toUpperCase());
@@ -54,12 +42,13 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
   const [renameName, setRenameName] = useState('');
   const [revisions, setRevisions] = useState<Record<string, number>>({});
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [undoTrash, setUndoTrash] = useState<{ id: string } | null>(null);
 
   const reload = () => {
     try {
       staleRef.current = false;
       setLibrary(readStrategyLibrary(window.localStorage));
-      setStale(false); setError(''); setNotice(''); setRevisions({}); setRenameId(null);
+      setStale(false); setError(''); setNotice(''); setRevisions({}); setRenameId(null); setUndoTrash(null);
     } catch (error) { setError('Cannot access My Strategies: ' + errorMessage(error)); }
   };
 
@@ -86,7 +75,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
     };
   }, []);
 
-  const commit = async (operation: LibraryOperation, success: string) => {
+  const commit = async (operation: LibraryOperation, success: string, undo?: { id: string }) => {
     if (!library || stale || committing.current) return;
     committing.current = true;
     setBusy(true);
@@ -98,6 +87,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
       setRevisions({});
       setRenameId(null);
       setNotice(success + (library.corrupt ? ' Original corrupt bytes were retained in a recovery backup.' : ''));
+      setUndoTrash(undo ?? null);
     } catch (error) {
       if (error instanceof StrategyLibraryConflictError) { staleRef.current = true; setStale(true); }
       setError('Not saved: ' + errorMessage(error));
@@ -142,7 +132,16 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
       </Disclosure>
 
       {error && <p role="alert" className="text-xs text-[var(--down)]">{error}</p>}
-      {notice && <p role="status" className="text-xs text-[var(--up)]">{notice}</p>}
+      {notice && (
+        <p role="status" className="text-xs text-[var(--up)]">
+          {notice}
+          {undoTrash && (
+            <button type="button" onClick={() => void commit({ type: 'restore', id: undoTrash.id }, 'Strategy restored.')} className="ml-1.5 underline decoration-[var(--line-strong)] underline-offset-2 hover:text-[var(--text-1)]">
+              Undo
+            </button>
+          )}
+        </p>
+      )}
       {library?.corrupt && <p role="alert" className="text-xs text-[#f5d383]">Stored library is invalid and has not been overwritten. An explicit save starts a fresh library only after preserving the original bytes.</p>}
 
       <form className="flex flex-col gap-2 sm:flex-row" onSubmit={event => {
@@ -248,7 +247,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
                 {menuItem('Save current as new revision', () => { if (currentStrategy) void commit({ type: 'revise', id: entry.id, strategy: currentStrategy }, 'Current strategy saved as a new immutable revision.'); }, disabled || !currentStrategy)}
                 {trash
                   ? menuItem('Restore', () => void commit({ type: 'restore', id: entry.id }, 'Strategy restored.'), disabled)
-                  : menuItem('Move to trash', () => void commit({ type: 'delete', id: entry.id }, 'Strategy moved to trash. All revisions retained.'), disabled)}
+                  : menuItem('Move to trash', () => void commit({ type: 'delete', id: entry.id }, 'Strategy moved to trash. All revisions retained.', { id: entry.id }), disabled)}
               </div>
             )}
 
@@ -326,7 +325,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
                 </div>
               )}
             >
-              <p className="text-xs leading-5 text-[var(--text-2)]">{PLAIN_DESCRIPTIONS[template.id] ?? template.description}</p>
+              <p className="text-xs leading-5 text-[var(--text-2)]">{template.description}</p>
               <div>
                 <p className="text-xs text-[var(--text-3)]">Entry</p>
                 <ul className="mt-1 space-y-1 text-xs leading-5 text-[var(--text-2)]">

@@ -192,9 +192,56 @@ const WINDOW_PREFERENCE: Record<RunWindowKey, UserPreferences['dateRange']> = {
   '1y': 'last-1y', '3y': 'last-3y', '5y': 'last-5y', max: 'custom',
 };
 
+const TYPE_WORDS: Record<string, string> = {
+  array: 'a list', object: 'an object', string: 'text', number: 'a number', boolean: 'true or false',
+};
+
+/** Turn the schema's `field: message` lines into one plain sentence. */
+function summarizeStrategyErrors(errors: string[]): string {
+  const missing: string[] = [];
+  const wrongType: string[] = [];
+  const other: string[] = [];
+  for (const entry of errors) {
+    const separator = entry.indexOf(': ');
+    const path = separator === -1 ? '' : entry.slice(0, separator);
+    const message = separator === -1 ? entry : entry.slice(separator + 2);
+    if (!path) { other.push(message); continue; }
+    const expected = message.match(/expected (array|object|string|number|boolean)/)?.[1];
+    if (/received undefined/.test(message)) {
+      if (!missing.includes(path)) missing.push(path);
+    } else if (expected) {
+      const line = `'${path}' should be ${TYPE_WORDS[expected]}.`;
+      if (!wrongType.includes(line)) wrongType.push(line);
+    } else {
+      other.push(message);
+    }
+  }
+  if (missing.length === 0 && wrongType.length === 0) {
+    const first = other[0] ?? '';
+    if (!first) return "This isn't a valid Stragy strategy.";
+    if (/^Invalid input:/.test(first)) return "This isn't a Stragy strategy. Paste the JSON exported from the tester.";
+    return first;
+  }
+  const parts: string[] = [];
+  if (missing.length > 0) parts.push(`Missing: ${missing.slice(0, 6).join(', ')}.`);
+  parts.push(...wrongType.slice(0, 3));
+  return `This isn't a complete Stragy strategy. ${parts.join(' ')}`;
+}
+
+/** Line and column of a JSON syntax error, when the engine says enough. */
+function jsonLocation(text: string, message: string): string {
+  const lineColumn = message.match(/line (\d+) column (\d+)/i);
+  if (lineColumn) return `line ${lineColumn[1]}, column ${lineColumn[2]}`;
+  const position = message.match(/position (\d+)/i);
+  const index = position ? Math.min(Number(position[1]), text.length) : text.indexOf(message.match(/Unexpected token '(.?)'/)?.[1] ?? '');
+  if (index < 0) return 'line 1, column 1';
+  const before = text.slice(0, index);
+  return `line ${before.split('\n').length}, column ${index - before.lastIndexOf('\n')}`;
+}
+
 export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBacktest, isLoading, runPhase, symbols, onSymbolChange, showReferencePrices = false, onDescribeInChat, prefill: incomingPrefill, onPrefillDismiss, initialWindow, onWindowChange }) => {
   const [error, setError] = useState('');
-  const [importError, setImportError] = useState('');
+  const [importProblem, setImportProblem] = useState<{ summary: string; details: string[] } | null>(null);
   const [copied, setCopied] = useState(false);
   const [newType, setNewType] = useState<IndicatorType>('SMA');
   const [importText, setImportText] = useState('');
@@ -271,25 +318,35 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
     element.scrollIntoView?.({ block: 'center' });
   };
 
-  const failImport = (message: string) => {
-    setImportError(message);
+  const failImport = (problem: { summary: string; details: string[] }) => {
+    setImportProblem(problem);
     setPreview(null);
     setError('');
     focusImport();
   };
 
   const previewImport = (text: string) => {
-    setImportError('');
+    setImportProblem(null);
     setError('');
-    try {
-      if (text.length > 262144) throw Error('Import is limited to 256 KB.');
-      const raw = JSON.parse(text);
-      const parsed = validateStrategy(raw);
-      if (!parsed.success || !parsed.data) throw Error(parsed.errors?.join('; ') ?? 'Invalid strategy');
-      setPreview({ strategy: parsed.data, warnings: parsed.warnings ?? [], source: JSON.stringify(strategy) });
-    } catch (caught) {
-      failImport((caught as Error).message);
+    if (text.length > 262144) {
+      failImport({ summary: 'Import is limited to 256 KB.', details: [] });
+      return;
     }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch (caught) {
+      const message = (caught as Error).message;
+      failImport({ summary: `That isn't valid JSON (${jsonLocation(text, message)})`, details: [message] });
+      return;
+    }
+    const parsed = validateStrategy(raw);
+    if (!parsed.success || !parsed.data) {
+      const errors = parsed.errors ?? ['The strategy could not be read.'];
+      failImport({ summary: summarizeStrategyErrors(errors), details: errors });
+      return;
+    }
+    setPreview({ strategy: parsed.data, warnings: parsed.warnings ?? [], source: JSON.stringify(strategy) });
   };
 
   const readFile = async (file?: File) => {
@@ -303,7 +360,7 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
       setImportText(text);
       previewImport(text);
     } catch (caught) {
-      if (fileGeneration.current === owned) failImport((caught as Error).message);
+      if (fileGeneration.current === owned) failImport({ summary: (caught as Error).message, details: [] });
     }
   };
 
@@ -706,23 +763,28 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
             <textarea
               ref={importRef}
               aria-label="Strategy JSON import"
-              aria-invalid={Boolean(importError)}
-              aria-describedby={importError ? 'import-error' : undefined}
-              className={`${control} font-mono text-xs ${importError ? 'border-rose-400/60' : ''}`}
+              aria-invalid={Boolean(importProblem)}
+              aria-describedby={importProblem ? 'import-error' : undefined}
+              className={`${control} mt-1 font-mono text-xs ${importProblem ? 'border-amber-400/50' : ''}`}
               rows={4}
               value={importText}
               onChange={event => {
                 fileGeneration.current++;
                 setImportText(event.target.value);
-                setImportError('');
+                setImportProblem(null);
                 setPreview(null);
               }}
             />
           </label>
-          {importError && (
-            <p id="import-error" role="alert" className="rounded-lg border border-rose-400/30 bg-rose-500/5 px-3 py-2 text-xs leading-relaxed text-rose-200">
-              {importError}
-            </p>
+          {importProblem && (
+            <div id="import-error" role="alert" className="space-y-1 rounded-[var(--r-inner)] border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2 text-xs leading-relaxed text-amber-100/90">
+              <p>{importProblem.summary}</p>
+              {importProblem.details.length > 0 && (
+                <Disclosure summary="Show technical details">
+                  <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5">{importProblem.details.join('\n')}</pre>
+                </Disclosure>
+              )}
+            </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
             <label className={`${secondaryButton} cursor-pointer focus-within:outline focus-within:outline-2 focus-within:outline-[#a8c7fa]`}>

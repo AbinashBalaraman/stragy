@@ -275,18 +275,18 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
         <div className="flex flex-wrap items-center gap-2 border-t border-[rgba(236,236,237,0.08)] pt-3">
           <span className="text-xs font-medium text-[rgba(236,236,237,0.52)]">Sweeps</span>
           <button type="button" onClick={() => handleRunPresetSweep('stoploss')} disabled={isRunningBatch} className={sweepButtonClass('stoploss')}>
-            Stop-Loss Sweep (SL {stopLossValues.map(value => compactPercent(value)).join(' · ')})
+            Try stop loss {stopLossValues.map(value => compactPercent(value)).join(' / ')}
           </button>
           <button type="button" onClick={() => handleRunPresetSweep('trailing')} disabled={isRunningBatch} className={sweepButtonClass('trailing')}>
             {currentResult.strategy.risk.trailingStop
-              ? `Trailing Stop Sweep (trail ${trailingValues.map(value => compactPercent(value)).join(' · ')})`
-              : 'Trailing Stop Sweep (no trailing stop)'}
+              ? `Try trailing stop ${trailingValues.map(value => compactPercent(value)).join(' / ')}`
+              : 'Try no trailing stop'}
           </button>
           <button type="button" onClick={() => handleRunPresetSweep('indicators')} disabled={isRunningBatch} className={sweepButtonClass('indicators')}>
-            Indicator Period Sweep (×0.8, ×1.25)
+            Try shorter and longer indicator periods
           </button>
           <button type="button" onClick={() => handleRunPresetSweep('templates')} disabled={isRunningBatch} className={sweepButtonClass('templates')}>
-            Compare 4 strategy templates
+            Compare with 4 templates
           </button>
         </div>
 
@@ -367,9 +367,8 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                 title={`${result.strategy.name} (${result.backtestId})`}
                 className={'flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--r-btn)] px-2 py-1 text-xs transition-colors ' + (visible ? 'text-[var(--text-2)] hover:bg-white/[0.04]' : 'text-[var(--text-disabled)] line-through')}
               >
-                <span className="st-tnum text-[10px] text-[var(--text-3)]">{String(index + 1).padStart(2, '0')}</span>
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, opacity: visible ? 1 : 0.3 }} />
-                <span className="truncate max-w-[150px] sm:max-w-[210px]">{result.strategy?.name || `Strategy ${index + 1}`}</span>
+                <span className="min-w-0 break-words" title={result.strategy?.name || `Strategy ${index + 1}`}>{result.strategy?.name || `Strategy ${index + 1}`}</span>
                 {isTop && <span className="shrink-0 rounded bg-[var(--surface-2)] px-1 text-[9px] text-[var(--text-3)]">Top</span>}
               </button>
             );
@@ -489,7 +488,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-left text-xs">
-            <thead className="st-label select-none border-b border-[var(--line)] bg-[var(--surface-2)] text-[var(--text-3)]">
+            <thead className="text-[11px] font-medium select-none border-b border-[var(--line)] bg-[var(--surface-2)] text-[var(--text-3)]">
               <tr>
                 <th className="w-8 px-2 py-3 sm:w-[38px] sm:px-3">
                   <span className="sm:hidden">#</span>
@@ -581,13 +580,13 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
                         <button
                           type="button"
                           onClick={() => onApplyStrategy?.(result.strategy)}
-                          aria-label="Use this variation"
+                          aria-label={'Use ' + (result.strategy.name || 'this variation')}
                           className="flex items-center gap-1 whitespace-nowrap rounded-[var(--r-btn)] border border-[var(--line)] px-2 py-1 text-[11px] text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
                           title="Copy this run's strategy into the builder. This does not run a simulation."
                         >
                           <Check className="h-3 w-3" />
-                          <span className="sm:hidden">Use</span>
-                          <span className="hidden sm:inline">Use this variation</span>
+                          <span aria-hidden="true" className="sm:hidden">Use</span>
+                          <span aria-hidden="true" className="hidden sm:inline">Use this variation</span>
                         </button>
                         {onSelectActiveResult && (
                           <button

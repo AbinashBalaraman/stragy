@@ -148,6 +148,9 @@ export const ProviderSettings: React.FC = () => {
   const [actionError, setActionError] = useState('');
   const [form, setForm] = useState<ProviderForm | null>(null);
   const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ label?: string; baseUrl?: string }>({});
+  const labelRef = useRef<HTMLInputElement>(null);
+  const baseUrlRef = useRef<HTMLInputElement>(null);
   const [savingProvider, setSavingProvider] = useState(false);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
@@ -212,9 +215,9 @@ export const ProviderSettings: React.FC = () => {
     });
   }, [freeOnly, modelQuery, selectedModels]);
 
-  const openAdd = () => { setForm(providerForm()); setFormError(''); setNotice(''); setActionError(''); };
-  const openEdit = (provider: AIProviderPublic) => { setForm(providerForm(provider)); setFormError(''); setNotice(''); setActionError(''); };
-  const closeForm = () => { setForm(null); setFormError(''); };
+  const openAdd = () => { setForm(providerForm()); setFormError(''); setFieldErrors({}); setNotice(''); setActionError(''); };
+  const openEdit = (provider: AIProviderPublic) => { setForm(providerForm(provider)); setFormError(''); setFieldErrors({}); setNotice(''); setActionError(''); };
+  const closeForm = () => { setForm(null); setFormError(''); setFieldErrors({}); };
 
   const formHeaders = (state: ProviderForm): Record<string, string> | null => {
     const headers: Record<string, string> = {};
@@ -237,8 +240,23 @@ export const ProviderSettings: React.FC = () => {
     if (!form || savingProvider || !writable) return;
     const label = form.label.trim();
     const baseUrl = form.baseUrl.trim();
-    if (!label) { setFormError('Enter a provider label.'); return; }
-    try { new URL(baseUrl); } catch { setFormError('Enter a valid base URL.'); return; }
+    const nextFieldErrors: { label?: string; baseUrl?: string } = {};
+    if (!label) nextFieldErrors.label = 'Add a label';
+    if (!baseUrl) nextFieldErrors.baseUrl = 'Add a base URL starting with https://';
+    else {
+      try {
+        if (new URL(baseUrl).protocol !== 'https:') throw new Error('Not https');
+      } catch {
+        nextFieldErrors.baseUrl = 'Add a base URL starting with https://';
+      }
+    }
+    if (nextFieldErrors.label || nextFieldErrors.baseUrl) {
+      setFieldErrors(nextFieldErrors);
+      setFormError('');
+      (nextFieldErrors.label ? labelRef : baseUrlRef).current?.focus();
+      return;
+    }
+    setFieldErrors({});
     const extraHeaders = formHeaders(form);
     if (!extraHeaders) return;
     const keyEntered = form.apiKey.trim().length > 0;
@@ -464,15 +482,11 @@ export const ProviderSettings: React.FC = () => {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-1)]">AI providers</h1>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-400">
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--text-3)]">
             Choose the models used for drafting and chart reading, and the order they are tried. Keys are write-only.
           </p>
+          {data && <p className="st-meta mt-1 text-[var(--text-3)]">Cost policy: {data.costPolicy}</p>}
         </div>
-        {data && (
-          <span className="st-meta text-[var(--text-3)]">
-            Cost policy: {data.costPolicy}
-          </span>
-        )}
       </header>
 
       {loading && <p role="status" className="text-xs text-neutral-400">Loading provider settings…</p>}
@@ -507,22 +521,51 @@ export const ProviderSettings: React.FC = () => {
         actions={writable && !form ? <button type="button" onClick={openAdd} className={secondary}><Plus className="h-3.5 w-3.5" aria-hidden="true" />Add provider</button> : undefined}
       >
         {form && (
-          <form onSubmit={saveProvider} aria-label="Provider form" className="space-y-3 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3 sm:p-4">
+          <form onSubmit={saveProvider} noValidate aria-label="Provider form" className="space-y-3 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-neutral-100">{form.id ? 'Edit provider' : 'Add provider'}</h3>
               <button type="button" onClick={closeForm} className={secondary} aria-label="Close provider form"><X className="h-3.5 w-3.5" aria-hidden="true" />Close</button>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-xs text-neutral-400">Label
-                <input className={inputClass} required maxLength={100} value={form.label} onChange={event => setForm(current => current && { ...current, label: event.target.value })} />
-              </label>
-              <label className="text-xs text-neutral-400">Base URL
-                <input className={inputClass} required type="url" placeholder="https://api.example.com/v1" value={form.baseUrl} onChange={event => setForm(current => current && { ...current, baseUrl: event.target.value })} />
-              </label>
+              <div className="text-xs text-neutral-400">
+                <label htmlFor="provider-label" className="block">Label</label>
+                <input
+                  id="provider-label"
+                  ref={labelRef}
+                  className={(fieldErrors.label ? inputClass.replace('border-[var(--line-strong)]', 'border-[var(--danger)]') : inputClass) + ' mt-1'}
+                  maxLength={100}
+                  value={form.label}
+                  aria-invalid={Boolean(fieldErrors.label)}
+                  aria-describedby={fieldErrors.label ? 'provider-label-error' : undefined}
+                  onChange={event => {
+                    setForm(current => current && { ...current, label: event.target.value });
+                    setFieldErrors(current => ({ ...current, label: undefined }));
+                  }}
+                />
+                {fieldErrors.label && <p id="provider-label-error" className="mt-1 text-[11px] text-[var(--danger)]">{fieldErrors.label}</p>}
+              </div>
+              <div className="text-xs text-neutral-400">
+                <label htmlFor="provider-base-url" className="block">Base URL</label>
+                <input
+                  id="provider-base-url"
+                  ref={baseUrlRef}
+                  className={(fieldErrors.baseUrl ? inputClass.replace('border-[var(--line-strong)]', 'border-[var(--danger)]') : inputClass) + ' mt-1'}
+                  type="url"
+                  placeholder="https://api.example.com/v1"
+                  value={form.baseUrl}
+                  aria-invalid={Boolean(fieldErrors.baseUrl)}
+                  aria-describedby={fieldErrors.baseUrl ? 'provider-base-url-error' : undefined}
+                  onChange={event => {
+                    setForm(current => current && { ...current, baseUrl: event.target.value });
+                    setFieldErrors(current => ({ ...current, baseUrl: undefined }));
+                  }}
+                />
+                {fieldErrors.baseUrl && <p id="provider-base-url-error" className="mt-1 text-[11px] text-[var(--danger)]">{fieldErrors.baseUrl}</p>}
+              </div>
             </div>
             <label className="block text-xs text-neutral-400">API key
               <input
-                className={inputClass}
+                className={inputClass + ' mt-1'}
                 type="password"
                 autoComplete="new-password"
                 value={form.apiKey}
@@ -598,7 +641,7 @@ export const ProviderSettings: React.FC = () => {
                         className={provider.keySource === 'none' ? 'text-[11px] text-neutral-500' : 'text-[11px] text-[#a8c7fa]'}
                       >{keyStatus(provider)}</span>
                     </div>
-                    <p className="mt-1 truncate font-mono text-[11px] text-neutral-500">{provider.baseUrl}</p>
+                    <p className="st-meta mt-1 truncate font-mono text-[var(--text-3)]">{provider.baseUrl}</p>
                     {provider.extraHeaderNames.length > 0 && <p className="mt-1 text-[10px] text-neutral-500">Headers: {provider.extraHeaderNames.join(', ')} (values hidden)</p>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -655,7 +698,7 @@ export const ProviderSettings: React.FC = () => {
             <>
               <div className="st-scroll-x hidden overflow-x-auto md:block">
                 <table className="w-full text-left text-xs">
-                  <thead className="st-label border-b border-[var(--line)] bg-[var(--surface-2)] text-[var(--text-3)]">
+                  <thead className="text-[11px] font-medium border-b border-[var(--line)] bg-[var(--surface-2)] text-[var(--text-3)]">
                     <tr><th className="px-3 py-2">Model</th><th className="px-3 py-2">Context</th><th className="px-3 py-2">Input</th><th className="px-3 py-2">Price</th><th className="px-3 py-2 text-right">Actions</th></tr>
                   </thead>
                   <tbody className="divide-y divide-white/8">
@@ -732,7 +775,7 @@ export const ProviderSettings: React.FC = () => {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[10px] uppercase tracking-wide text-neutral-500">{index === 0 ? 'Primary' : 'Fallback ' + (index + 1)}</span>
+                      <span className="text-[10px] text-[var(--text-3)]">{index === 0 ? 'Primary' : 'Fallback ' + (index + 1)}</span>
                       <span className="text-sm font-medium text-neutral-100">{providerName(entry.providerId)}</span>
                       <span className="break-all font-mono text-[11px] text-neutral-300">{entry.model}</span>
                     </div>

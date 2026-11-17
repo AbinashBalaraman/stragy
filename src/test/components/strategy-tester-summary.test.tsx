@@ -90,7 +90,7 @@ describe('strategy tester summary', () => {
         onWindowChange={onWindowChange}
       />
     );
-    expect(screen.getByText(/Filled from chat · review before running/)).toBeTruthy();
+    expect(screen.getByText(/Filled from chat/)).toBeTruthy();
     expect(screen.getByText(/Chat window · 01 Jan 2024 – 16 Nov 2026/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /Run backtest/ }));
@@ -103,8 +103,43 @@ describe('strategy tester summary', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run backtest/ }));
     expect(onRunBacktest).toHaveBeenCalledWith({ start: windowStartIso(1) });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss filled-from note' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(onPrefillDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('summarizes an incomplete imported strategy and keeps the raw errors behind a disclosure', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import / export' }));
+    const field = screen.getByLabelText('Strategy JSON import');
+    fireEvent.change(field, { target: { value: '{"name":"Bad strategy","indicators":"oops"}' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview import' }));
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain("This isn't a complete Stragy strategy. Missing: version, universe, rules, risk, execution, costs. 'indicators' should be a list.");
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(field.getAttribute('aria-describedby')).toBe('import-error');
+    expect(screen.getByText('Show technical details')).toBeTruthy();
+    expect(alert.textContent).toContain('version: Invalid input: expected number, received undefined');
+  });
+
+  it('names the line and column of invalid JSON instead of a schema error', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import / export' }));
+    fireEvent.change(screen.getByLabelText('Strategy JSON import'), { target: { value: '{oops' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview import' }));
+
+    expect(screen.getByRole('alert').textContent).toContain("That isn't valid JSON (line 1, column 2)");
+  });
+
+  it('does not leak raw schema wording for a non-object root', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import / export' }));
+    fireEvent.change(screen.getByLabelText('Strategy JSON import'), { target: { value: 'null' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview import' }));
+    expect(screen.getByRole('alert').textContent).toContain("This isn't a Stragy strategy. Paste the JSON exported from the tester.");
   });
 
   it('uses the remembered window preference as the default', () => {

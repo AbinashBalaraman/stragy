@@ -40,6 +40,7 @@ describe('My Strategies alongside immutable templates', () => {
     const before = JSON.stringify(STRATEGY_TEMPLATES), onLoad = vi.fn(s => { s.name = 'builder edits'; });
     render(<StrategyLibraryView onLoadStrategy={onLoad} />);
     expect(saveButton()).toBeDisabled();
+    expect(screen.getByText(STRATEGY_TEMPLATES[0].description)).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Open in tester' })[0]);
     expect(onLoad).toHaveBeenCalledTimes(1); expect(JSON.stringify(STRATEGY_TEMPLATES)).toBe(before);
     expect(window.localStorage.getItem(KEY)).toBeNull();
@@ -80,6 +81,24 @@ describe('My Strategies alongside immutable templates', () => {
     expect(screen.getByRole('article', { name: 'Renamed' })).toBeInTheDocument();
     expect(readStrategyLibrary(window.localStorage).entries[0].revisions).toHaveLength(2);
   });
+  it('undoes the last move to trash from the notice', async () => {
+    await seed();
+    render(<StrategyLibraryView onLoadStrategy={vi.fn()} />);
+    const article = await screen.findByRole('article', { name: 'Saved fixture' });
+    fireEvent.click(within(article).getByRole('button', { name: 'More actions for Saved fixture' }));
+    fireEvent.click(within(article).getByRole('menuitem', { name: 'Move to trash' }));
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Saved fixture' })).toBeNull());
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Strategy moved to trash. All revisions retained.');
+    fireEvent.click(within(status).getByRole('button', { name: 'Undo' }));
+
+    expect(await screen.findByRole('article', { name: 'Saved fixture' })).toBeTruthy();
+    expect(screen.getByRole('status')).toHaveTextContent('Strategy restored.');
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(readStrategyLibrary(window.localStorage).entries[0].deletedAt).toBeNull();
+  });
+
   it('saves current edits as a new revision only on explicit action', async () => {
     await seed(); const current = strategy(); current.risk.stopLoss.value = 5;
     render(<StrategyLibraryView currentStrategy={current} onLoadStrategy={vi.fn()} />);
