@@ -7,9 +7,102 @@ import { handleAIChat } from './copilot';
 import { AI_LIMITS, callProvider, resolveAIConfig } from './provider';
 import { resolveFeatureSetup } from './featureSetup';
 import { buildScreenTitle, cleanScreenSummary } from '../../shared/strategy/screenTitle';
+import { truncateAtWord } from '../../shared/format';
 import { boundHistory, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
 import { isInformationalQuestion } from './intent';
 import { resolveActiveConfig } from './providerRegistry';
+import { filterSymbolsByUniverse } from '../../shared/data/symbols';
+import { getLiveQuotes, type LiveQuotesResult } from '../data/liveQuotes';
+import { formatPercent } from '../../shared/format';
+
+/** A screen needs a user-stated condition, not just a stock question. */
+function hasExplicitCondition(text: string): boolean {
+  return (
+    /\brsi\b[^.;\n]{0,50}(?:\d|oversold|overbought|between|cross|divergence)/i.test(text)
+    || /\b(?:sma|ema|moving\s+average)\b[^.;\n]{0,50}(?:\d|above|below|cross|divergence)/i.test(text)
+    || /\b(?:price|close|closes?)\b[^.;\n]{0,50}\b(?:above|below|over|under|cross)\b[^.;\n]{0,30}\b(?:sma|ema|average)\b/i.test(text)
+    || /\b(?:breakout|breakdown|break(?:s|ing)?\s+(?:above|below)|new\s+52[- ]week|close(?:s|d)?\s+(?:above|below))\b/i.test(text)
+    || /\b(?:volume|macd|bollinger|supertrend|atr)\b[^.;\n]{0,50}\b(?:above|below|cross|expansion|average|signal|band|divergence)\b/i.test(text)
+    || /\b(?:near|within)\b[^.;\n]{0,30}\b(?:52[- ]week|low|high)\b/i.test(text)
+    || /\b(?:golden|death)\s+cross\b/i.test(text)
+  );
+}
+
+function isSectorQuestion(text: string): boolean {
+  return /\bsectors?\b/i.test(text)
+    && /\b(?:strongest|weakest|best|worst|ranking|ranked|today|performance|performing)\b/i.test(text);
+}
+
+/** Do not let the model add conditions the user never mentioned. */
+function planMentionsOnlyRequestedConditions(strategy: StrategyAST, text: string): boolean {
+  if (/\b(?:suggest|ideas?|recommend|what should)\b/i.test(text)) return true;
+  const lower = text.toLowerCase();
+  const allowed = (type: string): boolean => {
+    if (type === 'RSI' || type === 'RSI_SMA' || type === 'RSI_TRENDLINE') return /\brsi\b|oversold|overbought/.test(lower);
+    if (type === 'SMA' || type === 'EMA') return /\b(?:sma|ema|moving\s+average|price|close)\b/.test(lower);
+    if (type === 'HIGHEST') return /\b(?:high|breakout|break)\b/.test(lower);
+    if (type === 'LOWEST' || type === 'PCT_ABOVE_LOW') return /\b(?:low|near|breakdown)\b/.test(lower);
+    if (type === 'VOLUME_SMA') return /\bvolume\b/.test(lower);
+    if (type === 'MACD') return /\bmacd\b/.test(lower);
+    if (type === 'BBANDS') return /\bbollinger|band\b/.test(lower);
+    if (type === 'SUPERTREND') return /\bsupertrend\b/.test(lower);
+    if (type === 'ATR') return /\batr|volatility\b/.test(lower);
+    if (type === 'PCT_CHANGE') return /\bchange|decline|trend|momentum\b/.test(lower);
+    return false;
+  };
+  for (const rule of strategy.rules.entry) {
+    const referenced = [rule.leftIndicator, rule.rightIndicator].filter((id): id is string => !!id && id !== 'close' && id !== 'open' && id !== 'high' && id !== 'low' && id !== 'volume');
+    for (const id of referenced) {
+      const indicator = strategy.indicators.find(item => item.id === id || id.startsWith(item.id + '_'));
+      if (indicator && !allowed(indicator.type)) return false;
+    }
+  }
+  return true;
+}
+
+async function sectorAnswer(message: string, deps: AIServiceDeps): Promise<{ text: string; warnings: string[]; available: boolean }> {
+  void message;
+  const symbols = filterSymbolsByUniverse('NIFTY_50').filter(symbol => !symbol.ticker.startsWith('^'));
+  const loader = deps.market?.live ?? (ids => getLiveQuotes(ids));
+  const quotes: LiveQuotesResult['quotes'] = [];
+  const unavailable: string[] = [];
+  for (let index = 0; index < symbols.length; index += 10) {
+    const chunk = symbols.slice(index, index + 10);
+    try {
+      const result = await loader(chunk.map(symbol => symbol.id));
+      quotes.push(...result.quotes);
+      if (!result.available) unavailable.push(result.reason?.message ?? 'Angel One live quotes are unavailable.');
+    } catch (error) {
+      unavailable.push(error instanceof Error ? error.message : 'Angel One live quotes are unavailable.');
+    }
+  }
+  if (!quotes.length) {
+    return { text: 'I can\'t rank Nifty 50 sectors right now: Angel One live quotes are unavailable. No ranking was invented.', warnings: unavailable.slice(0, 2), available: false };
+  }
+  const groups = new Map<string, { total: number; count: number }>();
+  const byId = new Map(symbols.map(symbol => [symbol.id, symbol]));
+  for (const quote of quotes) {
+    const symbol = byId.get(quote.symbolId);
+    if (!symbol) continue;
+    const group = groups.get(symbol.sector) ?? { total: 0, count: 0 };
+    group.total += quote.changePercent;
+    group.count++;
+    groups.set(symbol.sector, group);
+  }
+  const ranked = [...groups.entries()]
+    .map(([sector, group]) => ({ sector, average: group.total / group.count, count: group.count }))
+    .sort((a, b) => b.average - a.average);
+  const strongest = ranked.slice(0, 3);
+  const weakest = [...ranked].reverse().slice(0, 3);
+  const line = (item: typeof ranked[number]) => `${item.sector} ${formatPercent(item.average, { signed: true, decimals: 2 })} (${item.count})`;
+  return {
+    text: 'Strongest Nifty 50 sectors today, average change (stocks):\n' + strongest.map(line).join(' · ')
+      + '\nWeakest: ' + weakest.map(line).join(' · ')
+      + `\nBased on ${quotes.length} of ${symbols.length} Angel One live quotes${unavailable.length ? '; some quotes were unavailable' : ''}.`,
+    warnings: unavailable.slice(0, 2),
+    available: true,
+  };
+}
 
 /** One selected-provider request at most. Never scans, executes, saves or trades. */
 export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Promise<ResearchChatResponse> {
@@ -23,10 +116,9 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
   // Screening requires both an explicit screening verb and a stock universe topic.
   // Plain questions such as "what are nifty 50 stocks?" stay in conversation.
   const screenVerb=/\b(?:find|screen|scan|show\s+me|list|which)\b/i.test(message);
-  const screenTopic=/\b(?:stocks?|nifty\s*50)\b/i.test(message);
-  const wantsScreen=!scanForbidden&&screenVerb&&screenTopic;
+  const wantsScreen=!scanForbidden&&screenVerb&&hasExplicitCondition(message);
   if(wantsScreen){
-    if(!/nifty\s*50/i.test(message)&&!input.screenContext)return unavailable('Please specify the Nifty 50 universe. Other screening universes are not supported in research chat yet.',rev);
+    if(!/nifty\s*50/i.test(message)&&!input.screenContext&&/\b(?:bank\s+nifty|sensex|nasdaq|s&p|dow)\b/i.test(message))return unavailable('Only the Nifty 50 universe is supported in research chat. No scan was run.',rev);
     const current=input.currentStrategy;
     if(!current)return unavailable('A valid workspace is required to hold unused risk and exit placeholders. No scan or backtest was run.',rev);
     const temporal=/overbought/i.test(message)&&/oversold/i.test(message)&&message.toLowerCase().indexOf('oversold')<message.toLowerCase().indexOf('overbought')&&/\b(recently|previously|after|last|past|within|preceding)\b/i.test(message)&&!/\b(?:not|never|no longer)\s+(?:\w+\s+){0,2}(?:oversold|overbought)\b/i.test(message);
@@ -39,11 +131,14 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
     let method:'rule_parser'|'external_ai'='rule_parser';
     let provider={name:'rule_parser',model:null as string|null,aiGenerated:false};
     if(rsi&&temporal&&!extra&&!unsupportedNumbers){
-      candidate.name='Nifty 50 RSI14 oversold after recently overbought';candidate.universe.timeframe='1D';
+      candidate.universe.timeframe='1D';
       let indicatorId='rsi14'; const existing=candidate.indicators.find((i:{id:string})=>i.id===indicatorId);
       if(existing&&(existing.type!=='RSI'||existing.params.period!==14)){indicatorId='screen_rsi14';while(candidate.indicators.some((i:{id:string})=>i.id===indicatorId))indicatorId+='_';}
       if(!candidate.indicators.some((i:{id:string})=>i.id===indicatorId))candidate.indicators.push({id:indicatorId,type:'RSI',params:{period:14}});
       candidate.rules.entry=[{leftIndicator:indicatorId,operator:'lt',rightValue:30},{leftIndicator:indicatorId,operator:'gte',rightValue:70,lookback:{bars:20,includeCurrent:false,match:'any'}}];
+      const title=buildScreenTitle(candidate,70);
+      candidate.name=truncateAtWord(title+' · Nifty 50',70);
+      screenMessage='Scanning Nifty 50 for '+title+'. Nothing is changed or run.';
       if(!/rsi\s*\(?14/i.test(message))assumptions.push('RSI period 14, Wilder smoothing (default).');
       if(!/30/.test(message))assumptions.push('Oversold means current RSI < 30 (default).');
       if(!/70/.test(message))assumptions.push('Previously overbought means RSI >= 70 (default).');
@@ -72,12 +167,13 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
         ].join('\n');
         const shortSystem='Return ONE JSON object {"strategy":<complete strategy AST>,"assumptions":string[]} using only registered indicators/rules. Preserve exits/risk/execution/costs. If unsupported, {"strategy":null,"assumptions":["reason"]}. No matches or prices.';
         const parsePlanned=(text:string):{strategy:StrategyAST;assumptions:string[]}|{error:string}=>{
+          const help=" Try 'RSI above 60' or 'break above the 20-day high'.";
           const json=parseModelJson(text);
-          if(!json.ok)return{error:'The external model did not return valid screen JSON.'};
+          if(!json.ok)return{error:"I couldn't turn that into scan rules: the planner did not return JSON."+help};
           const out=z.object({strategy:z.unknown(),assumptions:z.array(z.string().max(1000)).max(15)}).strict().safeParse(json.value);
-          if(!out.success||!out.data.strategy)return{error:'The model could not supply a supported, strictly validated screen.'};
+          if(!out.success||!out.data.strategy)return{error:"I couldn't turn that into scan rules: the planner did not return a supported strategy."+help};
           const validated=validateStrategy(out.data.strategy);
-          if(!validated.success||!validated.data)return{error:'The model screen failed full strategy validation.'};
+          if(!validated.success||!validated.data)return{error:"I couldn't turn that into scan rules: "+(validated.errors?.[0]??'the rules were incomplete')+'.'+help};
           return{strategy:validated.data,assumptions:out.data.assumptions};
         };
         const attempt=async(system:string,user:string)=>{
@@ -91,16 +187,27 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
           // first budget before emitting text, and the shorter task is cheaper.
           planned=await attempt(shortSystem,JSON.stringify({message,currentStrategy:current}));
         }
-        if('error'in planned)return unavailable(planned.error+' No scan was run.',rev);
+        if('error'in planned)return unavailable(planned.error,rev);
+        if(!planMentionsOnlyRequestedConditions(planned.strategy,message))return unavailable("I couldn't turn that into scan rules: the plan added conditions you didn't ask for. Try 'RSI above 60' or 'break above the 20-day high'.",rev);
         Object.assign(candidate,planned.strategy);candidate.rules.exit=current.rules.exit;candidate.risk=current.risk;candidate.execution=current.execution;candidate.costs=current.costs;
         for(const indicator of current.indicators)if(!candidate.indicators.some((i:{id:string})=>i.id===indicator.id))candidate.indicators.push(indicator);
         candidate.name=buildScreenTitle(candidate,70);
         candidate.description=cleanScreenSummary(candidate.description,'Screen setup');
+        screenMessage='Scanning Nifty 50 for '+candidate.name+'. Nothing is changed or run.';
         assumptions.push(...planned.assumptions);method='external_ai';provider={name:cfg.provider,model:cfg.model,aiGenerated:true};
       }
     }
     const check=strictValidateStrategy(candidate); if(!check.success)return unavailable('Screen strategy is invalid: '+check.errors?.join('; '),rev);
     return parseResearchChatResponse({...base,kind:'screen',message:screenMessage,method,provider,universe:'NIFTY_50',strategy:check.data,assumptions:[...assumptions,'Workspace exits, risk, sizing, execution and costs are unused placeholders for screening only.'],missingBacktestRules:['exits','positionSizing','executionAndCosts'],backtestReady:false,...(method==='external_ai'?{summary:cleanScreenSummary(candidate.description,'Screen setup')}:{})});
+  }
+  if(isSectorQuestion(message)){
+    const answer=await sectorAnswer(message,deps);
+    return parseResearchChatResponse({
+      ...base,kind:'conversation',message:answer.text,
+      method:answer.available?'rule_parser':'unavailable',
+      provider:answer.available?{name:'rule_parser',model:null,aiGenerated:false}:{name:'none',model:null,aiGenerated:false},
+      warnings:answer.warnings,
+    });
   }
   if(!isInformationalQuestion(message)&&/\b(strategy|setup|backtest|stop[ -]?loss|take[ -]?profit|trailing|set|change|build|create)\b/i.test(message)){
     const result=await createProposal({prompt:message,history:input.history,currentStrategy:input.currentStrategy,originatingRevision:rev,allowLocalFallback:input.allowLocalFallback},d);

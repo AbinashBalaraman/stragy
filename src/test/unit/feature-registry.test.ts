@@ -195,6 +195,60 @@ describe('copilot feature setup', () => {
     expect(response.setup.assumptions.join(' ')).not.toMatch(/which nse stock/i);
   });
 
+  it('handles RSI above/below/between/crossing and price-vs-MA phrasings deterministically', () => {
+    const rsiCases: Array<[string, Array<{ operator: string; value: number }>]> = [
+      ['Screen Nifty 50 for RSI above 60', [{ operator: 'gt', value: 60 }]],
+      ['Screen Nifty 50 for RSI > 60', [{ operator: 'gt', value: 60 }]],
+      ['Screen Nifty 50 for RSI(14) over 60', [{ operator: 'gt', value: 60 }]],
+      ['Screen Nifty 50 for RSI below 30', [{ operator: 'lt', value: 30 }]],
+      ['Screen Nifty 50 for RSI under 30', [{ operator: 'lt', value: 30 }]],
+      ['Screen Nifty 50 for RSI between 40 and 60', [{ operator: 'gte', value: 40 }, { operator: 'lte', value: 60 }]],
+      ['Screen Nifty 50 for RSI crossing above 50', [{ operator: 'crossesAbove', value: 50 }]],
+      ['Screen Nifty 50 for RSI crosses below 70', [{ operator: 'crossesBelow', value: 70 }]],
+      ['Screen Nifty 50 for RSI crossing 30', [{ operator: 'crossesAbove', value: 30 }]],
+    ];
+    for (const [message, expected] of rsiCases) {
+      const response = resolveFeatureSetup({ message, currentStrategy: base() }, { now: NOW });
+      expect(response.status, message).toBe('ready');
+      if (response.status !== 'ready' || response.setup.feature !== 'market_scanner') throw new Error('Expected scanner setup for ' + message);
+      expect(response.setup.strategy.rules.entry.map(rule => ({ operator: rule.operator, value: rule.rightValue })), message).toEqual(expected);
+    }
+
+    const priceCases: Array<[string, 'SMA' | 'EMA', number, string]> = [
+      ['Screen Nifty 50 for close above 200 EMA', 'EMA', 200, 'gt'],
+      ['Screen Nifty 50 for price below 50-day SMA', 'SMA', 50, 'lt'],
+      ['Screen Nifty 50 for close crosses above 50 SMA', 'SMA', 50, 'crossesAbove'],
+      ['Screen Nifty 50 for price crosses below 200-day EMA', 'EMA', 200, 'crossesBelow'],
+      ['Screen Nifty 50 for close above EMA 20', 'EMA', 20, 'gt'],
+      ['Screen Nifty 50 for price under SMA 200', 'SMA', 200, 'lt'],
+    ];
+    const levelCases: Array<[string, 'HIGHEST' | 'LOWEST', number, string]> = [
+      ['Screen Nifty 50 for a break above the 200-day high', 'HIGHEST', 200, 'crossesAbove'],
+      ['Screen Nifty 50 for a close above the 20-day high', 'HIGHEST', 20, 'crossesAbove'],
+      ['Find Nifty 50 stocks with a new 52-week high', 'HIGHEST', 250, 'crossesAbove'],
+      ['Screen Nifty 50 for a breakdown below the 20-day low', 'LOWEST', 20, 'crossesBelow'],
+    ];
+    for (const [message, type, period, operator] of levelCases) {
+      const response = resolveFeatureSetup({ message, currentStrategy: base() }, { now: NOW });
+      expect(response.status, message).toBe('ready');
+      if (response.status !== 'ready' || response.setup.feature !== 'market_scanner') throw new Error('Expected scanner setup for ' + message);
+      const rule = response.setup.strategy.rules.entry[0];
+      expect(rule.operator, message).toBe(operator);
+      const level = response.setup.strategy.indicators.find(indicator => indicator.id === rule.rightIndicator);
+      expect(level, message).toMatchObject({ type, params: { period } });
+    }
+
+    for (const [message, type, period, operator] of priceCases) {
+      const response = resolveFeatureSetup({ message, currentStrategy: base() }, { now: NOW });
+      expect(response.status, message).toBe('ready');
+      if (response.status !== 'ready' || response.setup.feature !== 'market_scanner') throw new Error('Expected scanner setup for ' + message);
+      const rule = response.setup.strategy.rules.entry[0];
+      expect(rule.operator, message).toBe(operator);
+      const average = response.setup.strategy.indicators.find(indicator => indicator.id === rule.rightIndicator);
+      expect(average, message).toMatchObject({ type, params: { period } });
+    }
+  });
+
   it('asks one question for a missing symbol or unsupported wording', () => {
     const missingSymbol = resolveFeatureSetup({ message: 'Backtest SMA 20 crossing above SMA 50', currentStrategy: base() }, { now: NOW });
     expect(missingSymbol.status).toBe('needs-input');

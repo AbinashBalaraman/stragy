@@ -126,8 +126,8 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
           method: 'local_heuristic',
           provider: { name: LOCAL_LABEL, model: null, aiGenerated: false },
           candidate: edit.strategy,
-          rationale: 'Applied only the explicit edit in your text using local keyword rules (not AI).',
-          warnings: [...warnings, ...edit.warnings, 'Local keyword edit. Review before applying.'],
+          rationale: 'I drafted this change. Nothing is applied until you press Apply.',
+          warnings: [...warnings, ...edit.warnings],
         }),
       };
     }

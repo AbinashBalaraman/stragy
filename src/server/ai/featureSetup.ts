@@ -98,20 +98,102 @@ function rsiThresholds(message: string): { entry: number | null; exit: number | 
 }
 
 type MaType = 'SMA' | 'EMA';
+type RsiRule = { operator: 'lt' | 'gt' | 'gte' | 'lte' | 'crossesAbove' | 'crossesBelow'; value: number };
 type StrategyIntent =
   | { kind: 'rsi'; entry: number; exit: number | null; period: number }
+  | { kind: 'rsi_rules'; period: number; rules: RsiRule[]; label: string }
   | { kind: 'ma_cross'; fast: { type: MaType; period: number }; slow: { type: MaType; period: number }; direction: 'above' | 'below' }
   | { kind: 'breakout'; period: number }
-  | { kind: 'price_ma'; type: MaType; period: number; direction: 'above' | 'below' };
+  | { kind: 'breakdown'; period: number }
+  | { kind: 'price_ma'; type: MaType; period: number; operator: 'gt' | 'lt' | 'crossesAbove' | 'crossesBelow'; label: string };
+
+function clampRsi(value: number): number { return Math.min(99, Math.max(1, Math.trunc(value))); }
+
+/** RSI above/below/between plus explicit threshold crossings. */
+function parseRsiRules(message: string): StrategyIntent | null {
+  const periodMatch = /\brsi\s*\(?\s*(\d{1,3})\s*\)?/i.exec(message);
+  const period = periodMatch ? Math.min(100, Math.max(2, Number(periodMatch[1]))) : 14;
+  const number = (pattern: RegExp): number | null => {
+    const match = pattern.exec(message);
+    if (!match) return null;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? clampRsi(value) : null;
+  };
+  const between = number(/\brsi\b[^.;\n]{0,40}?\bbetween\s*(\d{1,3})\s*(?:and|to|-|–)\s*(\d{1,3})/i);
+  if (between !== null) {
+    const second = Number(/\bbetween\s*\d{1,3}\s*(?:and|to|-|–)\s*(\d{1,3})/i.exec(message)?.[1]);
+    if (Number.isFinite(second)) {
+      const low = Math.min(between, clampRsi(second));
+      const high = Math.max(between, clampRsi(second));
+      return { kind: 'rsi_rules', period, rules: [{ operator: 'gte', value: low }, { operator: 'lte', value: high }], label: `RSI ${low}–${high}` };
+    }
+  }
+  const cross = /\brsi\b[^.;\n]{0,30}?\bcross(?:es|ed|ing)?\s*(above|below|over|under)?\s*(\d{1,3})\b/i.exec(message);
+  if (cross) {
+    const direction = /below|under/i.test(cross[1] ?? '') ? 'crossesBelow' : 'crossesAbove';
+    const value = clampRsi(Number(cross[2]));
+    return { kind: 'rsi_rules', period, rules: [{ operator: direction, value }], label: `RSI crosses ${direction === 'crossesAbove' ? 'above' : 'below'} ${value}` };
+  }
+
+  // A sentence with both an entry and an exit comparator is the existing
+  // entry/exit setup, not a range or a single-direction screen.
+  const low = number(/\brsi\b[^.;\n]{0,40}?(?:below|under|less\s+than|<|<=)\s*(\d{1,3})/i);
+  const high = number(/\brsi\b[^.;\n]{0,40}?(?:above|over|greater\s+than|>|>=)\s*(\d{1,3})/i);
+  const saysExit = /\b(?:exit|sell|stop|close\s+position)\b/i.test(message);
+  if (low !== null && high !== null && saysExit) return null; // let the entry/exit parser handle it
+  if (low !== null && high !== null) {
+    const first = Math.min(low, high), second = Math.max(low, high);
+    return { kind: 'rsi_rules', period, rules: [{ operator: 'gte', value: first }, { operator: 'lte', value: second }], label: `RSI ${first}–${second}` };
+  }
+  if (high !== null) return { kind: 'rsi_rules', period, rules: [{ operator: 'gt', value: high }], label: `RSI above ${high}` };
+  if (low !== null) return { kind: 'rsi_rules', period, rules: [{ operator: 'lt', value: low }], label: `RSI below ${low}` };
+  return null;
+}
+
+function parseAverages(message: string): { type: MaType; period: number }[] {
+  const found: { type: MaType; period: number }[] = [];
+  const add = (type: string, period: string) => {
+    const item = { type: type.toUpperCase() as MaType, period: Math.min(250, Math.max(2, Number(period))) };
+    if (!found.some(existing => existing.type === item.type && existing.period === item.period)) found.push(item);
+  };
+  for (const match of message.matchAll(/\b(sma|ema)\s*\(?\s*(\d{1,3})\s*\)?/gi)) add(match[1], match[2]);
+  for (const match of message.matchAll(/(\d{1,3})[- ]?(?:day|bar|period|session)?\s+(sma|ema)\b/gi)) add(match[2], match[1]);
+  return found;
+}
+
+function parsePriceAverageIntent(message: string, averages: { type: MaType; period: number }[]): StrategyIntent | null {
+  if (averages.length !== 1) return null;
+  const average = averages[0];
+  if (!/\b(?:price|close|closes|trades?)\b/i.test(message) && !/\b(?:above|below|over|under|greater|less|cross)\b/i.test(message)) return null;
+  const operator = /\bcross(?:es|ed|ing)?\s*(?:below|under)\b/i.test(message) ? 'crossesBelow'
+    : /\bcross(?:es|ed|ing)?\s*(?:above|over)\b/i.test(message) ? 'crossesAbove'
+      : /\b(?:below|under|less\s+than|<|<=)\b/i.test(message) ? 'lt'
+        : 'gt';
+  const label = operator === 'crossesAbove' ? `Close crosses above ${average.period}-day ${average.type}`
+    : operator === 'crossesBelow' ? `Close crosses below ${average.period}-day ${average.type}`
+      : operator === 'lt' ? `Close below ${average.period}-day ${average.type}`
+        : `Close above ${average.period}-day ${average.type}`;
+  return { kind: 'price_ma', type: average.type, period: average.period, operator, label };
+}
+
+function parseLevel(message: string, kind: 'high' | 'low'): number | null {
+  const week = new RegExp('\\bnew\\s+52[- ]week\\s+' + kind + '\\b', 'i');
+  if (week.test(message)) return 250;
+  const explicit = new RegExp('\\b(?:break(?:s|ing|out)?|breakdown|close(?:s|d)?|price)\\b[^.;\\n]{0,40}?(\\d{1,3})[- ]?(?:day|bar|period|session)?\\s+' + kind + '\\b', 'i').exec(message)
+    ?? new RegExp('\\b(\\d{1,3})[- ]?(?:day|bar|period|session)?\\s+' + kind + '\\b', 'i').exec(message);
+  if (!explicit) return null;
+  const value = Number(explicit[1]);
+  return Number.isFinite(value) ? Math.min(250, Math.max(2, Math.trunc(value))) : null;
+}
 
 function parseStrategyIntent(message: string): StrategyIntent | null {
+  const rules = parseRsiRules(message);
+  if (rules) return rules;
+
   const rsi = rsiThresholds(message);
   if (rsi.entry !== null) return { kind: 'rsi', entry: rsi.entry, exit: rsi.exit, period: rsi.period };
 
-  const averages = [...message.matchAll(/\b(sma|ema)\s*(\d{1,3})\b/gi)].map(match => ({
-    type: match[1].toUpperCase() as MaType,
-    period: Math.min(250, Math.max(2, Number(match[2]))),
-  }));
+  const averages = parseAverages(message);
   if (averages.length >= 2) {
     const sorted = [...averages].sort((a, b) => a.period - b.period);
     const fast = sorted[0], slow = sorted[sorted.length - 1];
@@ -120,20 +202,13 @@ function parseStrategyIntent(message: string): StrategyIntent | null {
       return { kind: 'ma_cross', fast, slow, direction };
     }
   }
-  if (averages.length === 1) {
-    const average = averages[0];
-    const direction: 'above' | 'below' = /\b(?:below|under|less\s+than)\b/i.test(message) ? 'below' : 'above';
-    if (/\b(?:price|close|closes|trades?)\b/i.test(message) || /\b(?:above|below)\b/i.test(message)) {
-      return { kind: 'price_ma', type: average.type, period: average.period, direction };
-    }
-  }
+  const priceAverage = parsePriceAverageIntent(message, averages);
+  if (priceAverage) return priceAverage;
 
-  const breakout = /(?:close|price)?[^.;\n]{0,40}\b(?:breakout|breaks?\s+(?:out\s+)?(?:above|over)|closes?\s+(?:above|over))\b[^.;\n]{0,30}?(\d{1,3})[- ]?(?:day|bar|period|session)?\s*high/i.exec(message)
-    ?? /(\d{1,3})[- ](?:day|bar|period)\s+high/i.exec(message);
-  if (breakout) {
-    const period = Number(breakout[1]);
-    if (Number.isFinite(period)) return { kind: 'breakout', period: Math.min(250, Math.max(2, Math.trunc(period))) };
-  }
+  const high = parseLevel(message, 'high');
+  if (high !== null) return { kind: 'breakout', period: high };
+  const low = parseLevel(message, 'low');
+  if (low !== null) return { kind: 'breakdown', period: low };
   return null;
 }
 
@@ -186,12 +261,12 @@ function buildIntentStrategy(
     timeframe: '1D',
   };
   const assumptions: string[] = [];
-  let entry: RuleNode;
+  let entry: RuleNode[];
   let exit: RuleNode[] | null = null;
 
   if (intent.kind === 'rsi') {
     const rsiId = ensureIndicator(next, 'RSI', { period: intent.period }, 'rsi' + intent.period);
-    entry = { leftIndicator: rsiId, operator: 'lt', rightValue: intent.entry };
+    entry = [{ leftIndicator: rsiId, operator: 'lt', rightValue: intent.entry }];
     if (includeExit && intent.exit !== null) exit = [{ leftIndicator: rsiId, operator: 'gt', rightValue: intent.exit }];
     next.name = truncateAtWord(includeExit
       ? 'RSI ' + intent.entry + (intent.exit !== null ? '/' + intent.exit : '') + ' · ' + symbol.ticker
@@ -200,10 +275,24 @@ function buildIntentStrategy(
     assumptions.push('Entry: RSI(' + intent.period + ') is below ' + intent.entry + ' on the current completed daily bar.');
     if (includeExit && intent.exit !== null) assumptions.push('Exit: RSI(' + intent.period + ') is above ' + intent.exit + ' on the current completed daily bar.');
     if (!includeExit && intent.exit !== null) assumptions.push('Exit clause noted for a later backtest: RSI(' + intent.period + ') above ' + intent.exit + '. Scans evaluate entry conditions only; the workspace exit rules are preserved.');
+  } else if (intent.kind === 'rsi_rules') {
+    const rsiId = ensureIndicator(next, 'RSI', { period: intent.period }, 'rsi' + intent.period);
+    entry = intent.rules.map(rule => ({ leftIndicator: rsiId, operator: rule.operator, rightValue: rule.value }));
+    next.name = truncateAtWord(intent.label + ' · ' + symbol.ticker, 70);
+    next.description = 'Chat-filled setup: ' + intent.label + ' on RSI(' + intent.period + ').';
+    for (const rule of intent.rules) {
+      const direction = rule.operator === 'gt' ? 'above'
+        : rule.operator === 'lt' ? 'below'
+          : rule.operator === 'gte' ? 'at or above'
+            : rule.operator === 'lte' ? 'at or below'
+              : rule.operator === 'crossesAbove' ? 'crossing above' : 'crossing below';
+      assumptions.push('Entry: RSI(' + intent.period + ') is ' + direction + ' ' + rule.value + ' on the current completed daily bar.');
+    }
+    assumptions.push(includeExit ? 'Exit: the workspace exit rules are preserved.' : 'Scans evaluate entry conditions only; the workspace exit rules are preserved for a later backtest.');
   } else if (intent.kind === 'ma_cross') {
     const fastId = ensureIndicator(next, intent.fast.type, { period: intent.fast.period }, 'ma' + intent.fast.period);
     const slowId = ensureIndicator(next, intent.slow.type, { period: intent.slow.period }, 'ma' + intent.slow.period);
-    entry = { leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesAbove' : 'crossesBelow', rightIndicator: slowId };
+    entry = [{ leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesAbove' : 'crossesBelow', rightIndicator: slowId }];
     // The inverse cross is the symmetric default exit for a crossover strategy.
     if (includeExit) exit = [{ leftIndicator: fastId, operator: intent.direction === 'above' ? 'crossesBelow' : 'crossesAbove', rightIndicator: slowId }];
     next.name = truncateAtWord(intent.fast.type + ' ' + intent.fast.period + ' / ' + intent.slow.type + ' ' + intent.slow.period + ' crossover · ' + symbol.ticker, 70);
@@ -214,23 +303,32 @@ function buildIntentStrategy(
       : 'Exit clause noted for a later backtest: the opposite crossover. Scans evaluate entry conditions only; the workspace exit rules are preserved.');
   } else if (intent.kind === 'breakout') {
     const highId = ensureIndicator(next, 'HIGHEST', { period: intent.period }, 'high' + intent.period);
-    entry = { leftIndicator: 'close', operator: 'crossesAbove', rightIndicator: highId };
+    entry = [{ leftIndicator: 'close', operator: 'crossesAbove', rightIndicator: highId }];
     next.name = truncateAtWord(intent.period + '-day high breakout · ' + symbol.ticker, 70);
     next.description = 'Chat-filled setup: buy when close crosses above the highest high of the previous ' + intent.period + ' completed bars.';
     assumptions.push('Entry: close crosses above the highest high of the previous ' + intent.period + ' completed bars (the current bar is excluded).');
     assumptions.push(includeExit
       ? 'Exit: the workspace exit rules are preserved; add an explicit sell rule if you want a different exit.'
       : 'Scans evaluate entry conditions only; the workspace exit rules are preserved for a later backtest.');
+  } else if (intent.kind === 'breakdown') {
+    const lowId = ensureIndicator(next, 'LOWEST', { period: intent.period }, 'low' + intent.period);
+    entry = [{ leftIndicator: 'close', operator: 'crossesBelow', rightIndicator: lowId }];
+    next.name = truncateAtWord(intent.period + '-day low breakdown · ' + symbol.ticker, 70);
+    next.description = 'Chat-filled setup: sell when close crosses below the lowest low of the previous ' + intent.period + ' completed bars.';
+    assumptions.push('Entry: close crosses below the lowest low of the previous ' + intent.period + ' completed bars (the current bar is excluded).');
+    assumptions.push(includeExit
+      ? 'Exit: the workspace exit rules are preserved; add an explicit buy rule if you want a different exit.'
+      : 'Scans evaluate entry conditions only; the workspace exit rules are preserved for a later backtest.');
   } else {
     const maId = ensureIndicator(next, intent.type, { period: intent.period }, 'ma' + intent.period);
-    entry = { leftIndicator: 'close', operator: intent.direction === 'above' ? 'gt' : 'lt', rightIndicator: maId };
-    next.name = truncateAtWord('Close ' + intent.direction + ' ' + intent.type + ' ' + intent.period + ' · ' + symbol.ticker, 70);
-    next.description = 'Chat-filled setup: buy when close is ' + intent.direction + ' ' + intent.type + '(' + intent.period + ').';
-    assumptions.push('Entry: close is ' + intent.direction + ' ' + intent.type + '(' + intent.period + ') on the current completed daily bar.');
+    entry = [{ leftIndicator: 'close', operator: intent.operator, rightIndicator: maId }];
+    next.name = truncateAtWord(intent.label + ' · ' + symbol.ticker, 70);
+    next.description = 'Chat-filled setup: ' + intent.label + '.';
+    assumptions.push('Entry: ' + intent.label + ' on the current completed daily bar.');
     assumptions.push(includeExit ? 'Exit: the workspace exit rules are preserved.' : 'Scans evaluate entry conditions only; the workspace exit rules are preserved for a later backtest.');
   }
 
-  next.rules = { entry: [entry], exit: exit ?? next.rules.exit };
+  next.rules = { entry, exit: exit ?? next.rules.exit };
   assumptions.push(
     'Risk: ' + preferences.riskPercent + '% stop loss; your workspace sizing and execution settings are preserved.',
     preferences.costPreset === 'custom'
@@ -301,7 +399,7 @@ export function resolveFeatureSetup(raw: unknown, options: FeatureSetupOptions =
   }
   const base = input.currentStrategy ?? STRATEGY_TEMPLATES[0].strategy;
   const symbol = resolveSymbol(message, preferences) ?? (featureId === 'market_scanner'
-    ? { symbolId: base.universe.symbolId, ticker: base.universe.ticker ?? 'Nifty 50' }
+    ? { symbolId: base.universe.symbolId, ticker: 'Nifty 50' }
     : null);
   if (!symbol) {
     const ambiguous = ambiguousSymbol(message);
@@ -310,7 +408,7 @@ export function resolveFeatureSetup(raw: unknown, options: FeatureSetupOptions =
       : 'Which NSE stock should I ' + (featureId === 'market_scanner' ? 'scan' : 'test') + ' this on? Reply with one ticker such as RELIANCE.', []);
   }
 
-  if (featureId === 'strategy_tester' && (intent.kind === 'breakout' || intent.kind === 'price_ma') && base.rules.exit.length === 0) {
+  if (featureId === 'strategy_tester' && (intent.kind === 'breakout' || intent.kind === 'breakdown' || intent.kind === 'price_ma') && base.rules.exit.length === 0) {
     return needsInput(featureId, 'What exact exit rule should I use with this entry? For example: close below SMA 20.', []);
   }
   const built = buildIntentStrategy(base, symbol, intent, preferences, featureId === 'strategy_tester');

@@ -24,6 +24,7 @@ import { STRATEGY_JSON_RULES, strategyExample } from './strategyPrompt';
 import { renderRuleInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
 import { buildScreenTitle, cleanScreenSummary } from '../../shared/strategy/screenTitle';
 import { describeConfigState } from './proposals';
+import { chartReadingCacheKey, readChartReading, writeChartReading } from './chartReadingCache';
 
 export const CHART_IMAGE_LIMITS = {
   maxDataUrlChars: 7_000_000,
@@ -69,7 +70,10 @@ export interface ChartVisionDeps {
   budget?: RequestBudget;
   /** Test seam for the deterministic charted-stock evaluation. */
   selfCheck?: ChartSelfCheckEvaluator;
+  /** Defaults to on in production; tests with injected fetch/selfCheck stay isolated. */
+  cache?: boolean;
 }
+const chartReadingInFlight = new Map<string, Promise<ResearchChatResponse>>();
 export interface ChartAnalysisInput {
   image: ChartImage;
   hint?: string;
@@ -633,14 +637,38 @@ function normalizeObservations(observations: ChartObservations): ChartObservatio
 
 const safeParseJson = (text: string): { ok: true; value: unknown } | { ok: false; message: string } => parseModelJson(text);
 
-/** Two-pass chart analysis. One provider only; no fallback and no fabricated reading. */
+/**
+ * Server-side reading cache. The same image bytes + hint + guide version must
+ * produce the same reading for every client; concurrent identical requests
+ * share one model call.
+ */
 export async function analyzeChart(input: ChartAnalysisInput, deps: ChartVisionDeps = {}): Promise<ResearchChatResponse> {
+  const hint = sanitizeText(input.hint ?? '', 1_000);
+  const visionReady = (deps.config ?? resolveVisionConfig(deps.env ?? process.env)).ready;
+  const useCache = visionReady && (deps.cache === true || (deps.cache !== false && !deps.fetch && !deps.selfCheck));
+  if (!useCache) return analyzeChartUncached(input, deps, hint);
+  const key = chartReadingCacheKey(input.image, hint);
+  const cached = readChartReading(key);
+  if (cached) return cached;
+  const pending = chartReadingInFlight.get(key);
+  if (pending) return pending;
+  const task = analyzeChartUncached(input, deps, hint)
+    .then(result => {
+      if (result.kind === 'screen') writeChartReading(key, result);
+      return result;
+    })
+    .finally(() => chartReadingInFlight.delete(key));
+  chartReadingInFlight.set(key, task);
+  return task;
+}
+
+/** Two-pass chart analysis. One provider only; no fallback and no fabricated reading. */
+async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVisionDeps, hint: string): Promise<ResearchChatResponse> {
   const cfg = deps.config ?? resolveVisionConfig(deps.env ?? process.env);
   if (!cfg.ready) return unavailable(describeConfigState(cfg) + ' Chart reading is unavailable; no observations were invented.');
   const currentValidation = input.currentStrategy ? validateStrategy(input.currentStrategy) : null;
   if (!input.currentStrategy || !currentValidation?.success || !currentValidation.data) return unavailable('A valid executable workspace strategy is required to preserve exits, risk, sizing, execution and costs. No chart reading was fabricated.');
   const current = currentValidation.data;
-  const hint = sanitizeText(input.hint ?? '', 1_000);
   const providerDeps = { fetch: deps.fetch, budget: deps.budget };
   const pass2System = [
     PASS2_SYSTEM,

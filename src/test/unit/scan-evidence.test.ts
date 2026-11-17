@@ -10,6 +10,8 @@ const indicators: IndicatorConfig[] = [
   { id: 'rsi_sma', type: 'RSI_SMA', params: { rsiPeriod: 14, period: 14 } },
   { id: 'tl', type: 'RSI_TRENDLINE', params: { rsiPeriod: 14, minSpan: 30, maxSpan: 180, anchorMin: 60 } },
   { id: 'low250', type: 'PCT_ABOVE_LOW', params: { period: 250 } },
+  { id: 'chg20', type: 'PCT_CHANGE', params: { period: 20 } },
+  { id: 'chg250', type: 'PCT_CHANGE', params: { period: 250 } },
   { id: 'ema50', type: 'EMA', params: { period: 50 } },
   { id: 'vol_sma_20', type: 'VOLUME_SMA', params: { period: 20 } },
   { id: 'high20', type: 'HIGHEST', params: { period: 20 } },
@@ -49,6 +51,10 @@ describe('screen evidence presentation', () => {
       .toBe('Close is within 15% of its 52-week low');
     expect(renderRuleInPlainLanguage({ leftIndicator: 'close', operator: 'crossesAbove', rightIndicator: 'high20' }, indicators))
       .toBe('Close crossed above the 20-day high');
+    expect(getIndicatorLabel('chg20', indicators)).toBe('20-day change');
+    expect(getIndicatorLabel('chg250', indicators)).toBe('1-year change');
+    expect(renderRuleInPlainLanguage({ leftIndicator: 'chg20', operator: 'lt', rightValue: 0 }, indicators))
+      .toBe('20-day change is negative');
   });
 
   it('describes a near-low miss and a close-vs-average miss in plain language', () => {
@@ -56,6 +62,10 @@ describe('screen evidence presentation', () => {
       .toBe('Close is not within 5% of its 52-week low yet (now 13.04% above).');
     expect(describeUnmatchedRule({ leftIndicator: 'close', operator: 'gt', rightIndicator: 'ema50' }, indicators, 1344.8))
       .toBe('Close is not above 50-day EMA yet (now 1,344.8).');
+    expect(describeUnmatchedRule({ leftIndicator: 'chg20', operator: 'lt', rightValue: 0 }, indicators, 2.49))
+      .toBe('20-day change is +2.49% (needs below 0%).');
+    expect(describeUnmatchedRule({ leftIndicator: 'chg250', operator: 'lt', rightValue: 0 }, indicators, -4.2))
+      .toBe('1-year change is -4.2% (needs below 0%).');
   });
 
   it('describes the missing screen condition in plain words with its current value', () => {

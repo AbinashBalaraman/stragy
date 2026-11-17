@@ -1,7 +1,7 @@
 import { describe,expect,it } from 'vitest';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { validateStrategy,readStrategy,toLegacyStrategy,repairStrategyAST } from '../../shared/strategy/schema';
-import { calculateAllIndicators,calcSMA,calcEMA,calcRSI,calcATR,calcHighestHigh } from '../../server/backtest/indicators';
+import { calculateAllIndicators,calcSMA,calcEMA,calcRSI,calcATR,calcHighestHigh,calcLowestLow } from '../../server/backtest/indicators';
 import { evaluateCondition,evaluateRuleSet } from '../../server/backtest/rules';
 import { simulate } from '../../server/backtest/engine';
 import type { IndicatorConfig } from '../../shared/strategy/types';
@@ -44,6 +44,8 @@ describe('indicator and rule arithmetic',()=>{
     const d = bars([[100,110,99,100],[100,120,99,100],[100,105,99,100],[100,130,99,100],[100,115,99,100]]);
     expect(calcHighestHigh(d,3)).toEqual([null,null,null,120,130]);
     expect(calculateAllIndicators(d,[{id:'h',type:'HIGHEST',params:{period:3}}]).h).toEqual([null,null,null,120,130]);
+    expect(calcLowestLow(d,3)).toEqual([null,null,null,99,99]);
+    expect(calculateAllIndicators(d,[{id:'l',type:'LOWEST',params:{period:3}}]).l).toEqual([null,null,null,99,99]);
   });
   it('I03 flat RSI is 50, rising RSI is 100; ATR uses prior close gaps',()=>{expect(calcRSI(bars([[10,11,9,10],[10,11,9,10],[10,11,9,10]]),2)).toEqual([null,null,50]);expect(calcRSI(data,2).at(-1)).toBe(100);expect(calcATR(bars([[100,102,98,100],[110,112,109,111]]),1)).toEqual([4,12]);});
   it('I04 indicators are prefix-invariant and compound aliases agree',()=>{const inds:IndicatorConfig[]=[{id:'m',type:'MACD' as const,params:{fastPeriod:2,slowPeriod:3,signalPeriod:2}},{id:'st',type:'SUPERTREND' as const,params:{period:2,multiplier:2}}];const a=calculateAllIndicators(data,inds),b=calculateAllIndicators([...data,...bars([[200,201,199,200]]).map(x=>({...x,date:'2026-02-01',timestamp:Date.UTC(2026,1,1,10)}))],inds);for(const key of Object.keys(a))expect(b[key].slice(0,data.length)).toEqual(a[key]);expect(a.m_hist).toEqual(a.m_histogram);expect(a.st_dir).toEqual(a.st_direction);});

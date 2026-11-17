@@ -56,7 +56,7 @@ describe('scanner near-match ranking', () => {
     vi.stubEnv('DATA_MODE', 'demo');
     const result = scanUniverse(strategy, 'nifty50', 35);
     expect(result.matches).toHaveLength(1);
-    expect(result.matches[0]).toMatchObject({ ticker: 'RELIANCE', score: 1 });
+    expect(result.matches[0]).toMatchObject({ ticker: 'RELIANCE', score: 1, currency: 'INR' });
     expect(result.matched).toBe(1);
     expect(result.nearMatches).toHaveLength(NEAR_MATCH_LIMIT);
     expect(result.nearMatches.every(m => m.score === 2 / 3)).toBe(true);

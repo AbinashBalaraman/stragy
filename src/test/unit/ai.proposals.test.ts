@@ -297,6 +297,8 @@ describe('createProposal: external AI (fake fetch)', () => {
     expect(r.proposal.provider).toEqual({ name: 'local_heuristic', model: null, aiGenerated: false });
     expect(r.proposal.changes).toEqual(['Stop loss: 3.5% → 3%']);
     expect(r.proposal.changeDetails).toEqual([{ path: 'risk.stopLoss.value', before: 3.5, after: 3 }]);
+    expect(r.proposal.rationale).toBe('I drafted this change. Nothing is applied until you press Apply.');
+    expect(r.proposal.warnings.join(' ')).not.toMatch(/local keyword/i);
     expect(JSON.stringify(r.proposal.changes)).not.toContain('risk.stopLoss');
   });
 

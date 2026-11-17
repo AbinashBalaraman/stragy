@@ -62,14 +62,18 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
       const period = (ind.params as any).period ?? 250;
       return period >= 250 ? '% above its 52-week low' : `% above its ${period}-bar low`;
     }
-    case 'PCT_CHANGE':
-      return `${(ind.params as any).period ?? 126}-Bar Change (%)`;
+    case 'PCT_CHANGE': {
+      const period = (ind.params as any).period ?? 126;
+      return period >= 250 ? '1-year change' : `${period}-day change`;
+    }
     case 'SUPERTREND':
       return `Supertrend (${ind.params.period || 10}, ${ind.params.multiplier || 3}x)`;
     case 'ATR':
       return `ATR (${ind.params.period || 14})`;
     case 'HIGHEST':
       return `Highest high of previous ${ind.params.period || 20} bars`;
+    case 'LOWEST':
+      return `Lowest low of previous ${ind.params.period || 20} bars`;
     case 'BBANDS':
       return `Bollinger Bands (${ind.params.period || 20}, ${ind.params.stdDev || 2}σ)`;
     case 'MACD':
@@ -219,6 +223,18 @@ function rsiBelowPhrase(rule: RuleNode, indicators: IndicatorConfig[]): string |
   return `RSI was ${rule.operator === 'lt' ? 'below' : 'at or below'} ${threshold} in the last ${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
+function changeRulePhrase(rule: RuleNode, indicators: IndicatorConfig[]): string | null {
+  const change = indicators.find(indicator => indicator.id === rule.leftIndicator && indicator.type === 'PCT_CHANGE');
+  if (!change || rule.rightValue === undefined) return null;
+  const period = (change.params as any).period ?? 126;
+  const label = period >= 250 ? '1-year change' : `${period}-day change`;
+  if ((rule.operator === 'lt' || rule.operator === 'lte') && rule.rightValue === 0) return `${label} is negative`;
+  if ((rule.operator === 'gt' || rule.operator === 'gte') && rule.rightValue === 0) return `${label} is positive`;
+  if (rule.operator === 'lt') return `${label} is below ${ruleValue(rule.rightValue)}%`;
+  if (rule.operator === 'gt') return `${label} is above ${ruleValue(rule.rightValue)}%`;
+  return `${label} is ${ruleValue(rule.rightValue)}% or better`;
+}
+
 function nearLowPhrase(rule: RuleNode, indicators: IndicatorConfig[]): string | null {
   const near = nearLowLabel(rule, indicators);
   if (!near) return null;
@@ -256,6 +272,16 @@ export function describeUnmatchedRule(rule: RuleNode, indicators: IndicatorConfi
           : rule.operator === 'crossesBelow' ? 'has not crossed below'
             : 'does not yet satisfy';
     return `Close ${missing} ${average.period}-day ${average.type} yet${current}.`;
+  }
+  const change = indicators.find(indicator => indicator.id === rule.leftIndicator && indicator.type === 'PCT_CHANGE');
+  if (change && rule.rightValue !== undefined && typeof currentLeft === 'number' && Number.isFinite(currentLeft)) {
+    const period = (change.params as any).period ?? 126;
+    const label = period >= 250 ? '1-year change' : `${period}-day change`;
+    const signed = (currentLeft >= 0 ? '+' : '') + ruleValue(currentLeft) + '%';
+    const comparison = rule.operator === 'lt' || rule.operator === 'lte'
+      ? `needs below ${ruleValue(rule.rightValue)}%`
+      : `needs above ${ruleValue(rule.rightValue)}%`;
+    return `${label} is ${signed} (${comparison}).`;
   }
   const nearLow = nearLowLabel(rule, indicators);
   if (nearLow) {
@@ -295,6 +321,8 @@ export function renderRuleInPlainLanguage(rule: RuleNode, indicators: IndicatorC
   if (rsiSignal) return rsiSignal;
   const rsiBelow = rsiBelowPhrase(rule, indicators);
   if (rsiBelow) return rsiBelow;
+  const change = changeRulePhrase(rule, indicators);
+  if (change) return change;
   const nearLow = nearLowPhrase(rule, indicators);
   if (nearLow) return nearLow;
   const average = closeAverageTarget(rule, indicators);

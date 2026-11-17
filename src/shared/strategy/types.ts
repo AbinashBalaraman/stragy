@@ -3,7 +3,7 @@ import type { InstrumentMetadataSchema } from '../contracts/strategy-v2';
 
 export type Timeframe = '1m' | '5m' | '15m' | '1H' | '1D' | '1W';
 
-export type IndicatorType = 'SMA' | 'EMA' | 'RSI' | 'RSI_SMA' | 'RSI_TRENDLINE' | 'PCT_ABOVE_LOW' | 'PCT_CHANGE' | 'BBANDS' | 'MACD' | 'SUPERTREND' | 'ATR' | 'HIGHEST' | 'VOLUME_SMA';
+export type IndicatorType = 'SMA' | 'EMA' | 'RSI' | 'RSI_SMA' | 'RSI_TRENDLINE' | 'PCT_ABOVE_LOW' | 'PCT_CHANGE' | 'BBANDS' | 'MACD' | 'SUPERTREND' | 'ATR' | 'HIGHEST' | 'LOWEST' | 'VOLUME_SMA';
 
 export type PriceField = 'open' | 'high' | 'low' | 'close' | 'volume' | 'candleBody' | 'upperWick' | 'lowerWick';
 

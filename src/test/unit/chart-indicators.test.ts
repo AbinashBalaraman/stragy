@@ -124,7 +124,7 @@ describe('reference chart template', () => {
     const plain = renderStrategyInPlainLanguage(template.strategy);
     expect(plain.entrySummary.join(' ')).toContain('falling trendline');
     expect(plain.entrySummary.join(' ')).toContain('within 15% of its 52-week low');
-    expect(plain.entrySummary.join(' ')).toContain('126-Bar Change');
+    expect(plain.entrySummary.join(' ')).toContain('126-day change');
   });
 
   it('matches the synthetic reference setup and does not match a control series', () => {

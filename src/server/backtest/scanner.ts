@@ -11,7 +11,7 @@ import { legacyOutputNames } from '../../shared/strategy/registry';
 export const NEAR_MATCH_LIMIT = 10;
 
 export interface ScanRuleDiagnostic {rule:string;ruleIndex?:number;actualLeft:number|null;actualRight:number|null;matchedIndex?:number;matchedDate?:string;currentActualLeft?:number|null;currentActualRight?:number|null;}
-export interface ScanMatchResult{symbolId:number;ticker:string;name:string;sector:string;lastDate:string;lastClose:number;changePercent:number;score?:number;matchedRules:ScanRuleDiagnostic[];unmatchedRules?:ScanRuleDiagnostic[];indicatorValues:Record<string,number>;provenance:MarketSeries['provenance'];}
+export interface ScanMatchResult{symbolId:number;ticker:string;name:string;sector:string;lastDate:string;lastClose:number;currency?:'INR';changePercent:number;score?:number;matchedRules:ScanRuleDiagnostic[];unmatchedRules?:ScanRuleDiagnostic[];indicatorValues:Record<string,number>;provenance:MarketSeries['provenance'];}
 export interface UniverseScanResponse{mode:'demo'|'real';universe:string;scanned:number;matched:number;scannedAt:string;dataSource:string;matches:ScanMatchResult[];nearMatches:ScanMatchResult[];requested:number;attempted:number;succeeded:number;unavailable:number;failed:number;asOf?:string;offset:number;limit:number;errors:{symbolId:number;code:string;message:string;ticker?:string}[];sourceCoverage:Record<string,number>;warnings:string[];observationDates?:{earliest:string;latest:string;staleSymbols:number};membership?:Omit<ObservedUniverse,'symbols'>;status?:'complete'|'partial'|'unavailable';}
 export interface ScanOptions extends LoadMarketOptions{offset?:number;limit?:number;}
 
@@ -72,7 +72,7 @@ function evaluate(sym:SymbolMeta,d:MarketSeries,strategy:StrategyAST,r:UniverseS
     if(!Object.keys(outputs).some(name=>entryReferences.has(name)))continue;
     const v=series[ind.id]?.[i];if(typeof v==='number'&&Number.isFinite(v))indicatorValues[ind.id]=v;
   }
-  const result:ScanMatchResult={symbolId:sym.id,ticker:sym.ticker,name:sym.name,sector:sym.sector,lastDate:last.date,lastClose:last.close,changePercent:(last.close/bars[i-1].close-1)*100,score,matchedRules:diagnostics(strategy,i,series,bars,ruleMatches),unmatchedRules:diagnostics(strategy,i,series,bars,ruleMatches.map(matched=>!matched)),indicatorValues,provenance:d.provenance};
+  const result:ScanMatchResult={symbolId:sym.id,ticker:sym.ticker,name:sym.name,sector:sym.sector,lastDate:last.date,lastClose:last.close,currency:'INR',changePercent:(last.close/bars[i-1].close-1)*100,score,matchedRules:diagnostics(strategy,i,series,bars,ruleMatches),unmatchedRules:diagnostics(strategy,i,series,bars,ruleMatches.map(matched=>!matched)),indicatorValues,provenance:d.provenance};
   if(allMatched)r.matches.push(result);else r.nearMatches.push(result);
   if(allMatched)r.matched++;
 }

@@ -72,6 +72,11 @@ export function buildScreenTitle(strategy: StrategyAST, max = 70): string {
 
   const rsiBelow = entry.find(rule => isType(indicators, rule.leftIndicator, 'RSI') && rule.operator === 'lt' && typeof rule.rightValue === 'number');
   if (rsiBelow) push(`RSI below ${conditionText(rsiBelow.rightValue)}`);
+  const rsiAfter = entry.find(rule => isType(indicators, rule.leftIndicator, 'RSI')
+    && (rule.operator === 'gt' || rule.operator === 'gte')
+    && rule.lookback
+    && typeof rule.rightValue === 'number');
+  if (rsiAfter) push(`after above ${conditionText(rsiAfter.rightValue)}`);
 
   const macd = entry.find(rule => isType(indicators, rule.leftIndicator.replace(/_line$/, ''), 'MACD') && /_signal$/.test(rule.rightIndicator ?? ''));
   if (macd) push('MACD above signal');
@@ -85,7 +90,10 @@ export function buildScreenTitle(strategy: StrategyAST, max = 70): string {
     push(`${periodOf(change, 126)}-bar decline`);
   }
 
-  const title = parts.slice(0, 2).join(' · ');
+  const selected = parts.slice(0, 2);
+  const title = selected[1]?.startsWith('after ')
+    ? selected[0] + ' ' + selected[1]
+    : selected.join(' · ');
   return truncateAtWord(title || strategy.name, max);
 }
 

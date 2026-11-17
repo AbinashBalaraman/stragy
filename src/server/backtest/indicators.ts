@@ -31,6 +31,18 @@ export function calcHighestHigh(bars: OHLCVBar[], period: number): (number | nul
   return result;
 }
 
+/** Lowest low of the previous `period` completed bars; the current bar is excluded. */
+export function calcLowestLow(bars: OHLCVBar[], period: number): (number | null)[] {
+  validPeriod(period);
+  const result: (number | null)[] = new Array(bars.length).fill(null);
+  for (let i = period; i < bars.length; i++) {
+    let low = Infinity;
+    for (let j = i - period; j < i; j++) low = Math.min(low, bars[j].low);
+    result[i] = low;
+  }
+  return result;
+}
+
 export function calcEMA(bars: OHLCVBar[], period: number): (number | null)[] {
   validPeriod(period);
   const result: (number | null)[] = new Array(bars.length).fill(null);
@@ -390,6 +402,8 @@ export function calculateAllIndicators(
       series[id] = calcEMA(bars, ind.params.period || 20);
     } else if (ind.type === 'HIGHEST') {
       series[id] = calcHighestHigh(bars, ind.params.period || 20);
+    } else if (ind.type === 'LOWEST') {
+      series[id] = calcLowestLow(bars, ind.params.period || 20);
     } else if (ind.type === 'RSI') {
       series[id] = calcRSI(bars, ind.params.period || 14);
     } else if (ind.type === 'RSI_SMA') {

@@ -56,7 +56,7 @@ const scanValue = finite.nullable();
 const scanRule = z.object({ rule: z.string(), ruleIndex: count.optional(), actualLeft: scanValue, actualRight: scanValue, matchedIndex: count.optional(), matchedDate: date.optional(), currentActualLeft: scanValue.optional(), currentActualRight: scanValue.optional() });
 const scanMatch = z.object({
   symbolId: count.positive(), ticker: z.string(), name: z.string(), sector: z.string(), lastDate: date,
-  lastClose: finite.positive(), changePercent: finite,
+  lastClose: finite.positive(), currency: z.literal('INR').optional(), changePercent: finite,
   score: z.number().min(0).max(1).optional(),
   matchedRules: z.array(scanRule),
   unmatchedRules: z.array(scanRule).optional(),
