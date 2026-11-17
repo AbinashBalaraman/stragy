@@ -175,7 +175,7 @@ export async function requestBacktest(strategy: StrategyAST, signal?: AbortSigna
 /** What a re-poll of an existing job found. */
 export type ResumedJob<T> = { state: 'running'; stage?: string; queuedBehind?: number } | { state: 'done'; result: T };
 
-async function readJob(jobId: string, kind: 'backtest' | 'scan', signal?: AbortSignal): Promise<Record<string, unknown>> {
+async function readJob(jobId: string, kind: 'backtest' | 'scan' | 'market', signal?: AbortSignal): Promise<Record<string, unknown>> {
   const response = await fetch('/api/v2/jobs/' + encodeURIComponent(jobId), { signal });
   const job = await readJson(response);
   if (job.id !== jobId || (job.kind && job.kind !== kind)) throw new ApiError('The response belongs to a different research job.', 'RESULT_IDENTITY_MISMATCH');
@@ -215,6 +215,21 @@ export async function checkBacktestJob(jobId: string, signal?: AbortSignal): Pro
 /** Cancel a job the client is no longer waiting for (best effort). */
 export async function cancelResearchJob(jobId: string): Promise<void> {
   await cancelJob(jobId);
+}
+
+/** Re-poll a market snapshot the client gave up waiting for. */
+export async function checkMarketJob(jobId: string, signal?: AbortSignal): Promise<ResumedJob<MarketSnapshotResult>> {
+  const job = await readJob(jobId, 'market', signal);
+  if (job.status === 'succeeded') return { state: 'done', result: parseMarketSnapshotResult(job.result) };
+  if (job.status === 'failed' || job.status === 'cancelled') {
+    const error = job.error as { message?: string; code?: string } | undefined;
+    throw new ApiError(error?.message ?? 'Research job did not complete.', error?.code ?? 'JOB_FAILED');
+  }
+  return {
+    state: 'running',
+    ...(typeof job.stage === 'string' ? { stage: job.stage } : {}),
+    ...(typeof job.queuedBehind === 'number' ? { queuedBehind: job.queuedBehind } : {}),
+  };
 }
 
 export async function requestMarketSnapshot(input: { universe: string; asOf?: string }, signal?: AbortSignal, onProgress?: (progress: ResearchJobProgress) => void): Promise<MarketSnapshotResult> {

@@ -4,7 +4,7 @@ import { plainRule } from '../../client/plainRules';
 import { PrefillNote } from '../common/PrefillNote';
 import { DataTable, type DataColumn } from '../common/DataTable';
 import type { ScannerPrefill } from '../../shared/contracts/featureRegistry';
-import { requestMarketSnapshot, requestScan, type ResearchJobProgress } from '../../client/api';
+import { requestMarketSnapshot, requestScan, checkMarketJob, cancelResearchJob, type ResearchJobProgress, type MarketSnapshotResult } from '../../client/api';
 import { marketLoadingMessage } from './marketLoading';
 import { useLiveQuotes, formatLivePrice, formatLiveChange, liveQuoteTime, liveQuoteTimeTitle, type LiveQuote } from '../../client/liveQuotes';
 import { actualDataCutoff, scannerContextKey, ScannerRequestOwner } from './scannerRequestContext';
@@ -291,6 +291,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [scannerError, setScannerError] = useState('');
   const [marketError, setMarketError] = useState('');
   const [marketProgress, setMarketProgress] = useState<ResearchJobProgress | null>(null);
+  const [marketDeadline, setMarketDeadline] = useState<{ jobId: string } | null>(null);
+  const [checkingMarket, setCheckingMarket] = useState(false);
+  const [marketCancelled, setMarketCancelled] = useState(false);
   const [marketCoverage, setMarketCoverage] = useState<{ requested: number; succeeded: number; unavailable: number } | null>(null);
   const [marketUnavailable, setMarketUnavailable] = useState<Array<{ symbolId: number; ticker?: string }>>([]);
   const [scanError, setScanError] = useState('');
@@ -335,11 +338,25 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     }
   };
 
+  const applyMarketSnapshot = (data: MarketSnapshotResult) => {
+    if (data.coverage.succeeded > 0) recordCutoff(data);
+    setTrends(data.trends); setDataEvidence(data);
+    setMovers(data.coverage.succeeded > 0 ? data.movers || null : null);
+    setMarketEvaluated(data.coverage.succeeded);
+    setPriceLabel(priceDataLabel(data));
+    setCoverageLabel(data.coverage ? `Coverage: ${data.coverage.succeeded} of ${data.coverage.requested} symbols` : 'Coverage not reported; current membership, not full exchange coverage');
+    setCoverageDetail(data.coverage ? `${data.coverage.succeeded} of ${data.coverage.requested} symbols evaluated; ${data.coverage.unavailable} unavailable.` : 'Coverage was not reported.');
+    setMarketCoverage(data.coverage ?? null);
+    setMarketUnavailable(data.errors.map(error => ({ symbolId: error.symbolId, ...(error.ticker ? { ticker: error.ticker } : {}) })));
+    if (data.movers?.availableTradingSessions?.length) setAvailableTradingDates(data.movers.availableTradingSessions);
+  };
+
   const fetchMarketData = async () => {
     const ticket = marketOwner.current.begin(contextKey);
     setIsLoadingTrends(true);
     setMarketError(''); setScannerError('');
     setMarketProgress(null);
+    setMarketDeadline(null); setMarketCancelled(false);
     setMarketCoverage(null); setMarketUnavailable([]);
     setTrends([]); setMovers(null); setDataCutoff(''); setMarketEvaluated(0);
     setPriceLabel('Price source not yet reported');
@@ -347,21 +364,49 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     try {
       const data = await requestMarketSnapshot({ universe: selectedUniverse, asOf: selectedDate || undefined }, ticket.signal, setMarketProgress);
       if (!marketOwner.current.owns(ticket, currentContext.current)) return;
-      if (data.coverage.succeeded > 0) recordCutoff(data);
-      setTrends(data.trends);setDataEvidence(data);
-      setMovers(data.coverage.succeeded > 0 ? data.movers || null : null);
-      setMarketEvaluated(data.coverage.succeeded);
-      setPriceLabel(priceDataLabel(data));
-      setCoverageLabel(data.coverage ? `Coverage: ${data.coverage.succeeded} of ${data.coverage.requested} symbols` : 'Coverage not reported; current membership, not full exchange coverage');
-      setCoverageDetail(data.coverage ? `${data.coverage.succeeded} of ${data.coverage.requested} symbols evaluated; ${data.coverage.unavailable} unavailable.` : 'Coverage was not reported.');
-      setMarketCoverage(data.coverage ?? null);
-      setMarketUnavailable(data.errors.map(error => ({ symbolId: error.symbolId, ...(error.ticker ? { ticker: error.ticker } : {}) })));
-      if (data.movers?.availableTradingSessions?.length) setAvailableTradingDates(data.movers.availableTradingSessions);
+      applyMarketSnapshot(data);
     } catch (e) {
-      if (marketOwner.current.owns(ticket, currentContext.current)) setMarketError(e instanceof Error ? e.message : 'Market data unavailable');
+      if (!marketOwner.current.owns(ticket, currentContext.current)) return;
+      const failure = e as Error & { code?: string; jobId?: string };
+      if (failure.code === 'CLIENT_DEADLINE' && typeof failure.jobId === 'string') {
+        setMarketDeadline({ jobId: failure.jobId });
+        setMarketError('');
+      } else {
+        setMarketError(e instanceof Error ? e.message : 'Market data unavailable');
+      }
     } finally {
       if (marketOwner.current.owns(ticket, currentContext.current)) setIsLoadingTrends(false);
     }
+  };
+
+  const checkMarketAgain = async () => {
+    if (!marketDeadline || checkingMarket) return;
+    setCheckingMarket(true);
+    try {
+      const resumed = await checkMarketJob(marketDeadline.jobId);
+      if (resumed.state === 'done') {
+        applyMarketSnapshot(resumed.result);
+        setMarketDeadline(null);
+        setMarketError('');
+      }
+    } catch (e) {
+      const failure = e as Error & { status?: number };
+      setMarketDeadline(null);
+      setMarketError(failure.status === 404
+        ? 'The server restarted and the market load was lost. Try again.'
+        : (e instanceof Error ? e.message : 'Market data unavailable'));
+    } finally {
+      setCheckingMarket(false);
+    }
+  };
+
+  const cancelMarketCheck = async () => {
+    if (!marketDeadline) return;
+    const jobId = marketDeadline.jobId;
+    setMarketDeadline(null);
+    setMarketCancelled(true);
+    setMarketError('');
+    await cancelResearchJob(jobId);
   };
 
   const runScan = async () => {
@@ -415,6 +460,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     setTrends([]); setMovers(null); setScanResult(null); setDataCutoff(''); setMarketEvaluated(0);
     setPriceLabel('Price source not yet reported');
     setScannerError(''); setMarketError(''); setScanError('');
+    setMarketDeadline(null); setMarketCancelled(false);
     setIsScanning(false); setIsLoadingTrends(false);
     setCoverageLabel('Coverage not yet reported');setCoverageDetail('Coverage details not yet reported.');setDataEvidence(null);
     if (isStrategyView) void runScan();
@@ -426,7 +472,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const activeError = isStrategyView ? scanError : marketError;
   const unavailableNames = marketUnavailable.map(error => error.ticker || symbols.find(item => item.id === error.symbolId)?.ticker || `symbol ${error.symbolId}`);
   const activePending = isStrategyView ? isScanning : isLoadingTrends;
-  const initialLoading = !dataEvidence && !activeError;
+  const marketWaiting = isLoadingTrends || Boolean(marketDeadline);
+  const initialLoading = !dataEvidence && !activeError && !marketDeadline && !marketCancelled;
 
   const handleUniverseChange = (newUniv: MarketUniverseType) => {
     if (newUniv === selectedUniverse) return;
@@ -546,6 +593,14 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         <button type="button" onClick={retryActiveView} disabled={activePending} className="underline underline-offset-2 hover:text-rose-100">Retry {isStrategyView ? 'strategy scan' : 'market snapshot'}</button>
       </div>}
 
+      {marketDeadline && !isLoadingTrends && (
+        <div role="status" className="flex flex-wrap items-center gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text-2)]">
+          <span className="min-w-0 flex-1">The market snapshot is still loading. Check again.</span>
+          <button type="button" onClick={() => void checkMarketAgain()} disabled={checkingMarket} className="rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1 text-[11px] text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] disabled:opacity-50">Check again</button>
+          <button type="button" onClick={() => void cancelMarketCheck()} className="rounded-[var(--r-btn)] px-2.5 py-1 text-[11px] text-[var(--text-3)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-1)]">Cancel</button>
+        </div>
+      )}
+
       {/* One quiet provenance line; everything else lives under Data details. */}
       <section aria-label="Market scanner header" className="space-y-4 rounded-2xl border border-white/10 bg-[#141416] p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -554,12 +609,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
               <span className="text-neutral-200">{currentUniverseConfig.shortLabel}</span>
               <span aria-hidden="true">·</span>
-              <span>{initialLoading
+              <span>{marketWaiting
                 ? (selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0]?.date
                   ? fullDay(selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0].date)
                   : 'latest close')
                 : 'end-of-day ' + (movers?.formattedDate || fullDay(movers?.asOfDate || dataCutoff))}</span>
-              {hasLiveOverlay && !initialLoading && (
+              {hasLiveOverlay && !initialLoading && !marketDeadline && (
                 <>
                   <span aria-hidden="true">·</span>
                   {liveQuotes.connected ? (
@@ -605,7 +660,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               </details>
             )}
           </div>
-          {!activePending && (
+          {!activePending && !marketDeadline && (
             <button
               type="button"
               onClick={(event) => {
@@ -778,7 +833,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         />
       )}
 
-      {initialLoading && !modelOnlyTab ? <ScannerLoadingState message={marketLoadingMessage(marketProgress, currentUniverseConfig.shortLabel)} /> : (<>
+      {marketDeadline ? null : marketCancelled && !modelOnlyTab ? (
+        <div role="status" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-10 text-center">
+          <p className="text-sm text-[var(--text-1)]">Market load cancelled.</p>
+          <button type="button" onClick={() => void fetchMarketData()} className="mt-3 rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]">Load market data</button>
+        </div>
+      ) : initialLoading && !modelOnlyTab ? <ScannerLoadingState message={marketLoadingMessage(marketProgress, currentUniverseConfig.shortLabel)} /> : (<>
       {/* TAB 1: TOP GAINERS & TOP LOSERS */}
       {activeTab === 'movers' && (
         <section aria-label="Top gainers and losers" className="space-y-3">

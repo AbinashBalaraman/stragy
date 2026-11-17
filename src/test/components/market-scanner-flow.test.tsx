@@ -6,11 +6,14 @@ import { MarketScannerView } from '../../components/scanner/MarketScannerView';
 import type { StrategyAST } from '../../shared/strategy/types';
 import type { ScannerPrefill } from '../../shared/contracts/featureRegistry';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
-import { requestMarketSnapshot, requestScan } from '../../client/api';
+import { cancelResearchJob, checkMarketJob, requestMarketSnapshot, requestScan } from '../../client/api';
 
-vi.mock('../../client/api', () => ({ requestMarketSnapshot: vi.fn(), requestScan: vi.fn() }));
+vi.mock('../../client/api', () => ({ requestMarketSnapshot: vi.fn(), requestScan: vi.fn(), checkMarketJob: vi.fn(), cancelResearchJob: vi.fn() }));
 const market = vi.mocked(requestMarketSnapshot);
 const scan = vi.mocked(requestScan);
+const checkMarket = vi.mocked(checkMarketJob);
+const cancelMarket = vi.mocked(cancelResearchJob);
+const deadline = () => Object.assign(new Error('The market snapshot is still loading. Check again.'), { code: 'CLIENT_DEADLINE', jobId: 'job-late' });
 const strategy = { name: 'Test rules' } as unknown as StrategyAST;
 const snapshot = () => ({ trends: [], errors: [], coverage: { requested: 84, succeeded: 84, unavailable: 0 }, provenance: [{ mode: 'demo', source: 'fixture', actualRange: { start: '2025-01-01', end: '2025-01-02' } }], mode: 'demo' }) as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>;
 const scanResult = (overrides: Record<string, unknown> = {}) => ({ universe: 'NIFTY_50', scanned: 84, matched: 0, requested: 84, attempted: 84, succeeded: 84, unavailable: 0, failed: 0, scannedAt: '2025-01-02', dataSource: 'DETERMINISTIC_DEMO_V1', sourceCoverage: { demo: 84 }, warnings: ['Current membership unverified'], errors: [], matches: [], offset: 0, limit: 35, ...overrides }) as unknown as Awaited<ReturnType<typeof requestScan>>;
@@ -158,6 +161,52 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(document.body.textContent).not.toContain('symbolId');
     expect(document.body.textContent).not.toContain('PROVIDER_RATE_LIMITED');
+  });
+
+  it('offers Check again and Cancel for a client deadline instead of a failure banner', async () => {
+    market.mockRejectedValueOnce(deadline());
+    renderScanner();
+    expect(await screen.findByText('The market snapshot is still loading. Check again.')).toBeTruthy();
+    expect(screen.queryByText(/Market snapshot unavailable/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+  });
+
+  it('shows the snapshot when Check again finds the job finished', async () => {
+    market.mockRejectedValueOnce(deadline());
+    checkMarket.mockResolvedValueOnce({ state: 'done', result: snapshot() });
+    renderScanner();
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    expect(await screen.findByRole('heading', { name: /^Top gainers —/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+    expect(checkMarket).toHaveBeenCalledWith('job-late');
+  });
+
+  it('keeps the deadline line while Check again reports still running', async () => {
+    market.mockRejectedValueOnce(deadline());
+    checkMarket.mockResolvedValueOnce({ state: 'running', stage: 'scan 12/50' });
+    renderScanner();
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(checkMarket).toHaveBeenCalledWith('job-late'));
+    expect(screen.getByText('The market snapshot is still loading. Check again.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
+  });
+
+  it('shows the lost-run copy when Check again finds a 404', async () => {
+    market.mockRejectedValueOnce(deadline());
+    checkMarket.mockRejectedValueOnce(Object.assign(new Error('Request failed (404)'), { status: 404 }));
+    renderScanner();
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText(/The server restarted and the market load was lost/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+  });
+
+  it('cancels the kept job and stops pretending to load', async () => {
+    market.mockRejectedValueOnce(deadline());
+    renderScanner();
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(cancelMarket).toHaveBeenCalledWith('job-late');
+    expect(await screen.findByText('Market load cancelled.')).toBeTruthy();
   });
 
   it('keeps more than three unpriced names behind a quiet disclosure', async () => {
