@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ChevronDown, ChevronUp, KeyRound, List, Pencil, Plus, RefreshCw, Search, Trash2, X,
+  AlertTriangle, ChevronDown, ChevronUp, KeyRound, List, Pencil, Plus, RefreshCw, Search, Trash2, X,
 } from 'lucide-react';
 import { Checkbox } from '../common/Checkbox';
 import type {
@@ -204,6 +204,8 @@ export const ProviderSettings: React.FC = () => {
   const providers = data?.providers ?? [];
   const selectedProvider = providers.find(provider => provider.id === selectedProviderId) ?? null;
   const providerName = (id: string) => providers.find(provider => provider.id === id)?.label ?? id;
+  const disabledProviderIds = new Set(providers.filter(provider => !provider.enabled).map(provider => provider.id));
+  const primaryDisabled = chain.length > 0 && disabledProviderIds.has(chain[0].providerId);
   const inChain = (providerId: string, modelId: string) => chain.some(entry => entry.providerId === providerId && entry.model === modelId);
   const selectedModels = selectedProviderId ? models[selectedProviderId] ?? [] : [];
   const freeModelCount = useMemo(() => selectedModels.filter(model => model.free === true).length, [selectedModels]);
@@ -632,6 +634,7 @@ export const ProviderSettings: React.FC = () => {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-neutral-100">{provider.label}</span>
+                      {!provider.enabled && <span className="st-meta inline-flex items-center rounded-[var(--r-btn)] border border-[var(--line)] bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--text-2)]">Disabled</span>}
                       {provider.builtin && <span className="st-meta text-[var(--text-3)]">Built-in</span>}
                       <span
                         title={provider.keySource === 'env'
@@ -642,7 +645,7 @@ export const ProviderSettings: React.FC = () => {
                         className={provider.keySource === 'none' ? 'text-[11px] text-neutral-500' : 'text-[11px] text-[#a8c7fa]'}
                       >{keyStatus(provider)}</span>
                     </div>
-                    <p className="st-meta mt-1 truncate font-mono text-[var(--text-3)]">{provider.baseUrl}</p>
+                    <p className={'st-meta mt-1 truncate font-mono ' + (provider.enabled ? 'text-[var(--text-3)]' : 'text-[var(--text-disabled)]')}>{provider.baseUrl}</p>
                     {provider.extraHeaderNames.length > 0 && <p className="mt-1 text-[10px] text-neutral-500">Headers: {provider.extraHeaderNames.join(', ')} (values hidden)</p>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -766,6 +769,12 @@ export const ProviderSettings: React.FC = () => {
         actions={writable ? <><button type="button" onClick={() => void saveChain()} disabled={chainSaving || !chainDirty} className={primary}>{chainSaving ? 'Saving…' : 'Save chain'}</button><button type="button" onClick={resetChain} className={secondary}>Reset to env defaults</button></> : undefined}
       >
         {chainError && <p role="alert" className="rounded-lg border border-rose-400/25 bg-rose-400/5 px-3 py-2 text-xs text-rose-200">{chainError}</p>}
+        {primaryDisabled && (
+          <p className="flex items-start gap-1.5 text-[11px] leading-4 text-[var(--text-2)]">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--warn)]" aria-hidden="true" />
+            The primary model is disabled, so chat will fail until it is enabled or another model is moved up.
+          </p>
+        )}
         {chain.length === 0 && <p className="rounded-[var(--r-inner)] border border-dashed border-[var(--line-strong)] p-6 text-center text-xs text-[var(--text-3)]">The chain is empty. Use “Add to chain” from a provider’s model list.</p>}
         <ol className="space-y-2">
           {chain.map((entry, index) => {
@@ -791,6 +800,12 @@ export const ProviderSettings: React.FC = () => {
                     <button type="button" onClick={() => removeChain(index)} disabled={!writable} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--r-btn)] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 sm:min-w-8" aria-label={'Remove ' + entry.model + ' from the chain'}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" /></button>
                   </div>
                 </div>
+                {disabledProviderIds.has(entry.providerId) && (
+                  <p className="flex items-start gap-1.5 text-[11px] leading-4 text-[var(--text-2)]">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--warn)]" aria-hidden="true" />
+                    This provider is disabled — enable it in Providers above, or move another model up.
+                  </p>
+                )}
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                   <label className="inline-flex min-h-11 items-center gap-2 text-xs text-neutral-300 sm:min-h-6">
                     <Checkbox checked={entry.vision} disabled={!writable} onChange={vision => updateChain(index, { vision })} />

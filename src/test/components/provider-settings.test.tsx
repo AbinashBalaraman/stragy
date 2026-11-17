@@ -156,6 +156,53 @@ describe('provider settings', () => {
     ]);
   });
 
+  it('marks a disabled provider with a state chip and keeps its checkbox unchecked', async () => {
+    vi.mocked(getAIProviders).mockResolvedValue({
+      ...baseResponse(),
+      providers: [...providers, savedProvider],
+    });
+    render(<ProviderSettings />);
+
+    const row = (await screen.findByText('Dummy')).closest('li') as HTMLElement;
+    expect(within(row).getByText('Disabled')).toBeTruthy();
+    expect((within(row).getByLabelText('Enable Dummy') as HTMLInputElement).checked).toBe(false);
+    expect(within(row).getByText('https://example.com/v1').className).toContain('text-[var(--text-disabled)]');
+  });
+
+  it('warns while the primary chain provider is disabled and clears after enabling it', async () => {
+    const disabledProviders = providers.map(provider => provider.id === 'opencode-go' ? { ...provider, enabled: false } : provider);
+    vi.mocked(getAIProviders).mockResolvedValue({ ...baseResponse(), providers: disabledProviders });
+    render(<ProviderSettings />);
+
+    await screen.findByText('hy4-flash-free');
+    expect(screen.getByText('The primary model is disabled, so chat will fail until it is enabled or another model is moved up.')).toBeTruthy();
+    expect(screen.getByText('This provider is disabled — enable it in Providers above, or move another model up.')).toBeTruthy();
+    expect(screen.getByText('Disabled')).toBeTruthy();
+
+    vi.mocked(updateAIProvider).mockResolvedValue({ provider: providers[0] });
+    vi.mocked(getAIProviders).mockResolvedValue(baseResponse());
+    fireEvent.click(screen.getByLabelText('Enable OpenCode Go'));
+
+    await waitFor(() => expect(screen.queryByText(/The primary model is disabled/)).toBeNull());
+    expect(screen.queryByText(/This provider is disabled/)).toBeNull();
+    expect(screen.queryByText('Disabled')).toBeNull();
+  });
+
+  it('still saves a chain that contains a disabled provider entry', async () => {
+    const disabledProviders = providers.map(provider => provider.id === 'opencode-go' ? { ...provider, enabled: false } : provider);
+    const disabledResponse = { ...baseResponse(), providers: disabledProviders };
+    vi.mocked(getAIProviders).mockResolvedValue(disabledResponse);
+    vi.mocked(saveAIChain).mockResolvedValue(disabledResponse);
+    render(<ProviderSettings />);
+
+    await screen.findByText('hy4-flash-free');
+    fireEvent.click(screen.getAllByLabelText('Vision')[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save chain' }));
+
+    await waitFor(() => expect(saveAIChain).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(saveAIChain).mock.calls[0]?.[0][0]).toMatchObject({ providerId: 'opencode-go', vision: false });
+  });
+
   it('blocks saving a paid entry until paid use is approved', async () => {
     vi.mocked(getAIProviders).mockResolvedValue(baseResponse([
       freeEntry('opencode-go', 'hy4-flash-free', true),
