@@ -2,10 +2,11 @@
 import React from 'react';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
 import { requestResearchChat } from '../../client/researchChat';
+import type { BacktestResponse } from '../../shared/strategy/types';
 
 vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
 vi.mock('../../client/api', () => ({ requestScan: vi.fn() }));
@@ -83,5 +84,90 @@ describe('chat message anatomy', () => {
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
     expect(document.querySelector('script')).toBeNull();
     expect(document.body.textContent).toContain('<script>alert(1)</script>');
+  });
+
+  it('shows an unavailable reply once, in the conversation, never above the composer', async () => {
+    vi.mocked(requestResearchChat).mockResolvedValue({
+      schemaVersion: 1,
+      kind: 'conversation',
+      originatingRevision: 1,
+      message: 'The model screen failed full strategy validation.',
+      method: 'unavailable',
+      provider: { name: 'none', model: null, aiGenerated: false },
+      warnings: [],
+    } as never);
+    render(<AiCopilotDock strategy={validStrategy()} />);
+    send('Screen Nifty 50 for a setup');
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
+    const alert = screen.getByRole('alert');
+    expect(within(screen.getByRole('log')).getByRole('alert')).toBe(alert);
+    expect(alert.textContent).toContain('The model screen failed full strategy validation.');
+  });
+
+  it('copies and retries an answer from its action row', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    vi.mocked(requestResearchChat).mockResolvedValue({
+      schemaVersion: 1,
+      kind: 'conversation',
+      originatingRevision: 1,
+      message: 'A plain answer.',
+      method: 'local_heuristic',
+      provider: { name: 'none', model: null, aiGenerated: false },
+      warnings: [],
+    } as never);
+    render(<AiCopilotDock strategy={validStrategy()} />);
+    send('First question');
+    await screen.findByText('A plain answer.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy answer' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('A plain answer.'));
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+
+    vi.mocked(requestResearchChat).mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(requestResearchChat).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(requestResearchChat).mock.calls[0][0]).toMatchObject({ message: 'First question' });
+  });
+
+  it('brings a user-triggered result into view even when the reader scrolled away', async () => {
+    const runs = {
+      backtestId: 'run-1',
+      strategy: { name: 'Fixture SMA cross' },
+      symbol: { id: 7, ticker: 'RELIANCE', name: 'Reliance Industries' },
+      metrics: { initialCapital: 100000, finalEquity: 101000, netPnl: 1000, totalReturnPercent: 1, cagr: null, sharpeRatio: null, maxDrawdownPercent: 1, totalTrades: 1, unavailableReasons: {} },
+      equityCurve: [],
+      trades: [],
+      bars: [{ date: '2025-01-01' }, { date: '2025-02-01' }],
+      provenance: { mode: 'real', source: 'ANGEL_SMARTAPI', asOf: '2025-02-01', actualRange: { start: '2025-01-01', end: '2025-02-01' } },
+      warnings: [],
+    } as unknown as BacktestResponse;
+
+    render(
+      <AiCopilotDock
+        strategy={validStrategy()}
+        symbols={[{ id: 7, ticker: 'RELIANCE', name: 'Reliance Industries', exchange: 'NSE', sector: 'Energy', currentPrice: 2900, changePercent: 0.5 }]}
+        // The run must return the exact reviewed strategy, as the engine does.
+        onResearchBacktest={async candidate => ({ ...runs, strategy: candidate })}
+      />
+    );
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Backtest RELIANCE with my current strategy' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    await screen.findByRole('article', { name: 'Backtest review' });
+
+    // A tall conversation the reader has scrolled away from.
+    const log = screen.getByRole('log');
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, value: 2000 });
+    Object.defineProperty(log, 'clientHeight', { configurable: true, value: 400 });
+    let top = 0;
+    const setTop = vi.fn((value: number) => { top = value; });
+    Object.defineProperty(log, 'scrollTop', { configurable: true, get: () => top, set: setTop });
+    fireEvent.scroll(log);
+    expect(await screen.findByTestId('jump-to-latest')).toBeTruthy();
+    setTop.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use these assumptions and run' }));
+    await screen.findByRole('article', { name: 'Backtest result' });
+    await waitFor(() => expect(setTop).toHaveBeenCalled());
   });
 });

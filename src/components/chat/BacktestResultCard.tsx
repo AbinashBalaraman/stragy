@@ -46,6 +46,14 @@ const exitLabel = (reason: TradeRecord['exitReason'] | string | undefined): stri
   }
 };
 
+/**
+ * The run's caveats (universe, fee schedule, benchmark, data licence, legacy
+ * migration) repeat on every run: those are notes. Only a per-run event — a
+ * skipped entry, an ambiguous bar, an open position — is a warning.
+ */
+const RUN_EVENT = /skipped|touched stop|vary across|no usable|remains open|circuit breaker|stale observation|no symbol|failed/i;
+const notesOnly = (warnings: string[]): boolean => !warnings.some(warning => RUN_EVENT.test(warning));
+
 const hasTrades = (trades: TradeRecord[] | undefined): trades is TradeRecord[] =>
   Array.isArray(trades) && trades.some(trade => trade && typeof trade.entryDate === 'string' && typeof trade.netPnl === 'number');
 
@@ -153,7 +161,7 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
         )}
 
         {data.warnings.length > 0 && (
-          <Disclosure summary={'Data warnings (' + data.warnings.length + ')'}>
+          <Disclosure summary={(notesOnly(data.warnings) ? 'Data notes (' : 'Data warnings (') + data.warnings.length + ')'}>
             <ul className="list-disc space-y-1 pl-4">
               {data.warnings.map(warning => <li key={warning}>{warning}</li>)}
             </ul>

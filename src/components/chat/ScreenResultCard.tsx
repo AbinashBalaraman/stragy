@@ -235,6 +235,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
                 columns={columns}
                 rows={result.matches}
                 rowKey={rowKey}
+                stickyLastColumn
               />
             )}
 
@@ -250,6 +251,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
                   rows={nearMatches}
                   rowKey={rowKey}
                   initialLimit={5}
+                  stickyLastColumn
                 />
                 {nearMatches.some(near => near.unmatchedRules?.length) && (
                   <ul className="space-y-1">

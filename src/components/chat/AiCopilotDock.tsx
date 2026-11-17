@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, X, Plus, ImagePlus, MoreHorizontal } from 'lucide-react';
+import { Send, X, Plus, ImagePlus, MoreHorizontal, Copy, Check, RefreshCw } from 'lucide-react';
 import { z } from 'zod';
 import type { BacktestResponse, StrategyAST, SymbolMeta } from '../../shared/strategy/types';
 import { snapshotStrategy } from '../../client/workspace';
@@ -23,6 +23,7 @@ import { AssistantPending } from './AssistantPending';
 import { MessageText } from './MessageText';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
+import { ActionRow } from '../common/ActionRow';
 import { CardShell } from '../common/CardShell';
 import { Disclosure } from '../common/Disclosure';
 import {
@@ -44,6 +45,8 @@ export interface ChatMessage {
   warnings?: string[];
   /** Prompt to resend when a provider failure offers Retry. */
   retryPrompt?: string;
+  /** An error that belongs in the conversation, announced once (role="alert"). */
+  tone?: 'error';
 }
 
 export type CopilotVariant = 'full' | 'dock';
@@ -70,6 +73,7 @@ const MessageSchema = z.object({
   methodTitle: z.string().max(300).optional(),
   warnings: z.array(z.string().max(2000)).max(20).optional(),
   retryPrompt: z.string().max(4000).optional(),
+  tone: z.enum(['error']).optional(),
 });
 const MessageListSchema = z.array(MessageSchema).max(40);
 const HISTORY_KEY = 'stragy_copilot_review_history_v2';
@@ -277,6 +281,9 @@ export const AiCopilotDock: React.FC<Props> = ({
   /** Auto-scroll only while the reader is at the bottom (P0-6). */
   const [pinned, setPinned] = useState(true);
   const [pendingDraftBacktest, setPendingDraftBacktest] = useState<string | null>(null);
+  /** The assistant message whose provenance the visible card already states. */
+  const [cardMessageId, setCardMessageId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [screenPlan, setScreenPlan] = useState<ResearchScreenPlan | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanPending, setScanPending] = useState(false);
@@ -312,8 +319,11 @@ export const AiCopilotDock: React.FC<Props> = ({
   const logRef = useRef<HTMLDivElement | null>(null);
   const lastMessageRef = useRef<HTMLDivElement | null>(null);
   const revealedCard = useRef<Element | null>(null);
+  const revealedBusy = useRef(false);
+  const revealIntent = useRef<'send' | 'scan' | 'run' | null>(null);
   const pinnedRef = useRef(true);
   const draftMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const messageSeq = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const imageGeneration = useRef(0);
@@ -348,7 +358,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       setReview(null);
       setReviewStatus('idle');
       setReviewError('');
-      setError('The workspace changed, so the previous backtest review was set aside. Prepare a fresh review. Nothing was run.');
+      append('assistant', 'The workspace changed, so the previous backtest review was set aside. Prepare a fresh review. Nothing was run.');
     }
     setValidatedResult(null);
     setChartReading(null);
@@ -416,17 +426,29 @@ export const AiCopilotDock: React.FC<Props> = ({
     setPinned(true);
   };
 
-  const revealCard = (card: Element | null) => {
+  /**
+   * Bring a card into view. Content that arrives on its own only follows a
+   * reader who is already at the bottom; content the user asked for (Send,
+   * "Scan with these", "Use these assumptions and run") always does.
+   */
+  const revealCard = (card: Element | null, force = false) => {
     const log = logRef.current;
     if (!log || !(card instanceof HTMLElement)) return;
-    if (!pinnedRef.current) return;
+    if (!pinnedRef.current && !force) return;
     const logBox = log.getBoundingClientRect();
     const box = card.getBoundingClientRect();
     if (box.height > log.clientHeight - 16) {
       log.scrollTop += box.top - logBox.top - 8;
+      pinnedRef.current = false;
+      setPinned(false);
       return;
     }
     scrollToLatest('auto');
+  };
+
+  /** The next card is one the user asked for: its start must come into view. */
+  const requestReveal = (reason: 'send' | 'scan' | 'run') => {
+    revealIntent.current = reason;
   };
 
   const onLogScroll = () => {
@@ -455,17 +477,29 @@ export const AiCopilotDock: React.FC<Props> = ({
     if (pinnedRef.current) scrollToLatest('auto');
   }, [messages]);
 
-  // Reveal the newest card once, and only when the reader is at the bottom.
+  // Reveal the newest card once per state change. A user-triggered card is
+  // revealed even when the reader has scrolled away, pending state first and
+  // again when its result replaces the pending state.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const cards = logRef.current?.querySelectorAll('article[aria-label="Research screen"], article[aria-label="Chart reading"], article[aria-label="Backtest review"], article[aria-label="Backtest result"], article[aria-label="Draft proposal"]');
       const card = cards && cards.length ? cards[cards.length - 1] : null;
-      if (!card || card === revealedCard.current) return;
+      if (!card) return;
+      const busyNow = card.getAttribute('aria-busy') === 'true';
+      const sameCard = card === revealedCard.current;
+      const wasBusy = revealedBusy.current;
+      // Pending -> ready is new content; ready -> busy (a run starting) is not.
+      const changed = !sameCard || (wasBusy && !busyNow);
+      if (!changed) return;
+      const forced = !!revealIntent.current;
+      if (!forced && !pinnedRef.current) return;
       revealedCard.current = card;
-      revealCard(card);
+      revealedBusy.current = busyNow;
+      revealCard(card, forced);
+      if (!busyNow) revealIntent.current = null;
     }, 80);
     return () => window.clearTimeout(timer);
-  }, [messages, scanResult, review, validatedResult, chartReading, proposal]);
+  }, [messages, scanResult, review, validatedResult, chartReading, proposal, scanPending, awaitingChartConfirm, screenPlan, reviewStatus]);
 
   // The composer grows with the prompt up to five rows (P2-1) and never moves the log.
   useEffect(() => {
@@ -475,14 +509,38 @@ export const AiCopilotDock: React.FC<Props> = ({
     element.style.height = Math.min(Math.max(element.scrollHeight || 0, 44), 136) + 'px';
   }, [prompt]);
 
-  const append = (sender: ChatMessage['sender'], text: string, extras: Pick<ChatMessage, 'methodLabel' | 'methodTitle' | 'warnings' | 'retryPrompt'> = {}) => {
+  const append = (sender: ChatMessage['sender'], text: string, extras: Pick<ChatMessage, 'methodLabel' | 'methodTitle' | 'warnings' | 'retryPrompt' | 'tone'> = {}): string => {
+    const id = Date.now() + '-' + (messageSeq.current++);
     setMessages(old => [...old, {
-      id: Date.now() + '-' + old.length,
+      id,
       sender,
       text,
       timestamp: Date.now(),
       ...extras,
     }].slice(-40));
+    return id;
+  };
+
+  const copyMessage = async (message: ChatMessage) => {
+    try {
+      await navigator.clipboard?.writeText(message.text);
+      setCopiedMessageId(message.id);
+      window.setTimeout(() => setCopiedMessageId(current => current === message.id ? null : current), 1600);
+    } catch {
+      setCopiedMessageId(null);
+    }
+  };
+
+  /** The prompt behind an answer: its own retry prompt, else the user turn before it. */
+  const promptForMessage = (index: number): string => {
+    const direct = messages[index]?.retryPrompt;
+    if (direct) return direct;
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const candidate = messages[cursor];
+      if (candidate.sender !== 'user') continue;
+      return candidate.text === '[chart image attached]' ? '' : candidate.text;
+    }
+    return '';
   };
 
   const rememberCurrentConversation = (current: ChatMessage[]) => {
@@ -533,6 +591,9 @@ export const AiCopilotDock: React.FC<Props> = ({
     setSaveStatus('');
     setSentChartImage(null);
     setPendingDraftBacktest(null);
+    setCardMessageId(null);
+    setCopiedMessageId(null);
+    revealIntent.current = null;
     pendingApply.current = null;
   };
 
@@ -582,6 +643,9 @@ export const AiCopilotDock: React.FC<Props> = ({
     setSaveStatus('');
     setSentChartImage(null);
     setPendingDraftBacktest(null);
+    setCardMessageId(null);
+    setCopiedMessageId(null);
+    revealIntent.current = null;
   };
 
   const cancelPendingRequest = () => {
@@ -755,6 +819,7 @@ export const AiCopilotDock: React.FC<Props> = ({
 
   const runReview = async () => {
     if (!review || reviewStatus === 'running' || !onResearchBacktest) return;
+    requestReveal('run');
     if (review.originSnapshot !== JSON.stringify(strategy)) {
       setReviewError('The workspace changed after this review was prepared. Prepare a fresh review so the assumptions match. Nothing was run.');
       return;
@@ -888,6 +953,7 @@ export const AiCopilotDock: React.FC<Props> = ({
 
   const confirmChartScan = async (edited: StrategyAST) => {
     if (!screenPlan || scanPendingRef.current) return;
+    requestReveal('scan');
     const validated = validateStrategy(edited);
     if (!validated.success || !validated.data) {
       setScanError('The edited chart conditions did not pass validation: ' + (validated.errors?.[0] ?? 'unknown rule error') + '. Nothing was scanned.');
@@ -918,6 +984,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   const retryScreenScan = async () => {
     const plan = screenPlan;
     if (!plan || scanPendingRef.current) return;
+    requestReveal('scan');
     const owned = ++generation.current;
     const controller = new AbortController();
     abort.current = controller;
@@ -992,7 +1059,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       }
       return false;
     } catch (caught) {
-      setError((caught as Error).message);
+      append('assistant', 'The setup could not be filled from your message: ' + (caught as Error).message + ' Nothing was run.', { tone: 'error', retryPrompt: text });
       return true;
     } finally {
       setLoading(false);
@@ -1040,7 +1107,10 @@ export const AiCopilotDock: React.FC<Props> = ({
     }
 
     let current: StrategyAST;
-    try { current = snapshotStrategy(strategy); } catch (caught) { setError((caught as Error).message); return; }
+    try { current = snapshotStrategy(strategy); } catch (caught) {
+      append('assistant', 'Your workspace strategy cannot be validated: ' + (caught as Error).message + ' Nothing was sent.', { tone: 'error' });
+      return;
+    }
     const sourceSnapshot = JSON.stringify(strategy);
     const originatingRevision = revision.current;
     const owned = ++generation.current;
@@ -1096,25 +1166,25 @@ export const AiCopilotDock: React.FC<Props> = ({
       const deterministicMarket = data.method === 'unavailable'
         && data.warnings.some(warning => warning.startsWith('Deterministic answer'));
       const providerFailure = data.method === 'unavailable' && !deterministicMarket ? providerFailureFor(data.message) : null;
-      if (providerFailure) {
-        append('assistant', providerFailure.text, {
+      const messageId = providerFailure
+        ? append('assistant', providerFailure.text, {
           methodLabel: 'AI unavailable',
           warnings: [...(data.warnings ?? []), providerFailure.detail],
           retryPrompt: text,
-        });
-      } else {
-        append('assistant', data.message, {
+        })
+        : append('assistant', data.message, {
           methodLabel: chartCacheUsed ? 'Cached chart reading · same image (SHA-256)' : deterministicMarket ? 'Built-in market data · not AI' : methodLabel(data.method, data.provider),
           methodTitle: data.provider.aiGenerated
             ? `Answered by ${data.provider.name}. Verify factual claims with data.`
             : undefined,
           warnings: data.warnings,
+          // A reply marked unavailable is a failure report: it is the one alert,
+          // in the conversation, never repeated above the composer.
+          tone: data.method === 'unavailable' && !deterministicMarket ? 'error' : undefined,
         });
-      }
-      if (data.method === 'unavailable' && !deterministicMarket && !providerFailure) setError(data.message);
-
       if (data.kind === 'proposal') {
         const parsed = parseStrategyProposal(data.proposal);
+        setCardMessageId(messageId);
         assertProposalCurrent(parsed, originatingRevision, sourceSnapshot, JSON.stringify(strategy));
         setProposal({ ...parsed, sourceSnapshot, validatedCandidate: parsed.candidate });
         setScreenPlan(null);
@@ -1129,6 +1199,9 @@ export const AiCopilotDock: React.FC<Props> = ({
         setLastContext('draft');
         setApplied(null);
       } else if (data.kind === 'screen') {
+        // The card states the plan's method; a cache hit is not in the card, so
+        // that label stays under the message where it is still true.
+        setCardMessageId(chartCacheUsed ? null : messageId);
         setScreenPlan(data);
         setChartReading(receivedChartReading);
         setApplied(null);
@@ -1161,6 +1234,8 @@ export const AiCopilotDock: React.FC<Props> = ({
           }
         }
       } else {
+        // A conversational reply owns no card, so its provenance line stays.
+        setCardMessageId(null);
         // A conversational reply cannot leave an earlier scan marked pending.
         scanPendingRef.current = false;
         setScanPending(false);
@@ -1185,6 +1260,8 @@ export const AiCopilotDock: React.FC<Props> = ({
     }
     // Focus stays in the composer: sending never drops it to <body> (P0-3).
     promptRef.current?.focus();
+    // The user asked for this: its card must come into view.
+    requestReveal('send');
     void submitText(text, image);
   };
 
@@ -1226,7 +1303,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       if (pendingApply.current === pending) {
         pendingApply.current = null;
         setApplyStatus('Draft was not confirmed as applied.');
-        setError((caught as Error).message);
+        append('assistant', 'The draft was not applied: ' + (caught as Error).message + ' Nothing was run.', { tone: 'error' });
       }
     }
     return false;
@@ -1238,7 +1315,10 @@ export const AiCopilotDock: React.FC<Props> = ({
     try {
       assertProposalCurrent(proposal, revision.current, proposal.sourceSnapshot, JSON.stringify(strategy));
       candidate = snapshotStrategy(proposal.validatedCandidate);
-    } catch (caught) { setError((caught as Error).message); return false; }
+    } catch (caught) {
+      append('assistant', 'The draft was not applied: ' + (caught as Error).message + ' Nothing was run.', { tone: 'error' });
+      return false;
+    }
     return await confirmApply(candidate, proposal.id, 'Draft applied to the workspace. The assumptions are in the builder; no backtest or broker order was executed.');
   };
 
@@ -1268,7 +1348,10 @@ export const AiCopilotDock: React.FC<Props> = ({
     if (applied?.startsWith('screen:')) return;
     let candidate: StrategyAST;
     try { candidate = snapshotStrategy(override ?? screenPlan.strategy); }
-    catch (caught) { setError((caught as Error).message); return; }
+    catch (caught) {
+      append('assistant', 'The screen strategy could not be applied: ' + (caught as Error).message + ' Nothing was run.', { tone: 'error' });
+      return;
+    }
     const id = 'screen:' + Date.now() + ':' + Math.random().toString(36).slice(2, 6);
     await confirmApply(candidate, id, 'Screen strategy applied to the workspace draft. Review exits, risk, sizing and costs in the builder; no backtest or broker order was executed.');
   };
@@ -1401,22 +1484,45 @@ export const AiCopilotDock: React.FC<Props> = ({
                   {(!messages[index - 1] || messages[index - 1].sender === 'user') && (
                     <p className="st-meta text-[var(--text-3)]">Stragy</p>
                   )}
-                  <div className="st-prose break-words text-[var(--text-1)]"><MessageText text={message.text} /></div>
-                  {message.methodLabel && <p title={message.methodTitle} className="st-meta text-[var(--text-3)]">{message.methodLabel}</p>}
+                  <div
+                    role={message.tone === 'error' ? 'alert' : undefined}
+                    className={'st-prose break-words ' + (message.tone === 'error' ? 'text-[var(--down)]' : 'text-[var(--text-1)]')}
+                  >
+                    <MessageText text={message.text} />
+                  </div>
+                  {/* The card states the same provenance once (P1-9/Fix 3). */}
+                  {message.methodLabel && message.id !== cardMessageId && (
+                    <p title={message.methodTitle} className="st-meta text-[var(--text-3)]">{message.methodLabel}</p>
+                  )}
                   {message.warnings && message.warnings.length > 0 && (
                     <Disclosure summary={'Warnings (' + message.warnings.length + ')'}>
                       <ul className="list-disc space-y-1 pl-4">{message.warnings.map((warning, warningIndex) => <li key={warningIndex}>{warning}</li>)}</ul>
                     </Disclosure>
                   )}
-                  {message.retryPrompt && (
-                    <button
-                      type="button"
-                      onClick={() => void submitText(message.retryPrompt!)}
-                      className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-8"
-                    >
-                      Retry
-                    </button>
-                  )}
+                  {(() => {
+                    const retryText = promptForMessage(index);
+                    return (
+                      <ActionRow
+                        actions={[
+                          {
+                            id: 'copy',
+                            label: copiedMessageId === message.id ? 'Copied' : 'Copy answer',
+                            icon: copiedMessageId === message.id
+                              ? <Check size={14} aria-hidden="true" />
+                              : <Copy size={14} aria-hidden="true" />,
+                            onClick: () => void copyMessage(message),
+                          },
+                          ...(retryText ? [{
+                            id: 'retry',
+                            label: 'Retry',
+                            icon: <RefreshCw size={14} aria-hidden="true" />,
+                            onClick: () => void submitText(retryText),
+                            disabled: busy,
+                          }] : []),
+                        ]}
+                      />
+                    );
+                  })()}
                 </article>
               ))}
 
@@ -1500,6 +1606,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                       ? 'AI draft via ' + proposal.provider.name + (proposal.provider.model ? ' / ' + proposal.provider.model : '') + ' · schema-validated, not performance-verified' + (draftChanges.length > 1 ? ' · ' + draftChanges.length + ' changes' : '')
                       : 'Local keyword rules · not AI' + (draftChanges.length > 1 ? ' · ' + draftChanges.length + ' changes' : '')}
                     state="idle"
+                    statusBelow
                     status={proposal.provider.aiGenerated ? 'Draft · not applied' : 'Draft from rules · not applied'}
                     footer={(
                       <div className="space-y-2">
@@ -1583,15 +1690,17 @@ export const AiCopilotDock: React.FC<Props> = ({
         </div>
 
         {!pinned && messages.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-end pr-3">
-            <button
-              type="button"
-              data-testid="jump-to-latest"
-              onClick={() => scrollToLatest()}
-              className="pointer-events-auto st-meta inline-flex min-h-11 items-center rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[var(--text-2)] shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-colors hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
-            >
-              Jump to latest
-            </button>
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 px-4 sm:px-6">
+            <div className="mx-auto flex w-full max-w-[832px] justify-end">
+              <button
+                type="button"
+                data-testid="jump-to-latest"
+                onClick={() => scrollToLatest()}
+                className="pointer-events-auto st-meta inline-flex min-h-11 items-center rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[var(--text-2)] shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-colors hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
+              >
+                Jump to latest
+              </button>
+            </div>
           </div>
         )}
       </div>

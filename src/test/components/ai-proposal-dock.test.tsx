@@ -47,7 +47,8 @@ describe('proposal dock review and explicit actions', () => {
     render(<AiCopilotDock strategy={validStrategy()} onApplyVariation={apply}/>);
     generate();
     await screen.findByRole('article', { name: 'Draft proposal' });
-    expect(screen.getByText('Local keyword rules · not AI', { selector: 'p' })).toBeTruthy();
+    // Provenance is stated once: in the draft card's meta, not also under the message.
+    expect(screen.getAllByText('Local keyword rules · not AI')).toHaveLength(1);
     expect(apply).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /Run current workspace/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Open scanner/ })).toBeNull();
@@ -89,6 +90,8 @@ describe('proposal dock review and explicit actions', () => {
     expect(within(card).getByRole('button', { name: 'Apply draft' })).toBeTruthy();
     expect(within(card).getByRole('button', { name: 'Apply and backtest' })).toBeTruthy();
     expect(within(card).getByLabelText('More draft actions')).toBeTruthy();
+    // The chip drops under the title below 640px so a long title keeps one line.
+    expect(card.querySelector('header > div')?.className).toContain('max-sm:block');
   });
 
   it('respects explicit apply acknowledgements and rejection', async () => {

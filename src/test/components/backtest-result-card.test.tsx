@@ -76,6 +76,14 @@ describe('inline backtest headline honesty', () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 
+  it('calls method caveats data notes and keeps per-run events as warnings', () => {
+    render(<BacktestResultCard result={result({ warnings: ['Current membership survivorship bias', 'Benchmark is this instrument buy-and-hold, not a market index.'] })} />);
+    expect(screen.getByText('Data notes (2)')).toBeTruthy();
+    cleanup();
+    render(<BacktestResultCard result={result({ warnings: ['Entry skipped: unavailable ATR at 2025-01-02'] })} />);
+    expect(screen.getByText('Data warnings (1)')).toBeTruthy();
+  });
+
   it('shows the equity curve and the first five trades when the run carries them', () => {
     const trades = Array.from({ length: 8 }, (_, index) => ({
       id: 't' + index,

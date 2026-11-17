@@ -15,6 +15,8 @@ interface Props {
   meta?: React.ReactNode;
   /** Chip content; the shell renders exactly one chip with role="status". */
   status?: React.ReactNode;
+  /** Below 640px, put the chip on its own line under the title instead of beside it. */
+  statusBelow?: boolean;
   /** Footer actions, max two. */
   footer?: React.ReactNode;
   children: React.ReactNode;
@@ -57,6 +59,7 @@ export const CardShell: React.FC<Props> = ({
   density = 'default',
   meta,
   status,
+  statusBelow = false,
   footer,
   children,
   className = '',
@@ -71,19 +74,19 @@ export const CardShell: React.FC<Props> = ({
       className={`st-card-surface ${toneClass[tone]} ${className}`}
     >
       <header className={spacing.header}>
-        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+        <div className={(statusBelow ? 'max-sm:block ' : '') + 'flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5'}>
           <div className="min-w-0 flex-1">
             {eyebrow && <p className="st-label text-[var(--text-3)]">{eyebrow}</p>}
             <h3 id={titleId} className="st-title line-clamp-2 font-semibold text-[var(--text-1)]">{title}</h3>
             {meta && <div className="st-meta mt-0.5 text-[var(--text-3)]">{meta}</div>}
           </div>
           {chip && state !== 'idle' && (
-            <span role="status" className={'st-meta shrink-0 rounded-[var(--r-pill)] border px-2 py-0.5 ' + stateChip[state]}>
+            <span role="status" className={'st-meta shrink-0 rounded-[var(--r-pill)] border px-2 py-0.5 ' + stateChip[state] + (statusBelow ? ' max-sm:mt-1.5' : '')}>
               {chip}
             </span>
           )}
           {chip && state === 'idle' && (
-            <span role="status" className="st-meta shrink-0 rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-3)]">
+            <span role="status" className={'st-meta shrink-0 rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-3)]' + (statusBelow ? ' max-sm:mt-1.5' : '')}>
               {chip}
             </span>
           )}

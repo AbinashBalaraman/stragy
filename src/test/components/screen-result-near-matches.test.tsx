@@ -104,6 +104,9 @@ describe('screen near matches', () => {
 
     const table = screen.getByRole('table', { name: 'Screen matches, 1 row' });
     expect(table.querySelectorAll('tbody tr')).toHaveLength(1);
+    // The row action stays pinned to the right edge below 640px (Fix 4).
+    expect(table.querySelector('thead th:last-child')?.className).toContain('max-sm:sticky');
+    expect(table.querySelector('tbody td:last-child')?.className).toContain('max-sm:sticky');
     // RSI (14) is listed once even though two indicator ids carry the same label.
     expect(within(table).getByText('RSI (14) 28.00 · SMA (200) 210.00')).toBeTruthy();
     expect(screen.getByText('1 match')).toBeTruthy();
