@@ -2,23 +2,42 @@ import React, { useEffect, useRef, useState } from 'react';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { StrategyAST } from '../../shared/strategy/types';
 import { formatDateTime } from '../../shared/format';
-import { BookOpen, ArrowRight } from 'lucide-react';
-import { renderStrategyInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
 
 import { parseStrategy } from '../../client/workspace';
+import { plainRule } from '../../client/plainRules';
 import { commitStrategyLibrary, exportSavedStrategy, getSavedStrategy, readStrategyLibrary, STRATEGY_LIBRARY_KEY, StrategyLibraryConflictError } from '../../client/strategyLibrary';
 import type { LibraryOperation, SavedStrategy, StrategyLibraryState } from '../../client/strategyLibrary';
+import { CardShell } from '../common/CardShell';
+import { Disclosure } from '../common/Disclosure';
 
 export interface StrategyLibraryViewProps {
   onLoadStrategy: (strategy: StrategyAST) => void;
   currentStrategy?: StrategyAST;
 }
 
-const controlClass = 'min-w-0 max-w-full rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 disabled:opacity-40';
+const inputClass = 'min-w-0 w-full rounded-[var(--r-btn)] border border-[var(--line-strong)] bg-[#101012] px-3 py-2 text-xs text-[var(--text-1)] placeholder:text-[var(--text-3)] focus:border-[#a8c7fa]/60 focus:outline-none';
+const secondaryClass = 'inline-flex min-h-9 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:text-[var(--text-disabled)]';
+const textButtonClass = 'rounded-[var(--r-btn)] px-1.5 py-1 text-xs text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:text-[var(--text-disabled)]';
 const errorMessage = (error: unknown) => {
-  // DOMException can belong to a different realm than Error (including quota/denial).
   if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message;
   return 'Local library operation failed.';
+};
+
+const PLAIN_DESCRIPTIONS: Record<string, string> = {
+  reliance_supertrend_ema_volume: 'Buys while price is above Supertrend and the 200-day average with volume above normal; exits below Supertrend.',
+  supertrend_trend_following: 'Follows Supertrend while price stays above the 50-day average, with an ATR trailing stop.',
+  golden_cross_sma: 'Buys when the 50-day average crosses above the 200-day average with volume expansion.',
+  rsi_mean_reversion: 'Buys oversold pullbacks (RSI below 32) while price is above the 100-day average; exits when RSI is above 68.',
+  bollinger_squeeze_breakout: 'Buys when price closes above the upper Bollinger band with an expanding candle body.',
+  macd_momentum_crossover: 'Buys when the MACD line crosses above its signal line; an ATR stop trails the move.',
+  atr_volatility_breakout: 'Buys when price breaks above the 20-day average plus two ATRs, with a trailing stop.',
+  nr7_volatility_compression: 'Buys a narrow-range (NR7) breakout after a Bollinger squeeze.',
+  rsi_trendline_breakout_near_lows: 'Buys when RSI recovers from below 36, breaks its falling trendline, and price sits near a 250-day low.',
+};
+
+const categoryLabel = (category: string) => {
+  if (category === 'Institutional') return 'Systematic';
+  return category.toLowerCase().replace(/^./, letter => letter.toUpperCase());
 };
 
 function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewProps) {
@@ -28,14 +47,17 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
   const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const committing = useRef(false);
+  const staleRef = useRef(false);
   const [name, setName] = useState('');
   const [trash, setTrash] = useState(false);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameName, setRenameName] = useState('');
   const [revisions, setRevisions] = useState<Record<string, number>>({});
+  const [menuId, setMenuId] = useState<string | null>(null);
 
   const reload = () => {
     try {
+      staleRef.current = false;
       setLibrary(readStrategyLibrary(window.localStorage));
       setStale(false); setError(''); setNotice(''); setRevisions({}); setRenameId(null);
     } catch (error) { setError('Cannot access My Strategies: ' + errorMessage(error)); }
@@ -45,13 +67,23 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
     reload();
     const changed = (event: StorageEvent) => {
       if (event.key === STRATEGY_LIBRARY_KEY || event.key === null) {
+        staleRef.current = true;
         setStale(true);
         setNotice('');
-        setError('My Strategies changed in another tab. Reload the library before saving. Your builder draft is unchanged.');
+        setError('My Strategies changed in another tab. It reloads automatically when you return to this tab.');
       }
     };
+    // Cross-tab sync without a developer-facing reload button.
+    const onActive = () => { if (staleRef.current) reload(); };
+    const onVisibility = () => { if (document.visibilityState === 'visible') onActive(); };
     window.addEventListener('storage', changed);
-    return () => window.removeEventListener('storage', changed);
+    window.addEventListener('focus', onActive);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('storage', changed);
+      window.removeEventListener('focus', onActive);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   const commit = async (operation: LibraryOperation, success: string) => {
@@ -67,7 +99,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
       setRenameId(null);
       setNotice(success + (library.corrupt ? ' Original corrupt bytes were retained in a recovery backup.' : ''));
     } catch (error) {
-      if (error instanceof StrategyLibraryConflictError) setStale(true);
+      if (error instanceof StrategyLibraryConflictError) { staleRef.current = true; setStale(true); }
       setError('Not saved: ' + errorMessage(error));
     } finally {
       committing.current = false;
@@ -87,7 +119,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
       document.body.appendChild(anchor);
       anchor.click();
       setError('');
-      setNotice('Validated JSON download requested.');
+      setNotice('Download started.');
     } catch (error) {
       setNotice('');
       setError('Export failed: ' + errorMessage(error));
@@ -101,20 +133,19 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
   const entries = library?.entries.filter(entry => Boolean(entry.deletedAt) === trash) ?? [];
 
   return (
-    <section aria-labelledby="my-strategies-title" className="min-w-0 space-y-4 rounded-2xl border border-neutral-800 bg-[#171719]/90 p-4 sm:p-5">
-      <h2 id="my-strategies-title" className="text-lg font-semibold text-white">My strategies</h2>
-      <p className="text-xs leading-relaxed text-neutral-400">
-        Saved in this browser only. Saving is explicit; nothing is removed automatically.
-      </p>
-      <details className="text-[11px] leading-5 text-neutral-500">
-        <summary className="cursor-pointer hover:text-neutral-300">Storage limits</summary>
-        <p className="mt-1">Up to 50 strategies including trash, 20 immutable revisions each, 200 revisions in total, 1 MiB.</p>
-      </details>
-      {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-      {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
-      {library?.corrupt && <p role="alert" className="text-sm text-amber-300">Stored library is invalid and has not been overwritten. An explicit save starts a fresh library only after preserving the original bytes. Existing recovery backup conflicts will block the save.</p>}
+    <CardShell
+      title="My strategies"
+      meta="Saved in this browser only. Saving is explicit; nothing is removed automatically."
+    >
+      <Disclosure summary="Storage limits">
+        <p>Up to 50 strategies including trash, 20 immutable revisions each, 200 revisions in total, 1 MiB.</p>
+      </Disclosure>
 
-      <form className="flex flex-col gap-2 sm:flex-row sm:flex-wrap" onSubmit={event => {
+      {error && <p role="alert" className="text-xs text-[var(--down)]">{error}</p>}
+      {notice && <p role="status" className="text-xs text-[var(--up)]">{notice}</p>}
+      {library?.corrupt && <p role="alert" className="text-xs text-[#f5d383]">Stored library is invalid and has not been overwritten. An explicit save starts a fresh library only after preserving the original bytes.</p>}
+
+      <form className="flex flex-col gap-2 sm:flex-row" onSubmit={event => {
         event.preventDefault();
         if (currentStrategy) void commit({ type: 'saveAs', strategy: currentStrategy, name: name.trim() || currentStrategy.name }, 'Strategy saved as a new copy.');
       }}>
@@ -123,70 +154,115 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
           maxLength={80}
           value={name}
           onChange={event => setName(event.target.value)}
-          placeholder={currentStrategy?.name ?? 'Open a strategy in the builder first'}
-          className={controlClass + ' min-w-0 w-full bg-neutral-950 sm:flex-1'}
+          placeholder={currentStrategy?.name ?? 'Open a strategy in the tester first'}
+          className={inputClass + ' sm:flex-1'}
           disabled={disabled || !currentStrategy}
         />
-        <button type="submit" className={controlClass} disabled={disabled || !currentStrategy}>Save current strategy as new</button>
-        <button type="button" onClick={reload} disabled={busy} className={controlClass}>Reload library</button>
+        <button type="submit" disabled={disabled || !currentStrategy} className="inline-flex min-h-9 items-center justify-center rounded-[var(--r-btn)] bg-[#a8c7fa] px-3 py-1.5 text-xs font-semibold text-[#101012] transition-colors hover:bg-[#c7dbff] disabled:cursor-not-allowed disabled:opacity-40">
+          Save as new strategy
+        </button>
       </form>
-      {!currentStrategy && <p className="text-xs text-neutral-400">No current builder strategy is available to save.</p>}
+      {!currentStrategy && <p className="st-meta text-[var(--text-3)]">No current tester strategy is available to save.</p>}
 
-      <div className="flex flex-wrap gap-2">
-        <button type="button" aria-pressed={!trash} onClick={() => setTrash(false)} className={`${controlClass} ${!trash ? 'border-[#a8c7fa]/50 text-[#a8c7fa]' : ''}`}>Saved strategies</button>
-        <button type="button" aria-pressed={trash} onClick={() => setTrash(true)} className={`${controlClass} ${trash ? 'border-[#a8c7fa]/50 text-[#a8c7fa]' : ''}`}>Trash ({library?.entries.filter(entry => entry.deletedAt).length ?? 0})</button>
+      <div className="inline-flex w-fit items-center gap-1 rounded-[var(--r-btn)] bg-[var(--surface-2)] p-0.5" role="group" aria-label="Library filter">
+        <button type="button" aria-pressed={!trash} onClick={() => setTrash(false)} className={'rounded-[var(--r-btn)] px-2.5 py-1 text-xs transition-colors ' + (!trash ? 'bg-white/[0.08] font-medium text-[var(--text-1)]' : 'text-[var(--text-3)] hover:text-[var(--text-2)]')}>Saved strategies</button>
+        <button type="button" aria-pressed={trash} onClick={() => setTrash(true)} className={'rounded-[var(--r-btn)] px-2.5 py-1 text-xs transition-colors ' + (trash ? 'bg-white/[0.08] font-medium text-[var(--text-1)]' : 'text-[var(--text-3)] hover:text-[var(--text-2)]')}>Trash ({library?.entries.filter(entry => entry.deletedAt).length ?? 0})</button>
       </div>
 
-      {library && entries.length === 0 && <p className="text-xs text-neutral-400">{trash ? 'Trash is empty.' : 'No saved strategies yet.'}</p>}
+      {library && entries.length === 0 && (
+        <p className="st-meta text-[var(--text-3)]">
+          {trash ? 'Trash is empty.' : 'No saved strategies yet. Run a backtest, then save it from the tester or ask in chat.'}
+        </p>
+      )}
 
       {entries.map(entry => {
         const latest = entry.revisions[entry.revisions.length - 1];
         const selected = revisions[entry.id] ?? latest.revision;
+        const selectedRevision = entry.revisions.find(revision => revision.revision === selected) ?? latest;
+        const menuOpen = menuId === entry.id;
+        const menuItem = (label: string, onClick: () => void, disabled = false) => (
+          <button
+            key={label}
+            type="button"
+            role="menuitem"
+            disabled={disabled}
+            onClick={() => { setMenuId(null); onClick(); }}
+            className="rounded-[var(--r-btn)] px-2.5 py-1 text-left text-xs text-[var(--text-2)] transition-colors hover:bg-white/[0.06] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:text-[var(--text-disabled)]"
+          >
+            {label}
+          </button>
+        );
         return (
-          <article key={entry.id} aria-label={latest.strategy.name} className="min-w-0 space-y-2 rounded-xl border border-neutral-800 p-3">
-            <h3 className="text-sm font-semibold text-white">{latest.strategy.name}</h3>
-            <label className="block min-w-0 text-xs text-neutral-400">
-              Saved revision
-              <select
-                aria-label={'Revision for ' + latest.strategy.name}
-                value={selected}
-                onChange={event => setRevisions(previous => ({ ...previous, [entry.id]: Number(event.target.value) }))}
-                className={controlClass + ' mt-1 block w-full max-w-full truncate bg-neutral-950 sm:max-w-[30rem]'}
-              >
-                {entry.revisions.map(revision => (
-                  <option key={revision.revision} value={revision.revision} title={`${formatDateTime(revision.savedAt)} — ${revision.strategy.name}`}>
-                    {formatDateTime(revision.savedAt)} · r{revision.revision} · {revision.strategy.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <article key={entry.id} aria-label={latest.strategy.name} className="min-w-0 space-y-2 border-t border-[var(--line)] pt-3">
+            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+              <div className="min-w-0">
+                <h3 className="text-sm font-medium text-[var(--text-1)]">{latest.strategy.name}</h3>
+                <p className="st-meta mt-0.5 text-[var(--text-3)]">
+                  Version {selected} of {entry.revisions.length} · saved {formatDateTime(selectedRevision.savedAt)}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => { try { onLoadStrategy(getSavedStrategy(entry, selected)); } catch (error) { setError(errorMessage(error)); } }}
+                  className="inline-flex min-h-9 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1 text-xs text-[var(--text-1)] transition-colors hover:border-[var(--line-strong)]"
+                >
+                  Open in tester
+                </button>
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  aria-label={'More actions for ' + latest.strategy.name}
+                  onClick={() => setMenuId(current => current === entry.id ? null : entry.id)}
+                  className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-[var(--r-btn)] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+                >
+                  <span aria-hidden="true">⋯</span>
+                </button>
+              </div>
+            </div>
+
+            {entry.revisions.length > 1 && (
+              <label className="block min-w-0 text-xs text-[var(--text-3)]">
+                Version
+                <select
+                  aria-label={'Revision for ' + latest.strategy.name}
+                  value={selected}
+                  onChange={event => setRevisions(previous => ({ ...previous, [entry.id]: Number(event.target.value) }))}
+                  className={inputClass + ' mt-1 block max-w-full truncate sm:max-w-[30rem]'}
+                >
+                  {entry.revisions.map(revision => (
+                    <option key={revision.revision} value={revision.revision} title={`${formatDateTime(revision.savedAt)} — ${revision.strategy.name}`}>
+                      Version {revision.revision} · saved {formatDateTime(revision.savedAt)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {menuOpen && (
+              <div role="menu" aria-label={'Actions for ' + latest.strategy.name} className="flex w-fit flex-col rounded-[var(--r-inner)] bg-[var(--surface-2)] p-1">
+                {menuItem('Rename', () => { setRenameId(entry.id); setRenameName(latest.strategy.name); }, disabled)}
+                {menuItem('Duplicate', () => void commit({ type: 'duplicate', id: entry.id, revision: selected }, 'Strategy duplicated with a new identity.'), disabled)}
+                {menuItem('Export JSON', () => exportEntry(entry, selected))}
+                {menuItem('Save current as new revision', () => { if (currentStrategy) void commit({ type: 'revise', id: entry.id, strategy: currentStrategy }, 'Current strategy saved as a new immutable revision.'); }, disabled || !currentStrategy)}
+                {trash
+                  ? menuItem('Restore', () => void commit({ type: 'restore', id: entry.id }, 'Strategy restored.'), disabled)
+                  : menuItem('Move to trash', () => void commit({ type: 'delete', id: entry.id }, 'Strategy moved to trash. All revisions retained.'), disabled)}
+              </div>
+            )}
 
             {renameId === entry.id && (
               <form className="flex flex-col gap-2 sm:flex-row sm:flex-wrap" onSubmit={event => { event.preventDefault(); void commit({ type: 'rename', id: entry.id, name: renameName }, 'Strategy renamed; previous revision retained.'); }}>
-                <input aria-label="New strategy name" required maxLength={80} value={renameName} onChange={event => setRenameName(event.target.value)} className={controlClass + ' min-w-0 w-full bg-neutral-950 sm:flex-1'} />
-                <button type="submit" disabled={disabled || !renameName.trim()} className={controlClass}>Confirm rename</button>
-                <button type="button" onClick={() => setRenameId(null)} className={controlClass}>Cancel rename</button>
+                <input aria-label="New strategy name" required maxLength={80} value={renameName} onChange={event => setRenameName(event.target.value)} className={inputClass + ' sm:flex-1'} />
+                <button type="submit" disabled={disabled || !renameName.trim()} className={secondaryClass}>Confirm rename</button>
+                <button type="button" onClick={() => setRenameId(null)} className={secondaryClass}>Cancel rename</button>
               </form>
             )}
-
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => { try { onLoadStrategy(getSavedStrategy(entry, selected)); } catch (error) { setError(errorMessage(error)); } }} className={controlClass}>Load saved revision</button>
-              <button type="button" onClick={() => exportEntry(entry, selected)} className={controlClass}>Export JSON</button>
-              {trash ? (
-                <button type="button" disabled={disabled} onClick={() => void commit({ type: 'restore', id: entry.id }, 'Strategy restored.')} className={controlClass}>Restore</button>
-              ) : (
-                <>
-                  <button type="button" disabled={disabled} onClick={() => { setRenameId(entry.id); setRenameName(latest.strategy.name); }} className={controlClass}>Rename</button>
-                  <button type="button" disabled={disabled} onClick={() => void commit({ type: 'duplicate', id: entry.id, revision: selected }, 'Strategy duplicated with a new identity.')} className={controlClass}>Duplicate</button>
-                  <button type="button" disabled={disabled || !currentStrategy} onClick={() => { if (currentStrategy) void commit({ type: 'revise', id: entry.id, strategy: currentStrategy }, 'Current strategy saved as a new immutable revision.'); }} className={controlClass}>Save current as new revision</button>
-                  <button type="button" disabled={disabled} onClick={() => void commit({ type: 'delete', id: entry.id }, 'Strategy moved to trash. All revisions retained.')} className={controlClass}>Move to trash</button>
-                </>
-              )}
-            </div>
           </article>
         );
       })}
-    </section>
+    </CardShell>
   );
 }
 
@@ -208,73 +284,60 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
     <div className="mx-auto max-w-5xl space-y-5 p-4 pb-20 sm:p-6">
       <MyStrategies onLoadStrategy={onLoadStrategy} currentStrategy={currentStrategy} />
 
-      <section className="space-y-3 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719]/90 p-4 sm:p-5">
-        <div className="flex items-start gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#a8c7fa]/30 bg-[#a8c7fa]/10 text-[#a8c7fa]">
-            <BookOpen className="h-4 w-4" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-white">Template strategies ({STRATEGY_TEMPLATES.length})</h2>
-            <p className="mt-0.5 text-xs leading-relaxed text-neutral-400">
-              Validated examples with illustrative, unverified cash-fee assumptions. Win rates are not pre-certified; each run uses an immutable data snapshot.
-            </p>
-          </div>
+      <header className="space-y-3">
+        <div>
+          <h2 className="st-title text-xl font-semibold text-[var(--text-1)]">Template strategies ({STRATEGY_TEMPLATES.length})</h2>
+          <p className="st-meta mt-1 max-w-3xl text-[var(--text-3)]">
+            Starting points. Costs are illustrative; results come from your own run.
+          </p>
         </div>
-
-        <div className="flex flex-wrap gap-1.5 border-t border-[rgba(236,236,237,0.08)] pt-3">
+        <div className="inline-flex flex-wrap items-center gap-1 rounded-[var(--r-btn)] bg-[var(--surface-2)] p-0.5" role="group" aria-label="Template category">
           {categories.map(category => (
             <button
               key={category.id}
+              type="button"
+              aria-pressed={selectedCategory === category.id}
               onClick={() => setSelectedCategory(category.id)}
-              className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
-                selectedCategory === category.id
-                  ? 'bg-[#a8c7fa] font-semibold text-[#101012]'
-                  : 'border border-[rgba(236,236,237,0.08)] bg-[#101012] text-neutral-400 hover:text-white'
-              }`}
+              className={'rounded-[var(--r-btn)] px-2.5 py-1 text-xs transition-colors ' + (selectedCategory === category.id ? 'bg-white/[0.08] font-medium text-[var(--text-1)]' : 'text-[var(--text-3)] hover:text-[var(--text-2)]')}
             >
               {category.label}
             </button>
           ))}
         </div>
-      </section>
+      </header>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {filteredTemplates.map(template => {
-          const plainLanguage = renderStrategyInPlainLanguage(template.strategy);
+          const entryRules = template.strategy.rules.entry;
           return (
-            <div key={template.id} className="flex flex-col justify-between space-y-4 rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719]/90 p-4 transition-colors hover:border-[#a8c7fa]/40 sm:p-5">
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="rounded border border-[#a8c7fa]/25 bg-[#a8c7fa]/10 px-2 py-0.5 text-[11px] font-medium text-[#a8c7fa]">
-                    {template.category}
-                  </span>
+            <CardShell
+              key={template.id}
+              title={template.name}
+              meta={`${categoryLabel(template.category)} · illustrative costs`}
+              footer={(
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => onLoadStrategy(parseStrategy(JSON.parse(JSON.stringify(template.strategy))))}
+                    className="inline-flex min-h-9 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
+                  >
+                    Open in tester
+                  </button>
                 </div>
-
-                <div>
-                  <h3 className="text-base font-semibold text-white">{template.name}</h3>
-                  <p className="mt-1 text-xs leading-relaxed text-neutral-300">{template.description}</p>
-                </div>
-
-                <div className="space-y-1.5 rounded-xl border border-[rgba(236,236,237,0.08)] bg-[#101012]/80 p-3 text-xs text-neutral-400">
-                  <div>
-                    <strong className="text-neutral-300">Suitability: </strong>
-                    <span>{template.suitability}</span>
-                  </div>
-                  <div>
-                    <strong className="text-neutral-300">Entry logic: </strong>
-                    <span className="font-mono text-[11px] text-[#a8c7fa]">{plainLanguage.entrySummary.join(' & ')}</span>
-                  </div>
-                </div>
+              )}
+            >
+              <p className="text-xs leading-5 text-[var(--text-2)]">{PLAIN_DESCRIPTIONS[template.id] ?? template.description}</p>
+              <div>
+                <p className="text-xs text-[var(--text-3)]">Entry</p>
+                <ul className="mt-1 space-y-1 text-xs leading-5 text-[var(--text-2)]">
+                  {entryRules.slice(0, 3).map((rule, index) => (
+                    <li key={index}>{plainRule(rule, template.strategy.indicators)}</li>
+                  ))}
+                  {entryRules.length > 3 && <li className="text-[var(--text-3)]">and {entryRules.length - 3} more</li>}
+                </ul>
               </div>
-
-              <button
-                onClick={() => onLoadStrategy(parseStrategy(JSON.parse(JSON.stringify(template.strategy))))}
-                className="group flex w-full items-center justify-center gap-2 rounded-xl border border-[#a8c7fa]/35 bg-[#a8c7fa]/10 py-2.5 text-xs font-medium text-[#a8c7fa] transition-colors hover:bg-[#a8c7fa] hover:text-[#101012]"
-              >
-                <span>Open template in Strategy tester</span>
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-              </button>
-            </div>
+              <p className="st-meta leading-5 text-[var(--text-3)]">Suitable for: {template.suitability.replace(/\s*\([A-Z0-9.^]+\)/g, '')}</p>
+            </CardShell>
           );
         })}
       </div>

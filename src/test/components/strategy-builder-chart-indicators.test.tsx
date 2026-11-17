@@ -23,19 +23,20 @@ describe('new chart indicator types in the builder', () => {
   it('renders chart-generated indicators and their registry parameters without crashing', () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
-    expect(screen.getByText(/RSI_TRENDLINE, unit: oscillator/)).toBeTruthy();
-    expect(screen.getByText(/PCT_ABOVE_LOW, unit: percent/)).toBeTruthy();
+    expect(screen.getByText('RSI falling trendline (14, 30-180 bars)')).toBeTruthy();
+    expect(screen.getByText('Distance above the 250-bar low')).toBeTruthy();
     expect((screen.getByLabelText('rsi_tl minSpan') as HTMLInputElement).value).toBe('30');
     expect((screen.getByLabelText('low250 period') as HTMLInputElement).value).toBe('250');
 
+    fireEvent.click(screen.getByRole('button', { name: 'Add indicator' }));
     const select = screen.getByLabelText('New indicator type');
     for (const type of ['RSI_SMA', 'RSI_TRENDLINE', 'PCT_ABOVE_LOW', 'PCT_CHANGE']) {
       expect(within(select).getByRole('option', { name: type })).toBeTruthy();
     }
     fireEvent.change(select, { target: { value: 'RSI_TRENDLINE' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add indicator' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
-    expect(screen.getAllByText(/RSI_TRENDLINE, unit: oscillator/)).toHaveLength(2);
+    expect(screen.getAllByText('RSI falling trendline (14, 30-180 bars)')).toHaveLength(2);
     expect((screen.getByLabelText('rsi_trendline1 rsiPeriod') as HTMLInputElement).value).toBe('14');
     expect((screen.getByLabelText('rsi_trendline1 maxSpan') as HTMLInputElement).value).toBe('180');
     expect((screen.getByLabelText('rsi_trendline1 anchorMin') as HTMLInputElement).value).toBe('60');

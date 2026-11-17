@@ -53,8 +53,8 @@ const POPULAR_TICKERS = [
 const QuotePrice: React.FC<{ quote: LiveQuote; className?: string }> = ({ quote, className = '' }) => (
   <span className={'items-center gap-1 ' + className} title={liveQuoteTimeTitle(quote)}>
     <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
-    <span className="font-mono font-semibold text-[#ececed]">{formatLivePrice(quote.ltp)}</span>
-    <span className={`font-mono text-[10px] font-bold ${quote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+    <span className="st-tnum font-semibold text-[#ececed]">{formatLivePrice(quote.ltp)}</span>
+    <span className={`st-tnum text-[10px] font-bold ${quote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
       {formatLiveChange(quote.changePercent)}
     </span>
   </span>
@@ -288,10 +288,10 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
             : 'Select an instrument. Live LTP appears when Angel One quotes are connected.'}
       >
         <span className="flex shrink-0 items-center gap-1.5">
-          <span className="font-mono text-xs font-semibold tracking-tight text-neutral-100 transition-colors group-hover:text-[#cfe0ff]">
+          <span className="text-xs font-semibold tracking-tight text-neutral-100 transition-colors group-hover:text-[#cfe0ff]">
             {currentSymbol.ticker}
           </span>
-          <span className="shrink-0 rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] uppercase text-neutral-400">
+          <span className="shrink-0 rounded border border-white/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-neutral-400">
             {isIndex ? 'INDEX' : currentSymbol.exchange}
           </span>
         </span>
@@ -299,8 +299,8 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         {/* Live Angel quotes in real mode; demo references are labelled as such. */}
         {showReferencePrices ? (
           <span className="flex shrink-0 items-center gap-1.5">
-            <span className="font-mono text-xs text-neutral-200">₹{currentSymbol.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-            <span className={'flex items-center gap-0.5 font-mono text-[10px] ' + (currentSymbol.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
+            <span className="st-tnum text-xs text-neutral-200">₹{currentSymbol.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+            <span className={'st-tnum flex items-center gap-0.5 text-[10px] ' + (currentSymbol.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
               {currentSymbol.changePercent >= 0 ? <TrendingUp className="h-2.5 w-2.5" aria-hidden="true" /> : <TrendingDown className="h-2.5 w-2.5" aria-hidden="true" />}
               {currentSymbol.changePercent >= 0 ? '+' : ''}{currentSymbol.changePercent}%
             </span>
@@ -308,7 +308,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
         ) : currentQuote ? (
           <QuotePrice quote={currentQuote} className="flex shrink-0 text-xs" />
         ) : (
-          <span className="shrink-0 font-mono text-[11px] text-neutral-500" title="Live Angel One LTP is loading. Daily research bars remain delayed.">LTP …</span>
+          <span className="st-tnum shrink-0 text-[11px] text-neutral-500" title="Live Angel One LTP is loading. Daily research bars remain delayed.">LTP …</span>
         )}
 
         <Search className="h-3 w-3 shrink-0 text-neutral-500 transition-colors group-hover:text-neutral-300" aria-hidden="true" />

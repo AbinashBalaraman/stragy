@@ -377,7 +377,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 }`}
               >
                 <span className="whitespace-nowrap">Latest session</span>
-                <span className="text-[10px] opacity-80 font-mono">{latestTradingDate ? new Date(latestTradingDate + 'T00:00:00Z').toLocaleDateString('en-GB', {day:'2-digit',month:'short',timeZone:'UTC'}) : 'Unavailable'}</span>
+                <span className="st-tnum text-[10px] opacity-80">{latestTradingDate ? new Date(latestTradingDate + 'T00:00:00Z').toLocaleDateString('en-GB', {day:'2-digit',month:'short',timeZone:'UTC'}) : 'Unavailable'}</span>
               </button>
 
               <button
@@ -387,7 +387,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#151517] px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.05]"
               >
                 <span className="whitespace-nowrap">1 session</span>
-                <span className="shrink-0 font-mono text-[10px] text-neutral-500">{shortSessionDate(availableDates[1]?.date)}</span>
+                <span className="st-tnum shrink-0 text-[10px] text-[var(--text-3)]">{shortSessionDate(availableDates[1]?.date)}</span>
               </button>
 
               <button
@@ -397,7 +397,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#151517] px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.05]"
               >
                 <span className="whitespace-nowrap">5 sessions</span>
-                <span className="shrink-0 font-mono text-[10px] text-neutral-500">{shortSessionDate(availableDates[5]?.date)}</span>
+                <span className="st-tnum shrink-0 text-[10px] text-[var(--text-3)]">{shortSessionDate(availableDates[5]?.date)}</span>
               </button>
 
               <button
@@ -407,7 +407,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#151517] px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.05]"
               >
                 <span className="whitespace-nowrap">10 sessions</span>
-                <span className="shrink-0 font-mono text-[10px] text-neutral-500">{shortSessionDate(availableDates[10]?.date)}</span>
+                <span className="st-tnum shrink-0 text-[10px] text-[var(--text-3)]">{shortSessionDate(availableDates[10]?.date)}</span>
               </button>
 
               <button
@@ -417,7 +417,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#151517] px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.05]"
               >
                 <span className="whitespace-nowrap">21 sessions</span>
-                <span className="shrink-0 font-mono text-[10px] text-neutral-500">{shortSessionDate(availableDates[21]?.date)}</span>
+                <span className="st-tnum shrink-0 text-[10px] text-[var(--text-3)]">{shortSessionDate(availableDates[21]?.date)}</span>
               </button>
 
               <button
@@ -427,7 +427,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#151517] px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.05]"
               >
                 <span className="whitespace-nowrap">63 sessions</span>
-                <span className="shrink-0 font-mono text-[10px] text-neutral-500">{shortSessionDate(availableDates[63]?.date)}</span>
+                <span className="st-tnum shrink-0 text-[10px] text-[var(--text-3)]">{shortSessionDate(availableDates[63]?.date)}</span>
               </button>
 
               <button
@@ -437,7 +437,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#151517] px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.05]"
               >
                 <span className="whitespace-nowrap">125 sessions</span>
-                <span className="shrink-0 font-mono text-[10px] text-neutral-500">{shortSessionDate(availableDates[125]?.date)}</span>
+                <span className="st-tnum shrink-0 text-[10px] text-[var(--text-3)]">{shortSessionDate(availableDates[125]?.date)}</span>
               </button>
 
               <button
@@ -447,7 +447,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
                 className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#151517] px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.05]"
               >
                 <span className="whitespace-nowrap">Oldest</span>
-                <span className="shrink-0 font-mono text-[10px] text-neutral-500">{shortSessionDate(oldestTradingDate)}</span>
+                <span className="st-tnum shrink-0 text-[10px] text-[var(--text-3)]">{shortSessionDate(oldestTradingDate)}</span>
               </button>
             </div>
           </div>

@@ -10,7 +10,6 @@ import { IndianCostWaterfall } from './IndianCostWaterfall';
 import { TradeLogTable } from './TradeLogTable';
 import { StrategyComparisonView, type ComparisonListUpdate } from './StrategyComparisonView';
 import { survivorshipBasis } from './survivorship';
-import { Activity } from 'lucide-react';
 import { Disclosure } from '../common/Disclosure';
 
 interface ResultsDashboardProps {
@@ -55,10 +54,7 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
   if (!result) {
     return (
       <div className="mx-auto max-w-xl p-6 sm:p-10">
-        <div className="space-y-4 rounded-2xl border border-white/10 bg-[#171719] p-6 sm:p-8">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#a8c7fa]/25 bg-[#a8c7fa]/10 text-[#a8c7fa]">
-            <Activity className="h-5 w-5" aria-hidden="true" />
-          </div>
+        <div className="space-y-4 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-6 sm:p-8">
           <div className="space-y-1.5">
             <h3 className="text-lg font-semibold tracking-tight text-[#ececed]">No backtest yet</h3>
             <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.6)]">

@@ -32,7 +32,7 @@ describe('strategy tester summary', () => {
     render(<Harness onRunBacktest={onRunBacktest} />);
 
     expect(screen.getByRole('heading', { level: 1, name: STRATEGY_TEMPLATES[0].name })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /entry · all must match/i })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /Entry \(all must match\)/ })).toBeTruthy();
     expect(screen.getByText('Close above Supertrend (10, 3)')).toBeTruthy();
     expect(screen.getByText('Close above 200-day EMA')).toBeTruthy();
     expect(screen.getByText('Volume above its 20-day average')).toBeTruthy();
@@ -54,7 +54,8 @@ describe('strategy tester summary', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByLabelText('New indicator type')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add indicator' })).toBeTruthy();
+    expect(screen.getByText('Supertrend (10, 3)')).toBeTruthy();
     expect(screen.getByLabelText('Strategy name')).toBeTruthy();
     expect(screen.getByLabelText('Backtest window')).toBeTruthy();
   });

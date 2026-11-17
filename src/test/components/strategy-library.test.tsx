@@ -30,7 +30,7 @@ afterEach(() => {
   if (descriptor) Object.defineProperty(navigator, 'locks', descriptor); else Reflect.deleteProperty(navigator, 'locks');
   if (storageDescriptor) Object.defineProperty(window, 'localStorage', storageDescriptor); else Reflect.deleteProperty(window, 'localStorage');
 });
-const saveButton = () => screen.getByRole('button', { name: 'Save current strategy as new' });
+const saveButton = () => screen.getByRole('button', { name: 'Save as new strategy' });
 async function seed() {
   return commitStrategyLibrary(window.localStorage, null, { type: 'saveAs', strategy: strategy(), name: 'Saved fixture' }, { locks, now: () => '2026-10-13T10:00:00.000Z', newId: () => 'fixture-id' });
 }
@@ -40,11 +40,11 @@ describe('My Strategies alongside immutable templates', () => {
     const before = JSON.stringify(STRATEGY_TEMPLATES), onLoad = vi.fn(s => { s.name = 'builder edits'; });
     render(<StrategyLibraryView onLoadStrategy={onLoad} />);
     expect(saveButton()).toBeDisabled();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Open template in Strategy tester' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open in tester' })[0]);
     expect(onLoad).toHaveBeenCalledTimes(1); expect(JSON.stringify(STRATEGY_TEMPLATES)).toBe(before);
     expect(window.localStorage.getItem(KEY)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Momentum' }));
-    expect(screen.getAllByRole('button', { name: 'Open template in Strategy tester' })).toHaveLength(STRATEGY_TEMPLATES.filter(t => t.category === 'Momentum').length);
+    expect(screen.getAllByRole('button', { name: 'Open in tester' })).toHaveLength(STRATEGY_TEMPLATES.filter(t => t.category === 'Momentum').length);
   });
   it('explicitly saves, renames, selects old revisions, duplicates, deletes and restores', async () => {
     const onLoad = vi.fn(), current = strategy(), original = JSON.stringify(current);
@@ -54,23 +54,27 @@ describe('My Strategies alongside immutable templates', () => {
     fireEvent.click(saveButton()); await screen.findByRole('article', { name: 'Mine' });
     expect(screen.getByRole('status')).toHaveTextContent('saved as a new copy');
     expect(JSON.stringify(current)).toBe(original);
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Mine' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'New strategy name' }), { target: { value: 'Renamed' } });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm rename' }));
     const renamed = await screen.findByRole('article', { name: 'Renamed' });
     fireEvent.change(within(renamed).getByRole('combobox'), { target: { value: '1' } });
-    fireEvent.click(within(renamed).getByRole('button', { name: 'Load saved revision' }));
+    fireEvent.click(within(renamed).getByRole('button', { name: 'Open in tester' }));
     expect(onLoad.mock.calls[0][0].name).toBe('Mine');
     onLoad.mock.calls[0][0].name = 'mutated builder';
     expect(readStrategyLibrary(window.localStorage).entries[0].revisions[0].strategy.name).toBe('Mine');
-    fireEvent.click(within(renamed).getByRole('button', { name: 'Duplicate' }));
+    fireEvent.click(within(renamed).getByRole('button', { name: 'More actions for Renamed' }));
+    fireEvent.click(within(renamed).getByRole('menuitem', { name: 'Duplicate' }));
     await screen.findByRole('article', { name: 'Mine (copy)' });
     const records = readStrategyLibrary(window.localStorage).entries;
     expect(records[0].id).not.toBe(records[1].id);
-    fireEvent.click(within(screen.getByRole('article', { name: 'Renamed' })).getByRole('button', { name: 'Move to trash' }));
+    fireEvent.click(within(screen.getByRole('article', { name: 'Renamed' })).getByRole('button', { name: 'More actions for Renamed' }));
+    fireEvent.click(within(screen.getByRole('article', { name: 'Renamed' })).getByRole('menuitem', { name: 'Move to trash' }));
     await waitFor(() => expect(screen.queryByRole('article', { name: 'Renamed' })).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: 'Trash (1)' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Renamed' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restore' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Trash (0)' })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Saved strategies' }));
     expect(screen.getByRole('article', { name: 'Renamed' })).toBeInTheDocument();
@@ -80,7 +84,8 @@ describe('My Strategies alongside immutable templates', () => {
     await seed(); const current = strategy(); current.risk.stopLoss.value = 5;
     render(<StrategyLibraryView currentStrategy={current} onLoadStrategy={vi.fn()} />);
     expect(readStrategyLibrary(window.localStorage).entries[0].revisions).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Save current as new revision' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Saved fixture' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save current as new revision' }));
     await waitFor(() => expect(readStrategyLibrary(window.localStorage).entries[0].revisions).toHaveLength(2));
     const entry = readStrategyLibrary(window.localStorage).entries[0];
     expect(entry.revisions[0].strategy.risk.stopLoss.value).toBe(20);
@@ -93,10 +98,11 @@ describe('My Strategies alongside immutable templates', () => {
     vi.stubGlobal('URL', DownloadURL);
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     render(<StrategyLibraryView onLoadStrategy={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Saved fixture' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export JSON' }));
     expect(create).toHaveBeenCalledTimes(1); expect(create.mock.calls[0][0]).toBeInstanceOf(Blob);
     expect(click).toHaveBeenCalledTimes(1); expect(revoke).toHaveBeenCalledWith('blob:test');
-    expect(screen.getByRole('status')).toHaveTextContent('Validated JSON download requested');
+    expect(screen.getByRole('status')).toHaveTextContent('Download started');
     expect(document.querySelector('a[download]')).toBeNull();
   });
   it('reports quota failure as not saved, with no success state or phantom strategy', async () => {
@@ -133,8 +139,10 @@ describe('My Strategies alongside immutable templates', () => {
     await seed();
     fireEvent(window, new StorageEvent('storage', { key: KEY }));
     expect(screen.getByRole('alert')).toHaveTextContent('changed in another tab'); expect(saveButton()).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Reload library' }));
-    expect(saveButton()).not.toBeDisabled(); expect(screen.getByRole('article', { name: 'Saved fixture' })).toBeInTheDocument();
+    // Returning to the tab reloads the library automatically; no developer reload button.
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(saveButton()).not.toBeDisabled());
+    expect(screen.getByRole('article', { name: 'Saved fixture' })).toBeInTheDocument();
     expect(onLoad).not.toHaveBeenCalled();
   });
 });

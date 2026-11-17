@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StrategyAST, StockTrendData, MarketMoversData } from '../../shared/strategy/types';
+import { StrategyAST, StockTrendData, MarketMoversData, type RuleNode } from '../../shared/strategy/types';
 import { plainRule } from '../../client/plainRules';
 import { PrefillNote } from '../common/PrefillNote';
 import type { ScannerPrefill } from '../../shared/contracts/featureRegistry';
@@ -74,6 +74,39 @@ function sourceSummary(coverage?: Record<string, number>): string {
   return (entries.length === 1 ? 'Source: ' : 'Sources: ') + labels.join(', ');
 }
 
+/** Compact volume or a plain value for evidence lines. */
+function compactEvidence(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'unavailable';
+  const absolute = Math.abs(value);
+  if (absolute >= 1e7) return (value / 1e7).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' Cr';
+  if (absolute >= 1e5) return (value / 1e5).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' L';
+  return scannerNumber(value);
+}
+
+/** Price rules show ₹, volume rules compact, oscillators plain. */
+function evidenceFormatter(rule: RuleNode | undefined, indicators: StrategyAST['indicators']) {
+  const right = rule?.rightIndicator ? indicators.find(indicator => indicator.id === rule.rightIndicator) : undefined;
+  const volume = rule?.leftIndicator === 'volume' || rule?.rightIndicator === 'volume' || right?.type === 'VOLUME_SMA';
+  const priceSeries = new Set(['close', 'open', 'high', 'low']);
+  const price = !volume && !!rule && (priceSeries.has(rule.leftIndicator) || (!!right && ['SUPERTREND', 'EMA', 'SMA', 'ATR', 'BBANDS'].includes(right.type)));
+  return (value: number | null | undefined): string => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'unavailable';
+    if (volume) return compactEvidence(value);
+    if (price) return '₹' + value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return scannerNumber(value);
+  };
+}
+
+/** "Angel One daily bars", "Yahoo public daily bars" — never a raw source code. */
+function scanSourceLine(result: { sourceCoverage?: Record<string, number>; dataSource?: string }): string {
+  const entries = Object.entries(result.sourceCoverage ?? {}).filter(([, count]) => count > 0);
+  const source = entries[0]?.[0] ?? result.dataSource ?? '';
+  if (/angel/i.test(source)) return 'Angel One daily bars';
+  if (/yahoo/i.test(source)) return 'Yahoo public daily bars';
+  if (/demo/i.test(source)) return 'Demo daily bars';
+  return 'Daily bars';
+}
+
 /** "2026-11-16" -> "16 Nov 2026". */
 function fullDay(iso: string | null | undefined): string {
   if (!iso) return 'session unavailable';
@@ -118,11 +151,11 @@ const LiveQuoteLine: React.FC<{ quote: LiveQuote; eodClose?: number; className?:
         <span aria-hidden="true" className={`h-1 w-1 rounded-full ${closeFeed ? 'bg-sky-400' : 'bg-emerald-400'}`} />
         {closeFeed ? 'Close (live feed)' : 'Live'}
       </span>
-      <span className="font-mono font-bold text-white">{formatLivePrice(quote.ltp)}</span>
-      <span className={`font-mono font-bold ${quote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+      <span className="st-tnum font-semibold text-white">{formatLivePrice(quote.ltp)}</span>
+      <span className={`st-tnum font-semibold ${quote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
         {formatLiveChange(quote.changePercent)}
       </span>
-      <span className="font-mono text-neutral-400">{liveQuoteTime(quote)}</span>
+      <span className="st-tnum text-[var(--text-3)]">{liveQuoteTime(quote)}</span>
     </div>
   );
 };
@@ -239,6 +272,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [moreTabsOpen, setMoreTabsOpen] = useState(false);
   const [scanLimit, setScanLimit] = useState(35);
   const [scanSlow, setScanSlow] = useState(false);
+  const [marketSlow, setMarketSlow] = useState(false);
   const [prefill, setPrefill] = useState<ScannerPrefill | null>(null);
   const appliedPrefill = useRef<ScannerPrefill | null>(null);
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
@@ -360,6 +394,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     const timer = setTimeout(() => setScanSlow(true), 30_000);
     return () => clearTimeout(timer);
   }, [isScanning]);
+
+  // The market snapshot can also take longer than ten seconds on a cold cache.
+  useEffect(() => {
+    if (!isLoadingTrends) { setMarketSlow(false); return; }
+    const timer = setTimeout(() => setMarketSlow(true), 10_000);
+    return () => clearTimeout(timer);
+  }, [isLoadingTrends]);
 
   // A chat hand-off fills the universe, cutoff and scan size, then opens the matches.
   useEffect(() => {
@@ -517,7 +558,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04] disabled:opacity-50"
           >
             <RefreshCw className={'h-3.5 w-3.5 ' + (activePending ? 'animate-spin' : '')} aria-hidden="true" />
-            {activePending ? 'Loading snapshot...' : 'Reload snapshot'}
+            {activePending ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
 
@@ -613,9 +654,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         <div className="relative hidden md:block">
           <div className="flex flex-wrap items-center gap-1 rounded-lg border border-white/8 bg-[#101012] p-1 text-xs">
             {([
-              ['movers', 'Top Gainers & Losers', false],
+              ['movers', 'Top gainers & losers', false],
               ['strategy_matches', 'Strategy matches', false],
-              ['trends', 'Technical Regimes', false],
+              ['trends', 'Technical regimes', false],
               ['volume_52w', 'Volume shockers', false],
             ] as const).map(([tab, label, demo]) => (
               <button
@@ -666,9 +707,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </div>
       </section>
 
-      {isScanning && scanSlow && (
+      {((isScanning && scanSlow) || (isLoadingTrends && marketSlow)) && (
         <p role="status" className="st-meta rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-3)]">
-          Still scanning · Angel One allows 2 requests a second
+          {isScanning && scanSlow ? 'Still scanning · Angel One allows 2 requests a second' : 'Still loading market data · this can take up to a minute'}
         </p>
       )}
 
@@ -689,16 +730,16 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {[
-              { key: 'gainer', title: 'Top Gainers', subtitle: 'Top percentage leaders', rows: movers?.topGainers, positive: true, empty: 'Gainers unavailable: no evaluated price coverage.', noRows: 'No gainers in the evaluated subset for this session; full-universe coverage is not established.' },
-              { key: 'loser', title: 'Top Losers', subtitle: 'Deepest percentage declines', rows: movers?.topLosers, positive: false, empty: 'Losers unavailable: no evaluated price coverage.', noRows: 'No losers in the evaluated subset for this session; full-universe coverage is not established.' },
+              { key: 'gainer', title: 'Top gainers', subtitle: 'Top percentage leaders', rows: movers?.topGainers, positive: true, empty: 'Gainers unavailable: no evaluated price coverage.', noRows: 'No gainers in the evaluated subset for this session; full-universe coverage is not established.' },
+              { key: 'loser', title: 'Top losers', subtitle: 'Deepest percentage declines', rows: movers?.topLosers, positive: false, empty: 'Losers unavailable: no evaluated price coverage.', noRows: 'No losers in the evaluated subset for this session; full-universe coverage is not established.' },
             ].map(column => (
               <div key={column.key} className="overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
                 <div className="flex items-baseline justify-between gap-2 border-b border-white/8 px-4 py-3">
                   <div className="min-w-0">
-                    <h3 className="text-sm font-medium text-neutral-100">{column.title} — {currentUniverseConfig.shortLabel}</h3>
+                    <h3 className="text-sm font-medium text-[var(--text-1)]">{column.title} — {currentUniverseConfig.shortLabel}</h3>
                     <p className="mt-0.5 text-[11px] text-neutral-500">{column.subtitle}</p>
                   </div>
-                  <span className="shrink-0 font-mono text-[11px] text-neutral-500">{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
+                  <span className="st-meta st-tnum shrink-0 text-[var(--text-3)]">{movers?.formattedDate || movers?.asOfDate || coveredTradingDates[0]?.label || 'Latest'}</span>
                 </div>
                 {!column.rows || column.rows.length === 0 ? (
                   <div className="px-4 py-8 text-center text-xs text-neutral-400">
@@ -710,7 +751,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       const quote = liveQuoteFor(stock.id);
                       return (
                         <li key={column.key + '_' + stock.id + '_' + stock.ticker + '_' + i} className="flex items-start gap-3 px-4 py-3">
-                          <span className="w-4 shrink-0 pt-0.5 font-mono text-[11px] text-neutral-600">{i + 1}</span>
+                          <span className="st-tnum w-4 shrink-0 pt-0.5 text-[11px] text-[var(--text-3)]">{i + 1}</span>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-baseline gap-x-2">
                               <span className="text-sm font-medium text-neutral-100">{stock.ticker}</span>
@@ -720,8 +761,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                             {quote && <QuoteMeta quote={quote} eodClose={stock.ltp} className="mt-1" />}
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-1">
-                            <div className="font-mono text-xs text-neutral-200">{scannerPrice(stock.ltp)}</div>
-                            <div className={'font-mono text-[11px] ' + (column.positive ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(stock.changePercent)}</div>
+                            <div className="st-tnum text-xs text-[var(--text-1)]">{scannerPrice(stock.ltp)}</div>
+                            <div className={'st-tnum text-[11px] ' + (column.positive ? 'text-[var(--up)]' : 'text-[var(--down)]')}>{scannerPercent(stock.changePercent)}</div>
                             <button
                               type="button"
                               onClick={() => launchBacktest(stock.id, stock.date)}
@@ -751,7 +792,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <h3 className="text-sm font-medium text-neutral-100">Volume shockers</h3>
                 <p className="mt-0.5 text-[11px] text-neutral-500">Trading above 1.2× their 20-day average volume</p>
               </div>
-              <span className="font-mono text-[11px] text-neutral-500">{movers?.volumeShockers.length ?? 0} stocks</span>
+              <span className="st-meta st-tnum text-[var(--text-3)]">{movers?.volumeShockers.length ?? 0} stocks</span>
             </div>
             {!movers?.volumeShockers.length ? (
               <p className="px-4 py-8 text-center text-xs text-neutral-400">
@@ -769,8 +810,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       <p className="text-[11px] text-neutral-500">{scannerMultiple(s.volumeRatio)} of its 20-day average · {(s.volume / 100000).toFixed(1)} L traded</p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
-                      <div className="font-mono text-xs text-neutral-200">{scannerPrice(s.ltp)}</div>
-                      <div className={'font-mono text-[11px] ' + (s.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(s.changePercent)}</div>
+                      <div className="st-tnum text-xs text-[var(--text-1)]">{scannerPrice(s.ltp)}</div>
+                      <div className={'st-tnum text-[11px] ' + (s.changePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]')}>{scannerPercent(s.changePercent)}</div>
                       <button
                         type="button"
                         onClick={() => launchBacktest(s.id, s.date)}
@@ -809,12 +850,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                               <span className="text-sm font-medium text-neutral-100">{s.ticker}</span>
                               <span className="truncate text-[11px] text-neutral-500">{s.sector}</span>
                             </div>
-                            <p className="font-mono text-[11px] text-neutral-500">
+                            <p className="st-meta st-tnum text-[var(--text-3)]">
                               {panel.low ? '52W low' : '52W high'} {scannerPrice(reference)} · {scannerNumber(distance)}% {panel.low ? 'off the low' : 'below the high'}
                             </p>
                           </div>
                           <div className="shrink-0 text-right">
-                            <div className="font-mono text-xs text-neutral-200">{scannerPrice(s.ltp)}</div>
+                            <div className="st-tnum text-xs text-[var(--text-1)]">{scannerPrice(s.ltp)}</div>
                           </div>
                           <button
                             type="button"
@@ -867,7 +908,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <div key={group.key} className="rounded-lg border border-white/8 bg-[#101012]/60 p-3">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h4 className="text-xs font-medium text-neutral-200">{group.title}</h4>
-                    <span className="font-mono text-[10px] text-neutral-500">{group.reading}</span>
+                    <span className="st-tnum text-[10px] text-[var(--text-3)]">{group.reading}</span>
                   </div>
                   {!group.rows || group.rows.length === 0 ? (
                     <p className="py-3 text-center text-[11px] text-neutral-500">No names in this group for the evaluated subset.</p>
@@ -878,7 +919,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                           <button
                             type="button"
                             onClick={() => launchBacktest(s.id, s.date)}
-                            className="font-mono text-neutral-200 underline-offset-2 hover:text-white hover:underline"
+                            className="st-tnum text-[var(--text-1)] underline-offset-2 hover:underline"
                             title={'Backtest the active strategy on ' + s.ticker}
                           >
                             {s.ticker}
@@ -940,7 +981,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <div className="rounded-xl border border-white/8 bg-[#171719] p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="text-sm font-medium text-neutral-100">Market breadth</h3>
-              <span className="font-mono text-[11px] text-neutral-500">
+              <span className="st-meta st-tnum text-[var(--text-3)]">
                 {movers ? `${scannerNumber(movers.marketBreadth.advanceDeclineRatio, 2)} advance/decline · ${scannerNumber(movers.marketBreadth.bullishPercent, 1)}% bullish` : 'Not reported'}
               </span>
             </div>
@@ -964,7 +1005,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <div className="overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
             <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/8 px-4 py-3">
               <h3 className="text-sm font-medium text-neutral-100">Sectors</h3>
-              <span className="font-mono text-[11px] text-neutral-500">{movers?.sectorHeatmap.length ?? 0} groups</span>
+              <span className="st-meta st-tnum text-[var(--text-3)]">{movers?.sectorHeatmap.length ?? 0} groups</span>
             </div>
             {!movers?.sectorHeatmap.length ? (
               <p className="px-4 py-8 text-center text-xs text-neutral-400">Sector breadth unavailable: no evaluated price coverage.</p>
@@ -976,7 +1017,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       <p className="text-sm text-neutral-100">{sec.sector}</p>
                       <p className="text-[11px] text-neutral-500">{sec.count} constituents · {sec.advances} advancing · {sec.declines} declining</p>
                     </div>
-                    <span className={'font-mono text-xs ' + (sec.avgChangePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
+                    <span className={'st-tnum text-xs ' + (sec.avgChangePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]')}>
                       {scannerPercent(sec.avgChangePercent)}
                     </span>
                   </li>
@@ -1076,8 +1117,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                           {quote && <QuoteMeta quote={quote} eodClose={t.ltp} className="mt-1" />}
                         </div>
                         <div className="shrink-0 text-right">
-                          <div className="font-mono text-xs text-neutral-200">{scannerPrice(t.ltp)}</div>
-                          <div className={'font-mono text-[11px] ' + (t.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(t.changePercent)}</div>
+                          <div className="st-tnum text-xs text-[var(--text-1)]">{scannerPrice(t.ltp)}</div>
+                          <div className={'st-tnum text-[11px] ' + (t.changePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]')}>{scannerPercent(t.changePercent)}</div>
                         </div>
                       </div>
 
@@ -1087,10 +1128,10 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                           <span className="text-neutral-300">{t.trendLabel}</span>
                         </span>
                         <span className="text-neutral-500">{t.signalLabel}</span>
-                        <span className="font-mono text-neutral-500">RSI {scannerNumber(t.rsi, 1)}</span>
-                        <span className="font-mono text-neutral-500">20 EMA {scannerPrice(t.ema20)}</span>
-                        <span className="font-mono text-neutral-500">50 SMA {scannerPrice(t.sma50)}</span>
-                        <span className="font-mono text-neutral-500">H/L {scannerNumber(t.high)} / {scannerNumber(t.low)}</span>
+                        <span className="st-tnum text-[var(--text-3)]">RSI {scannerNumber(t.rsi, 1)}</span>
+                        <span className="st-tnum text-[var(--text-3)]">20 EMA {scannerPrice(t.ema20)}</span>
+                        <span className="st-tnum text-[var(--text-3)]">50 SMA {scannerPrice(t.sma50)}</span>
+                        <span className="st-tnum text-[var(--text-3)]">H/L {scannerNumber(t.high)} / {scannerNumber(t.low)}</span>
                       </div>
 
                       <button
@@ -1139,97 +1180,97 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       {/* TAB 6: STRATEGY SCREENER MATCHES */}
       {activeTab === 'strategy_matches' && (
         <section aria-label="Strategy matches" className="space-y-3">
-          <div className="rounded-xl border border-white/8 bg-[#171719] p-4">
+          <div className="space-y-2 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="text-sm font-medium text-neutral-100">Scanning {currentUniverseConfig.shortLabel} with “{strategy.name}”</h3>
-              <span className="font-mono text-[11px] text-neutral-500">Session: {initialLoading ? 'loading…' : dataCutoff || 'Cutoff unavailable'}</span>
+              <h3 className="st-title font-semibold text-[var(--text-1)]">Scanning {currentUniverseConfig.shortLabel} with “{strategy.name}”</h3>
+              <span className="st-meta text-[var(--text-3)]">{initialLoading ? 'Loading session…' : shortDay(scanResult?.asOf || dataCutoff) + ' close'}</span>
             </div>
-            <p className="mt-1 text-[11px] leading-5 text-neutral-500">
+            <p className="st-meta leading-5 text-[var(--text-3)]">
               A symbol matches when every entry condition below is true on the latest completed bar. Unavailable values never satisfy a condition.
             </p>
             {(strategy.rules?.entry ?? []).length > 0 ? (
-              <ul className="mt-2 space-y-1">
+              <ul className="space-y-1">
                 {(strategy.rules?.entry ?? []).map((rule, index) => (
-                  <li key={index} className="font-mono text-[11px] leading-5 text-neutral-300">{plainRule(rule, strategy.indicators)}</li>
+                  <li key={index} className="st-table-text leading-5 text-[var(--text-2)]">{plainRule(rule, strategy.indicators)}</li>
                 ))}
               </ul>
             ) : (
-              <p className="mt-2 text-[11px] text-neutral-500">No entry conditions are defined in this strategy.</p>
+              <p className="st-meta text-[var(--text-3)]">No entry conditions are defined in this strategy.</p>
             )}
             {(strategy.rules?.exit ?? []).length > 0 && (
-              <p className="mt-2 text-[11px] leading-5 text-neutral-500">
-                Exit: <span className="font-mono text-neutral-400">{(strategy.rules?.exit ?? []).map(rule => plainRule(rule, strategy.indicators)).join(' · ')}</span>
+              <p className="st-meta leading-5 text-[var(--text-3)]">
+                Exit: <span className="text-[var(--text-2)]">{(strategy.rules?.exit ?? []).map(rule => plainRule(rule, strategy.indicators)).join(' · ')}</span>
               </p>
             )}
           </div>
 
           {scanResult && !scanError && (
-            <p className="px-1 text-[11px] leading-5 text-neutral-500">
-              Evaluated {scanResult.succeeded} symbols · found{' '}
-              <span className="text-neutral-200">{scanResult.succeeded > 0 ? scanResult.matched : 'unavailable'}</span> matches · unavailable {scanResult.unavailable} · failed {scanResult.failed}
-              {' · '}source {SOURCE_LABELS[scanResult.dataSource] ?? 'reported as ' + scanResult.dataSource} (not live)
+            <p className="st-meta px-1 leading-5 text-[var(--text-3)]">
+              Evaluated {scanResult.succeeded} symbols · found <span className="text-[var(--text-1)]">{scanResult.succeeded > 0 ? scanResult.matched : 'unavailable'}</span> matches · {scanResult.unavailable} unavailable · {scanResult.failed} failed
+              {' · '}{scanSourceLine(scanResult)} · {shortDay(scanResult.asOf || dataCutoff)} close
             </p>
           )}
 
           {isScanning ? (
-            <div role="status" className="rounded-xl border border-white/8 bg-[#171719] px-4 py-10 text-center text-xs text-neutral-400">
+            <div role="status" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-10 text-center st-meta text-[var(--text-3)]">
               <p>Evaluating the entry conditions against {currentUniverseConfig.shortLabel}. Coverage may be partial.</p>
             </div>
           ) : !scanError && scanResult && scanResult.matches.length > 0 ? (
-            <ul className="divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
-              {scanResult.matches.map((m, idx) => (
-                <li key={'scan_' + m.symbolId + '_' + m.ticker + '_' + idx} className="space-y-2 px-4 py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-baseline gap-x-2">
-                        <span className="text-sm font-medium text-neutral-100">{m.ticker}</span>
-                        <span className="text-[11px] text-neutral-500">{m.sector}</span>
+            <ul className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
+              {scanResult.matches.map((m, idx) => {
+                const evidence = m.matchedRules.slice(0, 3).map((r, ruleIndex) => {
+                  const entryRule = r.ruleIndex !== undefined ? strategy.rules?.entry?.[r.ruleIndex] : undefined;
+                  const format = evidenceFormatter(entryRule, strategy.indicators ?? []);
+                  return (
+                    <li key={ruleIndex} className="flex flex-wrap gap-x-2 text-xs leading-5 text-[var(--text-2)]">
+                      <span aria-hidden="true" className="text-[var(--up)]">✓</span>
+                      <span>{entryRule ? plainRule(entryRule, strategy.indicators ?? []) : r.rule}</span>
+                      <span className="st-tnum text-[var(--text-3)]">· {format(r.actualLeft)} vs {format(r.actualRight)}</span>
+                    </li>
+                  );
+                });
+                return (
+                  <li key={'scan_' + m.symbolId + '_' + m.ticker + '_' + idx} className="space-y-2 py-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-baseline gap-x-2">
+                          <span className="text-sm font-medium text-[var(--text-1)]">{m.ticker}</span>
+                          <span className="st-meta text-[var(--text-3)]">{m.sector}</span>
+                        </div>
+                        <p className="st-meta truncate text-[var(--text-3)]">{m.name}</p>
                       </div>
-                      <p className="truncate text-[11px] text-neutral-500">{m.name}</p>
+                      <div className="shrink-0 text-right">
+                        <div className="st-tnum text-xs text-[var(--text-1)]">{scannerPrice(m.lastClose)}</div>
+                        <div className={'st-tnum text-[11px] ' + (m.changePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]')}>{scannerPercent(m.changePercent)}</div>
+                      </div>
                     </div>
-                    <div className="shrink-0 text-right">
-                      <div className="font-mono text-xs text-neutral-200">{scannerPrice(m.lastClose)}</div>
-                      <div className={'font-mono text-[11px] ' + (m.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>{scannerPercent(m.changePercent)}</div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-white/8 bg-[#101012] px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-neutral-500">Entry conditions verified</p>
-                    <div className="mt-1 space-y-1">
-                      {m.matchedRules.map((r, ruleIndex) => {
-                        const entryRule = r.ruleIndex !== undefined ? strategy.rules?.entry?.[r.ruleIndex] : undefined;
-                        return (
-                          <div key={ruleIndex} className="flex flex-wrap justify-between gap-x-3 font-mono text-[11px]">
-                            <span className="text-neutral-400">{entryRule ? plainRule(entryRule, strategy.indicators ?? []) : r.rule}</span>
-                            <span className="text-neutral-200">Actual: {scannerNumber(r.actualLeft)} vs {scannerNumber(r.actualRight)}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => launchBacktest(m.symbolId, m.lastDate)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
-                  >
-                    <span>Load & Run Backtest on {m.ticker}</span>
-                    <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                  </button>
-                </li>
-              ))}
+                    <ul className="space-y-0.5">
+                      {evidence}
+                      {m.matchedRules.length > 3 && <li className="st-meta text-[var(--text-3)]">and {m.matchedRules.length - 3} more conditions</li>}
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={() => launchBacktest(m.symbolId, m.lastDate)}
+                      className="inline-flex min-h-9 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
+                      title={'Run the active strategy on ' + m.ticker + ' now'}
+                    >
+                      Backtest {m.ticker}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
-            <div className="rounded-xl border border-dashed border-white/12 px-4 py-10 text-center text-xs text-neutral-400">
+            <div className="rounded-[var(--r-card)] border border-dashed border-[var(--line-strong)] px-4 py-10 text-center st-meta text-[var(--text-3)]">
               <p>{scanError ? 'Strategy scan failed. Results are unavailable; retry the scan.' : scanResult && scanResult.succeeded > 0 && scanResult.matched === 0 ? `No matches in the ${scanResult.succeeded} evaluated symbols. This does not establish no matches across the full universe.` : 'Strategy results unavailable: no evaluated coverage was reported.'}</p>
-              {!scanError && <button type="button" onClick={() => void runScan()} className="mt-2 underline hover:text-neutral-200">Retry strategy scan</button>}
+              {!scanError && <button type="button" onClick={() => void runScan()} className="mt-2 underline hover:text-[var(--text-1)]">Retry strategy scan</button>}
               <div className="mt-3">
                 <button
                   type="button"
                   onClick={() => setActiveTab('movers')}
-                  className="rounded-lg border border-white/12 px-3 py-1.5 text-[11px] text-neutral-300 hover:bg-white/[0.04]"
+                  className="rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-[11px] text-[var(--text-2)] hover:border-[var(--line-strong)]"
                 >
-                  Switch to Top Gainers / Losers View
+                  Back to top gainers & losers
                 </button>
               </div>
             </div>

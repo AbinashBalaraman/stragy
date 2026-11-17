@@ -13,10 +13,10 @@ import {
 
 const focus = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a8c7fa]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#101012]';
 const primary = 'rounded-lg bg-[#a8c7fa] px-3 py-2 text-xs font-semibold text-[#101012] hover:bg-[#bfd6fb] disabled:cursor-not-allowed disabled:opacity-40 ' + focus;
-const secondary = 'inline-flex min-h-6 items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-1.5 text-xs text-neutral-200 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40 ' + focus;
-const danger = 'inline-flex min-h-6 items-center gap-1.5 rounded-lg border border-rose-400/30 px-2.5 py-1.5 text-xs text-rose-300 hover:bg-rose-400/10 disabled:cursor-not-allowed disabled:opacity-40 ' + focus;
-const inputClass = 'w-full rounded-lg border border-white/10 bg-[#101012] px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600 focus:border-[#a8c7fa]/60 focus:outline-none focus:ring-1 focus:ring-[#a8c7fa]/40 disabled:opacity-50';
-const smallInput = 'min-w-0 flex-1 rounded-lg border border-white/10 bg-[#101012] px-2.5 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-[#a8c7fa]/60 focus:outline-none focus:ring-1 focus:ring-[#a8c7fa]/40 disabled:opacity-50';
+const secondary = 'inline-flex min-h-11 items-center gap-1.5 rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 ' + focus;
+const danger = 'inline-flex min-h-11 items-center gap-1.5 rounded-[var(--r-btn)] border border-[var(--danger)]/30 px-2.5 py-1.5 text-xs text-[var(--down)] transition-colors hover:bg-[var(--danger)]/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 ' + focus;
+const inputClass = 'w-full rounded-[var(--r-btn)] border border-[var(--line-strong)] bg-[#101012] px-3 py-2 text-sm text-[var(--text-1)] placeholder:text-[var(--text-3)] focus:border-[#a8c7fa]/60 focus:outline-none disabled:opacity-50';
+const smallInput = 'min-w-0 flex-1 rounded-[var(--r-btn)] border border-[var(--line-strong)] bg-[#101012] px-2.5 py-1.5 text-xs text-[var(--text-1)] placeholder:text-[var(--text-3)] focus:border-[#a8c7fa]/60 focus:outline-none disabled:opacity-50';
 
 interface HeaderRow { name: string; value: string; existing: boolean }
 interface ProviderForm {
@@ -104,11 +104,11 @@ const lastStatusLabel = (status: AIChainLastStatus | null): string => {
 };
 
 const Section: React.FC<{ title: string; description?: string; actions?: React.ReactNode; children: React.ReactNode }> = ({ title, description, actions, children }) => (
-  <section className="rounded-2xl border border-white/8 bg-[#171719] p-4 sm:p-5 space-y-4">
+  <section className="space-y-4 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 className="text-sm font-semibold text-neutral-100">{title}</h2>
-        {description && <p className="mt-1 max-w-2xl text-xs leading-5 text-neutral-400">{description}</p>}
+        <h2 className="st-title font-semibold text-[var(--text-1)]">{title}</h2>
+        {description && <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--text-3)]">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </header>
@@ -463,14 +463,13 @@ export const ProviderSettings: React.FC = () => {
     <div className="mx-auto w-full max-w-5xl space-y-5 p-4 pb-20 sm:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs text-neutral-500">Settings</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-neutral-100">AI providers</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-1)]">AI providers</h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-400">
             Choose the models used for drafting and chart reading, and the order they are tried. Keys are write-only.
           </p>
         </div>
         {data && (
-          <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-neutral-400">
+          <span className="st-meta text-[var(--text-3)]">
             Cost policy: {data.costPolicy}
           </span>
         )}
@@ -478,14 +477,14 @@ export const ProviderSettings: React.FC = () => {
 
       {loading && <p role="status" className="text-xs text-neutral-400">Loading provider settings…</p>}
       {loadError && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-400/25 bg-rose-400/5 px-3 py-2 text-xs text-rose-200">
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-[var(--r-inner)] bg-[var(--danger)]/[0.06] px-3 py-2 text-xs text-[var(--down)]">
           <span>{loadError}</span>
           <button type="button" onClick={() => void load()} className={secondary}>Retry</button>
         </div>
       )}
-      {actionError && <p role="alert" className="rounded-xl border border-rose-400/25 bg-rose-400/5 px-3 py-2 text-xs text-rose-200">{actionError}</p>}
+      {actionError && <p role="alert" className="rounded-[var(--r-inner)] bg-[var(--danger)]/[0.06] px-3 py-2 text-xs text-[var(--down)]">{actionError}</p>}
       {notice && (
-        <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-[#a8c7fa]/20 bg-[#a8c7fa]/5 px-3 py-2 text-xs text-[#cfe0ff]">
+        <div role="status" className="flex items-start justify-between gap-3 rounded-[var(--r-inner)] bg-[var(--accent)]/[0.06] px-3 py-2 text-xs text-[#cfe0ff]">
           <span>{notice}</span>
           <button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice" className={'shrink-0 rounded p-0.5 text-[#cfe0ff] hover:bg-white/10 ' + focus}>
             <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -493,7 +492,7 @@ export const ProviderSettings: React.FC = () => {
         </div>
       )}
       {data && !data.writable && (
-        <div role="status" className="rounded-xl border border-amber-400/25 bg-amber-400/5 px-3 py-2 text-xs leading-5 text-amber-100">
+        <div role="status" className="rounded-[var(--r-inner)] bg-[var(--warn)]/[0.06] px-3 py-2 text-xs leading-5 text-[#f5d383]">
           <p className="font-medium">Read-only on this deployment</p>
           <p className="mt-0.5 text-amber-100/80">{data.writeBlockedReason ?? 'Provider settings cannot be changed here.'}</p>
         </div>
@@ -508,7 +507,7 @@ export const ProviderSettings: React.FC = () => {
         actions={writable && !form ? <button type="button" onClick={openAdd} className={secondary}><Plus className="h-3.5 w-3.5" aria-hidden="true" />Add provider</button> : undefined}
       >
         {form && (
-          <form onSubmit={saveProvider} aria-label="Provider form" className="rounded-xl border border-white/10 bg-[#101012]/60 p-3 sm:p-4 space-y-3">
+          <form onSubmit={saveProvider} aria-label="Provider form" className="space-y-3 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-neutral-100">{form.id ? 'Edit provider' : 'Add provider'}</h3>
               <button type="button" onClick={closeForm} className={secondary} aria-label="Close provider form"><X className="h-3.5 w-3.5" aria-hidden="true" />Close</button>
@@ -580,7 +579,7 @@ export const ProviderSettings: React.FC = () => {
           </form>
         )}
 
-        <ul className="divide-y divide-white/8 rounded-xl border border-white/8">
+        <ul className="divide-y divide-[var(--line)]">
           {providers.map(provider => {
             const busy = busyProvider === provider.id;
             return (
@@ -589,7 +588,7 @@ export const ProviderSettings: React.FC = () => {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-neutral-100">{provider.label}</span>
-                      {provider.builtin && <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-neutral-400">Built-in</span>}
+                      {provider.builtin && <span className="st-meta text-[var(--text-3)]">Built-in</span>}
                       <span
                         title={provider.keySource === 'env'
                           ? 'Key read from the server environment'
@@ -654,9 +653,9 @@ export const ProviderSettings: React.FC = () => {
           {modelsLoading && <p role="status" className="text-xs text-neutral-400">Loading models…</p>}
           {filteredModels.length > 0 && (
             <>
-              <div className="hidden md:block overflow-x-auto rounded-xl border border-white/8">
+              <div className="st-scroll-x hidden overflow-x-auto md:block">
                 <table className="w-full text-left text-xs">
-                  <thead className="border-b border-white/8 bg-[#101012] text-[10px] uppercase tracking-wide text-neutral-500">
+                  <thead className="st-label border-b border-[var(--line)] bg-[var(--surface-2)] text-[var(--text-3)]">
                     <tr><th className="px-3 py-2">Model</th><th className="px-3 py-2">Context</th><th className="px-3 py-2">Input</th><th className="px-3 py-2">Price</th><th className="px-3 py-2 text-right">Actions</th></tr>
                   </thead>
                   <tbody className="divide-y divide-white/8">
@@ -673,7 +672,7 @@ export const ProviderSettings: React.FC = () => {
                             <div className="flex flex-wrap items-center justify-end gap-1.5">
                               <button type="button" className={secondary} disabled={test && 'loading' in test} onClick={() => void runTest(selectedProvider, model)}>{test && 'loading' in test ? 'Testing…' : 'Test'}</button>
                               {inChain(selectedProvider.id, model.id)
-                                ? <span className="inline-flex min-h-6 items-center rounded-lg border border-[#a8c7fa]/30 bg-[#a8c7fa]/10 px-2.5 py-1.5 text-xs text-[#cfe0ff]">In chain</span>
+                                ? <span className="st-meta inline-flex min-h-6 items-center rounded-[var(--r-btn)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[var(--text-2)]">In chain</span>
                                 : <button type="button" className={secondary} disabled={!writable || chain.length >= 6} onClick={() => addToChain(selectedProvider, model)}>Add to chain</button>}
                             </div>
                             {test && !('loading' in test) && <p role={test.ok ? 'status' : 'alert'} className={'mt-1 text-right text-[10px] ' + (test.ok ? 'text-emerald-300' : 'text-rose-300')}>{test.ok ? 'OK · ' + test.latencyMs + ' ms · ' + (test.answeredBy ?? model.id) : 'Failed: ' + (test.error ?? 'unknown error')}</p>}
@@ -689,7 +688,7 @@ export const ProviderSettings: React.FC = () => {
                   const key = selectedProvider.id + ':' + model.id;
                   const test = tests[key];
                   return (
-                    <div key={model.id} className="rounded-xl border border-white/8 bg-[#101012]/50 p-3 space-y-2">
+                    <div key={model.id} className="space-y-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="break-all font-mono text-xs text-neutral-200">{model.id}</p>
@@ -704,7 +703,7 @@ export const ProviderSettings: React.FC = () => {
                       <div className="flex flex-wrap gap-1.5">
                         <button type="button" className={secondary} disabled={test && 'loading' in test} onClick={() => void runTest(selectedProvider, model)}>{test && 'loading' in test ? 'Testing…' : 'Test'}</button>
                         {inChain(selectedProvider.id, model.id)
-                          ? <span className="inline-flex min-h-6 items-center rounded-lg border border-[#a8c7fa]/30 bg-[#a8c7fa]/10 px-2.5 py-1.5 text-xs text-[#cfe0ff]">In chain</span>
+                          ? <span className="st-meta inline-flex min-h-6 items-center rounded-[var(--r-btn)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[var(--text-2)]">In chain</span>
                           : <button type="button" className={secondary} disabled={!writable || chain.length >= 6} onClick={() => addToChain(selectedProvider, model)}>Add to chain</button>}
                       </div>
                       {test && !('loading' in test) && <p role={test.ok ? 'status' : 'alert'} className={'text-[11px] ' + (test.ok ? 'text-emerald-300' : 'text-rose-300')}>{test.ok ? 'OK · ' + test.latencyMs + ' ms · ' + (test.answeredBy ?? model.id) : 'Failed: ' + (test.error ?? 'unknown error')}</p>}
@@ -723,13 +722,13 @@ export const ProviderSettings: React.FC = () => {
         actions={writable ? <><button type="button" onClick={() => void saveChain()} disabled={chainSaving || !chainDirty} className={primary}>{chainSaving ? 'Saving…' : 'Save chain'}</button><button type="button" onClick={resetChain} className={secondary}>Reset to env defaults</button></> : undefined}
       >
         {chainError && <p role="alert" className="rounded-lg border border-rose-400/25 bg-rose-400/5 px-3 py-2 text-xs text-rose-200">{chainError}</p>}
-        {chain.length === 0 && <p className="rounded-xl border border-dashed border-white/12 p-6 text-center text-xs text-neutral-400">The chain is empty. Use “Add to chain” from a provider’s model list.</p>}
+        {chain.length === 0 && <p className="rounded-[var(--r-inner)] border border-dashed border-[var(--line-strong)] p-6 text-center text-xs text-[var(--text-3)]">The chain is empty. Use “Add to chain” from a provider’s model list.</p>}
         <ol className="space-y-2">
           {chain.map((entry, index) => {
             const paid = entry.free !== true;
             const status = lastStatusLabel(entry.lastStatus);
             return (
-              <li key={entry.providerId + ':' + entry.model} className="rounded-xl border border-white/8 bg-[#101012]/50 p-3 space-y-2">
+              <li key={entry.providerId + ':' + entry.model} className="space-y-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">

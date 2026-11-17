@@ -9,6 +9,7 @@ import { snapshotStrategy } from '../../client/workspace';
 import type { RunRequestOptions } from '../../client/api';
 import { plainRule } from '../../client/plainRules';
 import { PrefillNote } from '../common/PrefillNote';
+import { Disclosure } from '../common/Disclosure';
 import type { TesterPrefill, UserPreferences } from '../../shared/contracts/featureRegistry';
 import { SymbolSearchSelector } from '../layout/SymbolSearchSelector';
 
@@ -60,6 +61,32 @@ function shortDate(iso: string): string {
     : iso;
 }
 
+function indicatorTitle(indicator: StrategyAST['indicators'][number]): string {
+  const params = indicator.params as Record<string, number>;
+  switch (indicator.type) {
+    case 'SUPERTREND': return `Supertrend (${params.period ?? 10}, ${params.multiplier ?? 3})`;
+    case 'EMA': return `${params.period ?? 20}-day EMA`;
+    case 'SMA': return `${params.period ?? 20}-day SMA`;
+    case 'VOLUME_SMA': return `${params.period ?? 20}-day volume average`;
+    case 'RSI': return `RSI (${params.period ?? 14})`;
+    case 'RSI_SMA': return `RSI signal average (${params.rsiPeriod ?? 14}, ${params.period ?? 14})`;
+    case 'RSI_TRENDLINE': return `RSI falling trendline (${params.rsiPeriod ?? 14}, ${params.minSpan ?? 30}-${params.maxSpan ?? 180} bars)`;
+    case 'ATR': return `ATR (${params.period ?? 14})`;
+    case 'BBANDS': return `Bollinger Bands (${params.period ?? 20}, ${params.stdDev ?? 2}σ)`;
+    case 'MACD': return `MACD (${params.fastPeriod ?? 12}, ${params.slowPeriod ?? 26}, ${params.signalPeriod ?? 9})`;
+    case 'PCT_ABOVE_LOW': return `Distance above the ${params.period ?? 250}-bar low`;
+    case 'PCT_CHANGE': return `${params.period ?? 126}-bar change`;
+    default: return indicator.type;
+  }
+}
+
+const PARAM_LABELS: Record<string, string> = {
+  period: 'Period', multiplier: 'Multiplier', stdDev: 'Std dev', fastPeriod: 'Fast period',
+  slowPeriod: 'Slow period', signalPeriod: 'Signal period', rsiPeriod: 'RSI period',
+  minSpan: 'Minimum span', maxSpan: 'Maximum span', anchorMin: 'Minimum anchor',
+};
+const paramLabel = (key: string) => PARAM_LABELS[key] ?? key.replace(/([A-Z])/g, ' $1').replace(/^./, letter => letter.toUpperCase());
+
 function riskSummary(risk: RiskControls): string {
   const stop = risk.stopLoss;
   const parts = [stop.type === 'percent' ? `Stop loss ${stop.value}%` : stop.type === 'points' ? `Stop loss ${stop.value} points` : `Stop loss ${stop.value}× ATR (${stop.atrPeriod ?? 14})`];
@@ -86,7 +113,7 @@ function RuleRow({ rule, index, group, operands, change, remove }: {
   remove: () => void;
 }) {
   return (
-    <fieldset className="grid grid-cols-1 gap-2 rounded-lg border border-white/10 p-3 sm:grid-cols-4">
+    <fieldset className="grid grid-cols-1 gap-2 border-t border-[var(--line)] pt-3 sm:grid-cols-4">
       <legend className="px-1 text-xs text-neutral-300">{group} rule {index + 1}</legend>
       <label className="text-xs">
         Left operand
@@ -175,6 +202,7 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
   const [preview, setPreview] = useState<{ strategy: StrategyAST; warnings: string[]; source: string } | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [runWindow, setRunWindow] = useState<RunWindowKey>(initialWindow ?? '3y');
+  const [indicatorPickerOpen, setIndicatorPickerOpen] = useState(false);
   const [prefill, setPrefill] = useState<TesterPrefill | null>(incomingPrefill ?? null);
   useEffect(() => { setPrefill(incomingPrefill ?? null); }, [incomingPrefill]);
   const fileGeneration = useRef(0);
@@ -298,8 +326,7 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
       <header aria-label="Strategy summary" className="rounded-2xl border border-white/10 bg-[#171719] p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-neutral-500">Strategy tester</p>
-            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[#ececed] break-words">{strategy.name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-[#ececed] break-words">{strategy.name}</h1>
             <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
               <span>Daily bars</span>
               <span aria-hidden="true">·</span>
@@ -307,7 +334,7 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
             </p>
             {symbols && symbols.length > 0 && onSymbolChange && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-neutral-500">Instrument</span>
+                <span className="text-xs text-[var(--text-3)]">Instrument</span>
                 <SymbolSearchSelector
                   symbols={symbols}
                   currentSymbolId={strategy.universe.symbolId}
@@ -344,8 +371,8 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           {(['entry', 'exit'] as const).map(group => (
             <div key={group} className="rounded-xl border border-white/8 bg-[#101012]/60 p-3.5">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-neutral-500">
-                {group} · all must match
+              <h2 className="text-xs font-medium text-[var(--text-3)]">
+                {group === 'entry' ? 'Entry' : 'Exit'} (all must match)
               </h2>
               {strategy.rules[group].length > 0 ? (
                 <ul className="mt-2 space-y-1.5">
@@ -376,7 +403,7 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
             <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />Describe in chat
           </button>
           <button type="button" className={secondaryButton} aria-expanded={panel === 'import'} aria-controls="tester-import" onClick={() => togglePanel('import')}>
-            <FileJson className="h-3.5 w-3.5" aria-hidden="true" />Import
+            <FileJson className="h-3.5 w-3.5" aria-hidden="true" />Import / export
           </button>
           <button type="button" className={secondaryButton} aria-expanded={panel === 'details'} aria-controls="tester-details" onClick={() => togglePanel('details')}>
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />Edit details
@@ -449,39 +476,45 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
                 </select>
               </label>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={secondaryButton} onClick={() => void copy()} disabled={!validation.success}>
-                {copied ? 'Copied validated JSON' : 'Copy validated JSON'}
-              </button>
-            </div>
           </div>
 
           <section className={card}>
-            <h2 className="font-semibold text-[#ececed]">Indicators</h2>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="min-w-[180px] flex-1 text-xs">
-                Indicator type
-                <select aria-label="New indicator type" className={control} value={newType} onChange={event => setNewType(event.target.value as IndicatorType)}>
-                  {Object.keys(INDICATOR_REGISTRY).map(type => <option key={type}>{type}</option>)}
-                </select>
-              </label>
-              <button type="button" onClick={addIndicator} className={secondaryButton}>Add indicator</button>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-semibold text-[#ececed]">Indicators</h2>
+              <button type="button" className={secondaryButton} aria-expanded={indicatorPickerOpen} onClick={() => setIndicatorPickerOpen(open => !open)}>
+                Add indicator
+              </button>
             </div>
-            {strategy.indicators.map((indicator, index) => (
-              <fieldset key={index} className="grid grid-cols-2 gap-2 rounded-lg border border-white/10 p-3 sm:grid-cols-4">
-                <legend className="px-1 text-xs text-neutral-300">{indicator.type}, unit: {INDICATOR_REGISTRY[indicator.type].unit}</legend>
-                <label className="text-xs">
-                  ID
-                  <input aria-label={`Indicator ID ${index + 1}`} className={control} value={indicator.id} onChange={event => update({ indicators: strategy.indicators.map((item, itemIndex) => itemIndex === index ? { ...item, id: event.target.value } : item) })} />
+            {indicatorPickerOpen && (
+              <div className="flex flex-wrap items-end gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3">
+                <label className="min-w-[180px] flex-1 text-xs">
+                  Indicator type
+                  <select aria-label="New indicator type" className={control} value={newType} onChange={event => setNewType(event.target.value as IndicatorType)}>
+                    {Object.keys(INDICATOR_REGISTRY).map(type => <option key={type}>{type}</option>)}
+                  </select>
                 </label>
-                {Object.entries(indicator.params).map(([param, value]) => (
-                  <label key={param} className="text-xs">
-                    {param}
-                    <input aria-label={`${indicator.id} ${param}`} className={control} type="number" step="any" value={value} onChange={event => update({ indicators: strategy.indicators.map((item, itemIndex) => itemIndex === index ? { ...item, params: { ...item.params, [param]: Number(event.target.value) } } : item) })} />
-                  </label>
-                ))}
-                <button type="button" onClick={() => removeIndicator(indicator.id)} className="btn-ghost-quant justify-self-start text-xs sm:col-span-4">Remove {indicator.id}</button>
-              </fieldset>
+                <button type="button" onClick={() => { addIndicator(); setIndicatorPickerOpen(false); }} className={secondaryButton}>Add</button>
+                <button type="button" onClick={() => setIndicatorPickerOpen(false)} className={secondaryButton}>Cancel</button>
+              </div>
+            )}
+            {strategy.indicators.map(indicator => (
+              <div key={indicator.id} className="space-y-2 border-t border-[var(--line)] pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-medium text-[var(--text-1)]">{indicatorTitle(indicator)}</h3>
+                  <button type="button" onClick={() => removeIndicator(indicator.id)} className={secondaryButton}>Remove</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {Object.entries(indicator.params).map(([param, value]) => (
+                    <label key={param} className="text-xs">
+                      {paramLabel(param)}
+                      <input aria-label={`${indicator.id} ${param}`} className={control} type="number" step="any" value={value} onChange={event => update({ indicators: strategy.indicators.map(item => item.id === indicator.id ? { ...item, params: { ...item.params, [param]: Number(event.target.value) } } : item) })} />
+                    </label>
+                  ))}
+                </div>
+                <Disclosure summary="Advanced">
+                  <p>ID <code className="font-mono text-[var(--text-2)]">{indicator.id}</code> is generated automatically and used by the rules.</p>
+                </Disclosure>
+              </div>
             ))}
           </section>
 
@@ -660,8 +693,13 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
       {panel === 'import' && (
         <section id="tester-import" aria-label="Import strategy" className={card}>
           <div>
-            <h2 className="font-semibold text-[#ececed]">Import with review</h2>
-            <p className="text-xs leading-relaxed text-neutral-400">Import replaces the current strategy and its symbol only after confirmation. Invalid definitions are never repaired.</p>
+            <h2 className="font-semibold text-[#ececed]">Import / export</h2>
+            <p className="text-xs leading-relaxed text-[var(--text-3)]">Paste a strategy JSON. You'll see the changes before anything is replaced.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className={secondaryButton} onClick={() => void copy()} disabled={!validation.success}>
+              {copied ? 'Copied JSON' : 'Copy as JSON'}
+            </button>
           </div>
           <label className="block text-xs">
             Strategy JSON
@@ -704,7 +742,7 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
           </div>
 
           {preview && (
-            <article aria-label="Import preview" className="space-y-2 rounded-lg border border-[#a8c7fa]/30 p-3 text-xs">
+            <article aria-label="Import preview" className="space-y-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3 text-xs">
               <h3 className="font-semibold text-[#ececed]">Replace with {preview.strategy.name}, symbol {preview.strategy.universe.symbolId}</h3>
               {preview.warnings.map((warning, index) => <p key={index} className="text-amber-200/90">{warning}</p>)}
               <details>

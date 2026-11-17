@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { requestMarketSnapshot, requestScan } from '../../client/api';
+import { requestMarketSnapshot, requestScan, RESEARCH_DEADLINE_MS } from '../../client/api';
 import { strategy } from '../fixtures/research';
 
 const receipt = { schemaVersion: 2, jobId: 'fixture-job', status: 'queued' };
@@ -13,6 +13,25 @@ beforeEach(() => { vi.useFakeTimers(); fetchMock = vi.fn(); vi.stubGlobal('fetch
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('bounded asynchronous research job client', () => {
+  it('keeps a cold scan alive past 120s and aborts at 300s', async () => {
+    expect(RESEARCH_DEADLINE_MS.scan).toBe(300_000);
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/scans') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      return response({ id: receipt.jobId, kind: 'scan', status: 'running' });
+    });
+    const promise = requestScan(input());
+    const assertion = expect(promise).rejects.toMatchObject({ code: 'CLIENT_DEADLINE' });
+    await vi.advanceTimersByTimeAsync(119_000);
+    let settled = false;
+    void promise.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(181_000);
+    await assertion;
+    expect(fetchMock.mock.calls.some(call => call[1]?.method === 'DELETE')).toBe(true);
+  });
+
   it('uses v2 submission/polling instead of legacy synchronous scan routes', async () => {
     fetchMock.mockResolvedValueOnce(response(receipt, 202))
       .mockResolvedValueOnce(response({ id: receipt.jobId, kind: 'scan', status: 'queued' }))
@@ -72,14 +91,14 @@ describe('bounded asynchronous research job client', () => {
   it('bounds a stalled poll and even stalled cleanup to a finite deadline', async () => {
     fetchMock.mockImplementation((_url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(response(receipt, 202)) : new Promise(() => {}));
     const result = requestScan(input()).catch(error => error);
-    await vi.advanceTimersByTimeAsync(121501);
+    await vi.advanceTimersByTimeAsync(301501);
     expect(await result).toMatchObject({ code: 'CLIENT_DEADLINE' });
     expect(fetchMock).toHaveBeenLastCalledWith('/api/v2/jobs/fixture-job', expect.objectContaining({ method: 'DELETE' }));
   });
   it('bounds a stalled response body rather than waiting forever after HTTP headers', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 202, json: () => new Promise(() => {}) } as Response);
     const result = requestScan(input()).catch(error => error);
-    await vi.advanceTimersByTimeAsync(120001);
+    await vi.advanceTimersByTimeAsync(300001);
     expect(await result).toMatchObject({ code: 'CLIENT_DEADLINE' });
   });
   it('does not submit work when the caller is already cancelled', async () => {

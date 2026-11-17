@@ -12,6 +12,7 @@ import {
 import { RobustnessSuite, BacktestResponse } from '../../shared/strategy/types';
 import { formatDate, formatINR, formatNumber, formatPercent } from '../../shared/format';
 import { StatRow } from '../common/StatRow';
+import { Disclosure } from '../common/Disclosure';
 
 interface RobustnessViewProps {
   robustness?: RobustnessSuite;
@@ -34,7 +35,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
   const { monteCarlo, trainTestSplit, sensitivityHeatmap } = suite;
 
   const mcChartData = monteCarlo.percentileCurves.p50.map((_, idx) => ({
-    step: `Step ${idx}`,
+    step: `Day ${idx}`,
     p10: monteCarlo.percentileCurves.p10[idx],
     p25: monteCarlo.percentileCurves.p25[idx],
     p50: monteCarlo.percentileCurves.p50[idx],
@@ -58,28 +59,31 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
       <div className="flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-3 sm:flex-row sm:items-center">
         <div>
           <h3 className="st-title font-semibold text-[var(--text-1)]">Robustness checks</h3>
-          <p className="st-meta mt-0.5 text-[var(--text-3)]">500-run Monte Carlo · 70/30 out-of-sample split · parameter sensitivity</p>
+          <p className="st-meta mt-0.5 text-[var(--text-3)]">Three checks: reshuffled returns, an earlier/later split, and a stop/target grid.</p>
         </div>
         <div className="flex items-center gap-1" role="group" aria-label="Robustness views">
-          {tabButton('monteCarlo', 'Monte Carlo')}
-          {tabButton('trainTest', '70/30 holdout')}
-          {tabButton('sensitivity', 'Sensitivity')}
+          {tabButton('monteCarlo', 'Reshuffled returns')}
+          {tabButton('trainTest', 'Train / test')}
+          {tabButton('sensitivity', 'Stop & target')}
         </div>
       </div>
 
       {activeTab === 'monteCarlo' && (
         <div className="space-y-4">
-          <p className="text-xs leading-relaxed text-[rgba(236,236,237,0.58)]">
-            IID daily net-equity return resampling with seed {monteCarlo.seed ?? 'N/A'}. Observed horizon only; this is not a forecast and ignores serial dependence.
+          <p className="text-xs leading-5 text-[var(--text-2)]">
+            We reshuffled the daily returns 500 times to see the range of outcomes. This is not a forecast.
             {monteCarlo.reason ? ` ${monteCarlo.reason}` : ''}
           </p>
+          <Disclosure summary="How this test works">
+            <p>Independent daily net-equity returns were resampled with seed {monteCarlo.seed ?? 'N/A'} over the observed horizon only. Serial dependence is ignored; this is not a forecast.</p>
+          </Disclosure>
           <StatRow
             columns={4}
             stats={[
-              { label: 'P10 equity', value: formatINR(monteCarlo.p10TerminalEquity), hint: 'Conservative 10th percentile terminal equity.' },
-              { label: 'P50 equity', value: formatINR(monteCarlo.p50TerminalEquity), hint: 'Median simulated terminal equity.' },
-              { label: 'P90 equity', value: formatINR(monteCarlo.p90TerminalEquity), hint: 'Optimistic 90th percentile terminal equity.' },
-              { label: 'P(drawdown >= 15%)', value: formatPercent(monteCarlo.probDrawdownOver15, { decimals: 1 }), hint: 'Share of simulations with a 15% or deeper drawdown.' },
+              { label: 'Weak case (10th percentile)', value: formatINR(monteCarlo.p10TerminalEquity), hint: 'One in ten simulated outcomes ended below this.' },
+              { label: 'Typical (median)', value: formatINR(monteCarlo.p50TerminalEquity), hint: 'The middle simulated outcome.' },
+              { label: 'Strong case (90th)', value: formatINR(monteCarlo.p90TerminalEquity), hint: 'One in ten simulated outcomes ended above this.' },
+              { label: 'Chance of a 15%+ drawdown', value: formatPercent(monteCarlo.probDrawdownOver15, { decimals: 1 }), hint: 'Share of simulations with a 15% or deeper drawdown.' },
             ]}
           />
 
@@ -100,9 +104,9 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                   formatter={(value: number) => [formatINR(Number(value))]}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                <Line type="monotone" dataKey="p90" stroke="#a8c7fa" strokeWidth={1.5} dot={false} name="90th percentile" />
-                <Line type="monotone" dataKey="p50" stroke="#ececed" strokeWidth={2} dot={false} name="50th percentile (median)" />
-                <Line type="monotone" dataKey="p10" stroke="#ff4d4d" strokeWidth={1.5} dot={false} name="10th percentile, not worst case" />
+                <Line type="monotone" dataKey="p90" stroke="#9a9aa3" strokeWidth={1.5} dot={false} name="Strong case (90th)" />
+                <Line type="monotone" dataKey="p50" stroke="#a8c7fa" strokeWidth={2} dot={false} name="Typical (median)" />
+                <Line type="monotone" dataKey="p10" stroke="#b9b9c0" strokeWidth={1.5} dot={false} name="Weak case (10th), not worst case" />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -113,7 +117,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-[rgba(236,236,237,0.7)]">Overfitting classification:</span>
+              <span className="text-xs text-[var(--text-2)]">Out-of-sample check:</span>
               <span
                 className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
                   trainTestSplit.overfittingRisk === 'LOW'
@@ -126,13 +130,13 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                 {trainTestSplit.overfittingRisk}
               </span>
             </div>
-            <span className="st-tnum text-xs text-[var(--text-3)]">Split {formatDate(trainTestSplit.splitDate)}</span>
+            <span className="st-tnum text-xs text-[var(--text-3)]">Split after {formatDate(trainTestSplit.splitDate)}</span>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-3 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-4">
               <div className="flex items-center justify-between pb-1.5">
-                <span className="text-xs font-medium text-[var(--text-1)]">In-sample (train 70%)</span>
+                <span className="text-xs font-medium text-[var(--text-1)]">Fitted on the first 70%</span>
                 <span className="text-xs text-[rgba(236,236,237,0.55)]">{trainTestSplit.trainMetrics.tradesCount} trades</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -157,7 +161,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
 
             <div className="space-y-3 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-4">
               <div className="flex items-center justify-between pb-1.5">
-                <span className="text-xs font-medium text-[var(--text-1)]">Out-of-sample (test 30%)</span>
+                <span className="text-xs font-medium text-[var(--text-1)]">Tested on the last 30%</span>
                 <span className="text-xs text-[rgba(236,236,237,0.55)]">{trainTestSplit.testMetrics.tradesCount} trades</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -179,7 +183,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                 </div>
               </div>
               <p className="text-[11px] text-[rgba(236,236,237,0.5)]">
-                CAGR decay {formatNumber(trainTestSplit.cagrDecayRatio, 2)}× from train to test.
+                Return fell {formatNumber(trainTestSplit.cagrDecayRatio, 2)}× from the fitted window to the test window.
               </p>
             </div>
           </div>
@@ -189,7 +193,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
       {activeTab === 'sensitivity' && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[rgba(236,236,237,0.55)]">
-            <span>{sensitivityHeatmap.param1Name} (rows) vs {sensitivityHeatmap.param2Name} (columns)</span>
+            <span>{sensitivityHeatmap.param1Name} (down the side) vs {sensitivityHeatmap.param2Name} (across)</span>
             <span className="font-medium text-[#a8c7fa]">Net return</span>
           </div>
 
@@ -197,7 +201,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
             <table className="w-full border-collapse text-center text-xs">
               <thead>
                 <tr>
-                  <th className="p-2 text-left text-[10px] text-[var(--text-3)]">SL \ TP</th>
+                  <th className="p-2 text-left text-[10px] text-[var(--text-3)]">{sensitivityHeatmap.param1Name} ↓ · {sensitivityHeatmap.param2Name} →</th>
                   {sensitivityHeatmap.param2Values.map(tp => (
                     <th key={tp} className="p-2 font-mono font-semibold text-[rgba(236,236,237,0.7)]">{tp}%</th>
                   ))}
