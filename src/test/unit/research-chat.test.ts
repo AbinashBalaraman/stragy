@@ -288,3 +288,43 @@ it('resolves TCS from the catalog and never returns model deliberation',async()=
  expect(out.message).not.toMatch(/schema|symbolId|instrumentId|current_strategy|The request is/i);
  expect(JSON.stringify(out)).not.toContain('fixture-reasoning-key');
 });
+
+it('answers a normal why-question without discarding a long first-person reply',async()=>{
+ const answer="I'd use a stop loss because it caps the loss on one idea. I size the position so a bad trade cannot erase many good ones. I place it below real support so normal market noise does not trigger it, and I keep the stop wide enough to let the trade breathe. The aim is survival first and consistency second, not a perfect entry.";
+ const fetch=vi.fn(async()=>fakeResponse({body:openAIBody(answer)}));
+ const out=await researchChat({message:'Why use a stop loss?'},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-chat-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ expect(out.kind).toBe('conversation');
+ if(out.kind!=='conversation')throw Error('Conversation absent');
+ expect(out.message).toBe(answer);
+ expect(out.method).toBe('external_ai');
+ expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it('retries a chain-of-thought reply once with a direct-answer instruction',async()=>{
+ const cot='The user wants a stop-loss explanation. Step 1: inspect the request. Step 2: decide on the answer.';
+ const clean='A stop loss defines the most you can lose on a trade, so one bad idea cannot erase many good ones.';
+ let calls=0;
+ const fetch=vi.fn(async (_url: string, _init: { body: string })=>{calls+=1;return fakeResponse({body:openAIBody(calls===1?cot:clean)});});
+ const out=await researchChat({message:'Why use a stop loss?'},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-chat-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ expect(out.kind).toBe('conversation');
+ if(out.kind!=='conversation')throw Error('Conversation absent');
+ expect(out.message).toBe(clean);
+ expect(out.message).not.toContain('Step 1');
+ expect(fetch).toHaveBeenCalledTimes(2);
+ const secondCall=fetch.mock.calls[1];
+ expect(secondCall).toBeDefined();
+ const second=JSON.parse(secondCall![1].body);
+ expect(second.messages[0].content).toContain('Answer the question directly in one short paragraph. No analysis, no headings, no draft.');
+});
+
+it('never returns the reasoning text when the retry is still deliberation',async()=>{
+ const cot='The user asked for an answer. Step 1: inspect the schema. Step 2: draft the reply.';
+ const fetch=vi.fn(async()=>fakeResponse({body:openAIBody(cot)}));
+ const out=await researchChat({message:'Why use a stop loss?'},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-chat-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ expect(out.kind).toBe('conversation');
+ if(out.kind!=='conversation')throw Error('Conversation absent');
+ expect(out.message).toContain('clean answer');
+ expect(out.message).not.toContain('Step 1');
+ expect(out.method).toBe('unavailable');
+ expect(fetch).toHaveBeenCalledTimes(2);
+});
