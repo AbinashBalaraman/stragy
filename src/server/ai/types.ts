@@ -112,8 +112,10 @@ export interface StrategyProposalV2 {
   candidate: StrategyAST;
   rationale: string;
   warnings: string[];
-  /** Leaf-level differences against the current strategy (empty when creating from scratch). */
+  /** Plain-language differences for the draft card (empty when creating from scratch). */
   changes: string[];
+  /** Raw paths and values for the JSON view. */
+  changeDetails: Array<{ path: string; before: unknown; after: unknown }>;
   /** Always false: the service never saves, runs, or trades. */
   applied: false;
   executes: false;

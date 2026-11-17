@@ -133,7 +133,7 @@ describe('chart image research flow', () => {
     expect(within(card).getByText(/Price sits near a 250-bar low/)).toBeTruthy();
     expect(within(card).getByText('Low confidence — check these conditions')).toBeTruthy();
     expect(within(card).getByText('What the AI saw')).toBeTruthy();
-    expect(within(card).getAllByText(/RSI Falling Trendline/).length).toBeGreaterThan(0);
+    expect(within(card).getAllByText(/falling trendline/i).length).toBeGreaterThan(0);
     expect(await screen.findByText('[chart image attached]')).toBeTruthy();
     // A chart reading is only a proposal: nothing scans until the user confirms.
     expect(requestScan).not.toHaveBeenCalled();
@@ -228,7 +228,7 @@ describe('chart image research flow', () => {
     expect(requestScan).not.toHaveBeenCalled();
     fireEvent.click(within(chartCard).getByRole('button', { name: 'Scan with these' }));
     expect(await screen.findByText('Close matches (missing one condition)')).toBeTruthy();
-    expect(screen.getByText('4/5 conditions')).toBeTruthy();
+    expect(screen.getByText('4/5')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Prepare backtest for RELIANCE' }));
     expect(await screen.findByRole('article', { name: 'Backtest review' })).toBeTruthy();
     expect(run).not.toHaveBeenCalled();

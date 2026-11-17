@@ -48,6 +48,39 @@ describe('MessageText', () => {
     expect(container.textContent).toContain('<img src=x onerror="alert(1)">');
   });
 
+  it('renders "###" lines as a real heading instead of literal hashes', () => {
+    const { container } = render(<MessageText text={'### RSI Below 30\n\nBody text.'} />);
+    const heading = container.querySelector('h3');
+    expect(heading?.textContent).toBe('RSI Below 30');
+    expect(container.textContent).not.toContain('###');
+    cleanup();
+    const nested = render(<MessageText text={'#### Detail\n\nBody text.'} />);
+    expect(nested.container.querySelector('h4')?.textContent).toBe('Detail');
+  });
+
+  it('links markdown and bare URLs, and refuses unsafe hrefs', () => {
+    render(<MessageText text={'Read [the guide](https://example.com/rsi) or https://example.com/docs. Then [bad](javascript:alert(1)).'} />);
+    const guide = screen.getByRole('link', { name: 'the guide' });
+    expect(guide.getAttribute('href')).toBe('https://example.com/rsi');
+    expect(guide.getAttribute('rel')).toContain('noreferrer');
+    const bare = screen.getByRole('link', { name: 'https://example.com/docs' });
+    expect(bare.getAttribute('href')).toBe('https://example.com/docs');
+    expect(screen.queryByRole('link', { name: 'bad' })).toBeNull();
+    // Unsafe schemes stay literal text: no anchor can carry them.
+    expect(document.querySelector('a[href^="javascript"]')).toBeNull();
+    expect(document.body.textContent).toContain('[bad](javascript:alert(1))');
+  });
+
+  it('renders fenced code with its language and a copy action', () => {
+    const { container } = render(<MessageText text={'Example:\n\n```python\nrsi = 28\nprint(rsi)\n```\n\nDone.'} />);
+    const pre = container.querySelector('pre');
+    expect(pre?.textContent).toContain('rsi = 28');
+    expect(pre?.textContent).toContain('print(rsi)');
+    expect(screen.getByText('python')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+    expect(container.textContent).not.toContain('```');
+  });
+
   it('shows an empty string without crashing', () => {
     const { container } = render(<MessageText text="" />);
     expect(container.textContent).toBe('');

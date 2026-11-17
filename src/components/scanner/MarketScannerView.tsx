@@ -535,7 +535,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <summary className="cursor-pointer hover:text-neutral-300">Data details</summary>
                 <div className="mt-1.5 max-w-3xl space-y-1 text-neutral-400">
                   <p>{priceLabel} · {coverageLabel} · {sourceSummary(dataEvidence?.sourceCoverage)}</p>
-                  <p>Session: {dataCutoff || 'Cutoff unavailable'}</p>
+                  <p>Date: {dataCutoff ? fullDay(dataCutoff) : 'Date unavailable'}</p>
                   <p>Ranks use the {rankingSession} end-of-day session; live LTPs are a separate Angel One overlay.</p>
                   <p>Universe: {currentUniverseConfig.label}</p>
                   <p>{currentUniverseConfig.description}</p>
@@ -595,15 +595,15 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           </label>
 
           <div className="flex min-w-0 items-center gap-2 text-xs text-neutral-400">
-            <label htmlFor="scanner-session" className="shrink-0">Session</label>
+            <label htmlFor="scanner-session" className="shrink-0">Date</label>
             <select
               id="scanner-session"
-              aria-label="Trading session"
+              aria-label="Trading date"
               value={selectedDate}
               onChange={(e) => handleDateChange(e.target.value)}
               className="min-w-0 flex-1 truncate rounded-lg border border-white/12 bg-[#101012] px-2.5 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-[#a8c7fa]/60"
             >
-              <option value="">Latest available cutoff</option>
+              <option value="">Latest close</option>
               {coveredTradingDates.map((item) => (
                 <option key={item.date} value={item.date}>{item.label}</option>
               ))}
@@ -1180,13 +1180,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       {/* TAB 6: STRATEGY SCREENER MATCHES */}
       {activeTab === 'strategy_matches' && (
         <section aria-label="Strategy matches" className="space-y-3">
-          <div className="space-y-2 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4">
+          <div className="space-y-2 px-1">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="st-title font-semibold text-[var(--text-1)]">Scanning {currentUniverseConfig.shortLabel} with “{strategy.name}”</h3>
               <span className="st-meta text-[var(--text-3)]">{initialLoading ? 'Loading session…' : shortDay(scanResult?.asOf || dataCutoff) + ' close'}</span>
             </div>
             <p className="st-meta leading-5 text-[var(--text-3)]">
-              A symbol matches when every entry condition below is true on the latest completed bar. Unavailable values never satisfy a condition.
+              {initialLoading ? 'Loading the latest close…' : `Stocks where every entry rule is true on the ${shortDay(scanResult?.asOf || dataCutoff)} close.`}
             </p>
             {(strategy.rules?.entry ?? []).length > 0 ? (
               <ul className="space-y-1">

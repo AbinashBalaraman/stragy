@@ -32,10 +32,11 @@ afterEach(cleanup);
 describe('inline backtest headline honesty', () => {
   it('shows null metrics as unavailable and keeps reasons inspectable', () => {
     render(<BacktestResultCard result={result()} />);
-    const values = screen.getAllByText('Unavailable');
-    expect(values.length).toBe(2);
+    // Unavailable metrics are an em dash with the reason in the tooltip (never 0).
+    const values = screen.getAllByTitle(/annualisation|too few return observations/i);
+    expect(values).toHaveLength(2);
+    expect(values[0].textContent).toBe('—');
     expect(screen.queryByText('0.00%')).toBeNull();
-    expect(values[0].getAttribute('title')).toMatch(/annualisation/i);
     expect(screen.getByText(/10\.00%/)).toBeTruthy();
     expect(screen.getAllByText(/Yahoo daily data/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId('run-source').textContent).toContain('Observed through: 01 Feb 2025');
@@ -73,5 +74,39 @@ describe('inline backtest headline honesty', () => {
     render(<BacktestResultCard result={result()} onOpenDetails={open} />);
     fireEvent.click(screen.getByRole('button', { name: 'View details' }));
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the equity curve and the first five trades when the run carries them', () => {
+    const trades = Array.from({ length: 8 }, (_, index) => ({
+      id: 't' + index,
+      entryDate: '2025-01-0' + ((index % 8) + 1),
+      exitDate: '2025-01-1' + ((index % 8) + 1),
+      entryPrice: 100 + index,
+      exitPrice: 102 + index,
+      direction: 'LONG' as const,
+      quantity: 10,
+      pnl: 20,
+      pnlPercent: 2,
+      holdingDays: 10,
+      holdingBars: 10,
+      exitReason: 'RULE_EXIT' as const,
+      costs: 1,
+      netPnl: index % 2 === 0 ? 19 : -11,
+    }));
+    const withCurve = result({
+      equityCurve: [
+        { date: '2025-01-01', timestamp: 1, equity: 100000, drawdown: 0, drawdownPercent: 0, benchmarkEquity: 100000 },
+        { date: '2025-01-15', timestamp: 2, equity: 101500, drawdown: 0, drawdownPercent: 0, benchmarkEquity: 100000 },
+        { date: '2025-02-01', timestamp: 3, equity: 110000, drawdown: 0, drawdownPercent: 0, benchmarkEquity: 100000 },
+      ],
+      trades,
+    });
+    render(<BacktestResultCard result={withCurve} />);
+    expect(screen.getByRole('img', { name: /Equity curve, 01 Jan 2025/ })).toBeTruthy();
+    const table = screen.getByRole('table', { name: 'Executed trades, 8 rows' });
+    expect(table).toBeTruthy();
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(5);
+    expect(screen.getAllByText('Rule exit').length).toBe(5);
+    expect(screen.getByRole('button', { name: 'Show all 8' })).toBeTruthy();
   });
 });

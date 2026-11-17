@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createProposal } from '../../server/ai/proposals';
 import { createRequestBudget, resolveAIConfig } from '../../server/ai/provider';
-import { strictValidateStrategy, boundHistory, parseModelJson } from '../../server/ai/validation';
+import { strictValidateStrategy, boundHistory, describeStrategyChanges, parseModelJson } from '../../server/ai/validation';
 import { fakeResponse, openAIBody, READY_ENV, recordingFetch, validStrategy } from '../../server/ai/testFixtures';
 
 const env = { ...READY_ENV };
@@ -103,20 +103,27 @@ describe('createProposal: no provider / local heuristic', () => {
     }
   });
 
-  it('missing key: error by default (no pretend connection); explicit fallback is labelled with warning', async () => {
+  it('simple edits stay local even when the provider is misconfigured; complex edits still require it', async () => {
     const f = recordingFetch(() => fakeResponse({}));
     const e = { AI_PROVIDER: 'openai', GEMINI_API_KEY: 'gemini-only-key-1234' };
-    const r1 = await createProposal({ prompt: 'set stop loss 1%', currentStrategy: validStrategy() }, { env: e, fetch: f });
+    const simple = await createProposal({ prompt: 'set stop loss 1%', currentStrategy: validStrategy() }, { env: e, fetch: f });
+    expect(simple.ok).toBe(true);
+    if (simple.ok) {
+      expect(simple.proposal.method).toBe('local_heuristic');
+      expect(simple.proposal.provider.aiGenerated).toBe(false);
+    }
+    expect(f.calls).toHaveLength(0);
+
+    const r1 = await createProposal({ prompt: 'set stop loss 1% and add an RSI entry', currentStrategy: validStrategy() }, { env: e, fetch: f });
     expect(r1.ok).toBe(false);
     if (!r1.ok) expect(r1.error.code).toBe('ai_not_configured');
-    const r2 = await createProposal({ prompt: 'set stop loss 1%', currentStrategy: validStrategy(), allowLocalFallback: true }, { env: e, fetch: f });
+    const r2 = await createProposal({ prompt: 'set stop loss 1% and add an RSI entry', currentStrategy: validStrategy(), allowLocalFallback: true }, { env: e, fetch: f });
     expect(r2.ok).toBe(true);
     if (r2.ok) {
       expect(r2.proposal.method).toBe('local_heuristic');
       expect(r2.proposal.provider.aiGenerated).toBe(false);
       expect(r2.proposal.warnings.join(' ')).toMatch(/no API key/);
     }
-    expect(f.calls).toHaveLength(0);
   });
 
   it('rejects invalid current strategy without repair or network', async () => {
@@ -148,7 +155,7 @@ describe('createProposal: external AI (fake fetch)', () => {
     expect(r.proposal.candidate.id).toBe(cur.id);
     expect(r.proposal.warnings).toContain('model warning');
     expect(r.proposal.warnings.join(' ')).toMatch(/not been backtested, saved, or applied/);
-    expect(r.proposal.changes.some((c) => c.startsWith('name'))).toBe(true);
+    expect(r.proposal.changes.some((c) => c.startsWith('Name:'))).toBe(true);
     expect(r.proposal.applied).toBe(false);
     expect(r.proposal.executes).toBe(false);
   });
@@ -180,7 +187,7 @@ describe('createProposal: external AI (fake fetch)', () => {
   it('prompt carries an exact JSON example and hard NSE daily/long-only rules', async () => {
     const cur = validStrategy();
     const f = recordingFetch(() => ok(cur));
-    await createProposal({ prompt: 'set stop loss to 3%', currentStrategy: cur }, deps(f));
+    await createProposal({ prompt: 'set stop loss to 3% and add an RSI entry', currentStrategy: cur }, deps(f));
     const system = JSON.parse(f.calls[0].init.body).messages[0].content as string;
     expect(system).toContain('Exact strategy JSON requirements');
     expect(system).toContain('never crypto');
@@ -269,13 +276,55 @@ describe('createProposal: external AI (fake fetch)', () => {
 
   it('with allowLocalFallback an AI failure is explicitly labelled local_heuristic', async () => {
     const f = recordingFetch(() => fakeResponse({ status: 500 }));
-    const r = await createProposal({ prompt: 'set stop loss 4%', currentStrategy: validStrategy(), allowLocalFallback: true }, deps(f));
+    const r = await createProposal({ prompt: 'set stop loss 4% and add an RSI entry', currentStrategy: validStrategy(), allowLocalFallback: true }, deps(f));
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.proposal.method).toBe('local_heuristic');
       expect(r.proposal.provider.aiGenerated).toBe(false);
       expect(r.proposal.warnings.join(' ')).toMatch(/External AI did not produce a usable draft/);
     }
+  });
+
+  it('applies a simple stop-loss edit locally with no provider call and plain-language changes', async () => {
+    const current = validStrategy();
+    current.risk.stopLoss = { type: 'percent', value: 3.5 };
+    const f = recordingFetch(() => fakeResponse({ status: 500 }));
+    const r = await createProposal({ prompt: 'Set my stop loss to 3%', currentStrategy: current }, deps(f));
+    expect(f.calls).toHaveLength(0);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.proposal.method).toBe('local_heuristic');
+    expect(r.proposal.provider).toEqual({ name: 'local_heuristic', model: null, aiGenerated: false });
+    expect(r.proposal.changes).toEqual(['Stop loss: 3.5% → 3%']);
+    expect(r.proposal.changeDetails).toEqual([{ path: 'risk.stopLoss.value', before: 3.5, after: 3 }]);
+    expect(JSON.stringify(r.proposal.changes)).not.toContain('risk.stopLoss');
+  });
+
+  it('excludes ids and internal timestamps from user-facing changes but keeps raw paths separately', () => {
+    const before = validStrategy();
+    before.risk.stopLoss = { type: 'percent', value: 3.5 };
+    const after = JSON.parse(JSON.stringify(before));
+    after.id = 'cand_new';
+    after.version = 99;
+    after.createdAt = '2030-01-01T00:00:00Z';
+    after.rules.entry[0].id = 'new-rule-id';
+    after.risk.stopLoss.value = 3;
+
+    const diff = describeStrategyChanges(before, after);
+    expect(diff.changes).toEqual(['Stop loss: 3.5% → 3%']);
+    expect(diff.details).toEqual([{ path: 'risk.stopLoss.value', before: 3.5, after: 3 }]);
+    expect(JSON.stringify(diff.changes)).not.toContain('id');
+    expect(JSON.stringify(diff.changes)).not.toContain('createdAt');
+  });
+
+  it('labels an added entry rule in plain words while keeping its raw path', () => {
+    const before = validStrategy();
+    before.indicators.push({ id: 'rsi14', type: 'RSI', params: { period: 14 } });
+    const after = JSON.parse(JSON.stringify(before)) as ReturnType<typeof validStrategy>;
+    after.rules.entry.push({ leftIndicator: 'rsi14', operator: 'lt', rightValue: 30 });
+    const diff = describeStrategyChanges(before, after);
+    expect(diff.changes).toEqual(["Entry: added 'RSI is below 30'"]);
+    expect(diff.details[0]).toMatchObject({ path: 'rules.entry', after: { leftIndicator: 'rsi14', operator: 'lt', rightValue: 30 } });
   });
 
   it('prompt-injected extra fields (code/orders) are ignored with a warning and never returned', async () => {

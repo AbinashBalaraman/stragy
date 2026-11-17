@@ -122,8 +122,8 @@ describe('reference chart template', () => {
     expect(validated.success).toBe(true);
     expect(validated.data!.rules.entry).toHaveLength(6);
     const plain = renderStrategyInPlainLanguage(template.strategy);
-    expect(plain.entrySummary.join(' ')).toContain('RSI Falling Trendline');
-    expect(plain.entrySummary.join(' ')).toContain('250-Bar Low');
+    expect(plain.entrySummary.join(' ')).toContain('falling trendline');
+    expect(plain.entrySummary.join(' ')).toContain('within 15% of its 52-week low');
     expect(plain.entrySummary.join(' ')).toContain('126-Bar Change');
   });
 

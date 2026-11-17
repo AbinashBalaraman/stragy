@@ -8,6 +8,12 @@ export const ProposalProviderSchema = z.object({
   aiGenerated: z.boolean(),
 }).strict();
 
+export const StrategyChangeDetailSchema = z.object({
+  path: z.string().min(1).max(300),
+  before: z.unknown(),
+  after: z.unknown(),
+}).strict();
+
 export const StrategyProposalSchema = z.object({
   schemaVersion: z.literal(2),
   id: z.string().min(1),
@@ -20,6 +26,7 @@ export const StrategyProposalSchema = z.object({
   rationale: z.string(),
   warnings: z.array(z.string()),
   changes: z.array(z.string()),
+  changeDetails: z.array(StrategyChangeDetailSchema).default([]),
   applied: z.literal(false),
   executes: z.literal(false),
 }).strict();

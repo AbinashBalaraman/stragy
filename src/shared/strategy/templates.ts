@@ -20,8 +20,8 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'reliance_supertrend_ema_volume',
     name: 'Reliance Supertrend + EMA + Volume Expansion',
     category: 'Trend Following',
-    description: 'Institutional trend-following breakout: Supertrend (10, 3) confirmed with 200 EMA regime filter and 20 Volume SMA expansion.',
-    suitability: 'Reliance (RELIANCE.NSE) & high-beta Indian market blue-chips',
+    description: 'Buys while price is above Supertrend and the 200-day average with volume above normal; exits below Supertrend.',
+    suitability: 'Reliance and other high-beta Indian large caps',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
       name: 'Reliance Supertrend + EMA + Volume Expansion',
@@ -58,7 +58,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'supertrend_trend_following',
     name: 'Supertrend Trend Surfer',
     category: 'Trend Following',
-    description: 'Rides sustained momentum on NSE large caps using Supertrend(10, 3) confirmed with 50 EMA trend filter.',
+    description: 'Follows Supertrend while price stays above the 50-day average, with an ATR trailing stop.',
     suitability: 'High-beta trending stocks (Reliance, Tata Motors, Bank Nifty)',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -95,7 +95,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'golden_cross_sma',
     name: 'Classic Golden Cross & Volume',
     category: 'Trend Following',
-    description: 'Canonical institutional regime filter: 50 SMA crosses above 200 SMA with volume expansion.',
+    description: 'Buys when the 50-day average crosses above the 200-day average with volume expansion.',
     suitability: 'Long-term equity compounding & swing trading',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -131,7 +131,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'rsi_mean_reversion',
     name: 'RSI Dynamic Mean Reversion',
     category: 'Mean Reversion',
-    description: 'Catches oversold bounces (RSI < 30) on premier blue-chip constituents when above long-term 100 SMA.',
+    description: 'Buys oversold pullbacks (RSI below 32) while price is above the 100-day average; exits when RSI is above 68.',
     suitability: 'Consolidating and range-bound indices (Nifty 50, HDFC Bank, TCS)',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -167,7 +167,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'bollinger_squeeze_breakout',
     name: 'Bollinger Band Squeeze Breakout',
     category: 'Volatility',
-    description: 'Detects volatility compression and explosive breakouts with candlestick body confirmation.',
+    description: 'Buys when price closes above the upper Bollinger band with an expanding candle body.',
     suitability: 'High volatility breakouts & earning season swings',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -203,7 +203,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'macd_momentum_crossover',
     name: 'MACD Zero-Line Acceleration',
     category: 'Momentum',
-    description: 'Signals trend acceleration when MACD Line crosses Signal above Zero Line with ATR volatility stop.',
+    description: 'Buys when the MACD line crosses above its signal line; an ATR stop trails the move.',
     suitability: 'Mid-cap and sector momentum runners',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -239,7 +239,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'atr_volatility_breakout',
     name: 'ATR Keltner Breakout & Channel Surfer',
     category: 'Breakout',
-    description: 'Enters when close breaks above ATR-based volatility envelope with strict trailing stop.',
+    description: 'Buys when price breaks above the 20-day average plus two ATRs, with a trailing stop.',
     suitability: 'High-momentum Indian market breakouts',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -274,7 +274,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
   {
     id: 'nr7_volatility_compression',
     name: 'NR7 Volatility Compression Breakout',
-    category: 'Institutional',    description: 'Toby Crabel Narrow Range 7 (NR7) daily compression proxy using Bollinger squeeze and breakout.',
+    category: 'Volatility',    description: 'Buys a narrow-range (NR7) breakout after a Bollinger squeeze.',
     suitability: 'NSE Intraday & Next-Day swing volatility expansion',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {
@@ -311,7 +311,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplateItem[] = [
     id: 'rsi_trendline_breakout_near_lows',
     name: 'RSI Downtrend-Line Breakout Near Lows',
     category: 'Mean Reversion',
-    description: 'Causal chart-reading setup: RSI(14) recovered from below 36, broke a falling RSI trendline and its 14-period signal SMA while price sits near its 250-bar low after a weak 126-bar change.',
+    description: 'Buys when RSI recovers from below 36, breaks its falling trendline, and price sits near a 250-day low.',
     suitability: 'Daily NIFTY 50 equities in a long downtrend showing an early RSI momentum turn',
     expectedWinRate: 'Unverified; run an immutable data snapshot',
     strategy: {

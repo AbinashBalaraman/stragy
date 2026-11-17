@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { StrategyAST } from '../../shared/strategy/types';
 import { AI_LIMITS, callProvider, resolveAIConfig, resolveVisionConfig, OPENCODE_GO_MODELS, getLastProviderCall, type EnvLike } from './provider';
-import { INPUT_LIMITS, boundHistory, diffStrategies, sanitizeText, strictValidateStrategy } from './validation';
+import { INPUT_LIMITS, boundHistory, describeStrategyChanges, diffStrategies, sanitizeText, strictValidateStrategy } from './validation';
 import { LOCAL_LABEL, localEditStrategy } from './heuristics';
 import { isInformationalQuestion } from './intent';
 import { buildMarketContext, detectMarketSymbols, renderMarketAnswer } from './marketContext';
@@ -244,6 +244,7 @@ export function optimizationToProposal(opt: OptimizationResult, base: StrategyAS
     rationale: opt.assistantMessage,
     warnings: opt.warnings,
     changes: base ? diffStrategies(base, opt.optimizedStrategy) : [],
+    changeDetails: base ? describeStrategyChanges(base, opt.optimizedStrategy).details : [],
     applied: false, executes: false,
   };
 }

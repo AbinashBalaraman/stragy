@@ -68,12 +68,45 @@ describe('screen near matches', () => {
     expect(screen.getByRole('button', { name: 'Prepare backtest for RELIANCE' })).toBeTruthy();
     const near = screen.getByLabelText('Close matches');
     expect(within(near).getByText('Close matches (missing one condition)')).toBeTruthy();
-    expect(within(near).getByText('4/5 conditions')).toBeTruthy();
+    // The score sits under the "Conditions" header of the near-match table.
+    expect(within(near).getByText('4/5')).toBeTruthy();
     expect(within(near).getByText(/Reliance Power/)).toBeTruthy();
     expect(within(near).queryByText(/Reliance Industries/)).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Prepare backtest for RELIANCE' })).toHaveLength(1);
 
     fireEvent.click(within(near).getByRole('button', { name: 'Prepare backtest for RELIANCEPOWER' }));
     expect(onPrepare).toHaveBeenCalledWith(8, '2026-10-15');
+  });
+
+  it('renders one table row per match with each indicator value shown once', () => {
+    const strategy = fiveRuleStrategy() as unknown as Record<string, unknown>;
+    const dedupePlan: ResearchScreenPlan = {
+      ...plan(),
+      strategy: {
+        ...strategy,
+        indicators: [
+          { id: 'rsi', type: 'RSI', params: { period: 14 } },
+          { id: 'rsi_fast', type: 'RSI', params: { period: 14 } },
+          { id: 'sma', type: 'SMA', params: { period: 200 } },
+        ],
+        rules: {
+          ...(strategy.rules as Record<string, unknown>),
+          entry: [
+            { id: 'e1', leftIndicator: 'rsi', operator: 'lt', rightValue: 30 },
+            { id: 'e2', leftIndicator: 'rsi_fast', operator: 'lt', rightValue: 30 },
+            { id: 'e3', leftIndicator: 'sma', operator: 'gt', rightValue: 100 },
+          ],
+        },
+      } as unknown as ResearchScreenPlan['strategy'],
+    };
+    const withIndicators = { ...result(), matches: [{ ...match(7, 'RELIANCE', 'Reliance Industries'), indicatorValues: { rsi: 28, rsi_fast: 28, sma: 210 } }], nearMatches: [] };
+    render(<ScreenResultCard plan={dedupePlan} result={withIndicators as unknown as ScanResult} pending={false} error="" onPrepareBacktest={() => {}} />);
+
+    const table = screen.getByRole('table', { name: 'Screen matches, 1 row' });
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(1);
+    // RSI (14) is listed once even though two indicator ids carry the same label.
+    expect(within(table).getByText('RSI (14) 28.00 · SMA (200) 210.00')).toBeTruthy();
+    expect(screen.getByText('1 match')).toBeTruthy();
+    expect(screen.queryByText(/1 matches/)).toBeNull();
   });
 });

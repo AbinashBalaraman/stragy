@@ -2,7 +2,7 @@
 import React from 'react';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { createProposal } from '../../server/ai/proposals';
 import { validStrategy } from '../../server/ai/testFixtures';
@@ -76,6 +76,19 @@ describe('proposal dock review and explicit actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply draft' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Apply refused');
     expect(screen.queryByText(/Draft applied to the workspace/)).toBeNull();
+  });
+
+  it('titles the draft with its plain-language change and hides id-only diffs', async () => {
+    stubDraft();
+    render(<AiCopilotDock strategy={validStrategy()} onApplyVariation={vi.fn()}/>);
+    generate();
+    const card = await screen.findByRole('article', { name: 'Draft proposal' });
+    expect(within(card).getByRole('heading', { name: 'Stop loss 2% → 3%' })).toBeTruthy();
+    expect(within(card).getByText('Stop loss: 2% → 3%')).toBeTruthy();
+    expect(within(card).queryByText(/id:/)).toBeNull();
+    expect(within(card).getByRole('button', { name: 'Apply draft' })).toBeTruthy();
+    expect(within(card).getByRole('button', { name: 'Apply and backtest' })).toBeTruthy();
+    expect(within(card).getByLabelText('More draft actions')).toBeTruthy();
   });
 
   it('respects explicit apply acknowledgements and rejection', async () => {

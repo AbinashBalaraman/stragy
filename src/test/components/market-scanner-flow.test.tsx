@@ -31,7 +31,7 @@ describe('bounded lazy market scanner flow', () => {
   it('labels real market prices without calling them demo and retains model-only derivatives disclosure', async () => {
     market.mockResolvedValueOnce({ ...snapshot(), mode: 'real', provenance: { mode: 'real', actualRange: { end: '2025-01-02' } }, sourceCoverage: { real: 84 } } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     renderScanner();
-    await screen.findByText('Session: 2025-01-02');
+    await screen.findByText('Date: 02 Jan 2025');
     expect(screen.getByText(/Observed OHLCV · not a live tick feed/)).toBeTruthy();
     expect(screen.queryByText(/Demo OHLCV/)).toBeNull();
     expect(screen.getByText(/Derivatives\/OI\/PCR and related model fields are model-only/)).toBeTruthy();
@@ -155,7 +155,7 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.getByText('Gainers unavailable: no evaluated price coverage.')).toBeTruthy();
     expect(screen.getByText('Losers unavailable: no evaluated price coverage.')).toBeTruthy();
     expect(screen.queryByText(/No gainers|No losers|0% Bullish/)).toBeNull();
-    expect(screen.getAllByText('Session: Cutoff unavailable').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Date: Date unavailable').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /Technical regimes/i }));
     expect(screen.getByText('Trends unavailable: no evaluated price coverage.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Load.*Backtest/ })).toBeNull();
@@ -176,7 +176,7 @@ describe('bounded lazy market scanner flow', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Backtest TEST' }));
     expect(onBacktest).toHaveBeenLastCalledWith(7, '2025-01-02');
     await screen.findByRole('option', { name: '2025-01-01' });
-    fireEvent.change(screen.getByLabelText('Trading session'), { target: { value: '2025-01-01' } });
+    fireEvent.change(screen.getByLabelText('Trading date'), { target: { value: '2025-01-01' } });
     await waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
     fireEvent.click(await screen.findByRole('button', { name: 'Backtest TEST' }));
     expect(onBacktest).toHaveBeenLastCalledWith(7, '2025-01-01');
@@ -195,7 +195,7 @@ describe('bounded lazy market scanner flow', () => {
 
   it('defaults to the bounded labelled pool, loads only market and never refetches for an observed cutoff', async () => {
     renderScanner();
-    await waitFor(() => expect(screen.getByText('Session: 2025-01-02')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Date: 02 Jan 2025')).toBeTruthy());
     expect((universe() as HTMLSelectElement).value).toBe('NIFTY_50');
     expect(market).toHaveBeenCalledTimes(1);
     expect(market.mock.calls[0][0]).toEqual({ universe: 'NIFTY_50', asOf: undefined });
@@ -242,7 +242,7 @@ describe('bounded lazy market scanner flow', () => {
     expect(market).toHaveBeenCalledTimes(1);
     expect(market.mock.calls[0][1]?.aborted).toBe(false);
     await act(async () => { pendingMarket.resolve(snapshot()); });
-    expect(screen.getByText('Session: 2025-01-02')).toBeTruthy();
+    expect(screen.getByText('Date: 02 Jan 2025')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
     openMatches();
     fireEvent.change(universe(), { target: { value: 'NIFTY_50' } });
@@ -317,7 +317,7 @@ describe('bounded lazy market scanner flow', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('504'));
     expect(market.mock.calls[0][1]?.aborted).toBe(true);
     await act(async () => { old.resolve(snapshot()); });
-    expect(screen.queryByText('Session: 2025-01-02')).toBeNull();
+    expect(screen.queryByText('Date: 02 Jan 2025')).toBeNull();
     openMatches();
     await screen.findByText(/No matches in the 84 evaluated symbols/);
     expect(screen.queryByRole('alert')).toBeNull();
@@ -410,7 +410,7 @@ describe('live quotes and readable coverage in the scanner', () => {
     expect(screen.queryByText(/do not support the selected historical cutoff/)).toBeNull();
     expect(screen.getByText(/Latest-only/)).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Trading session'), { target: { value: '2025-01-01' } });
+    fireEvent.change(screen.getByLabelText('Trading date'), { target: { value: '2025-01-01' } });
     expect(await screen.findByText(/uses the latest model reference/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Use latest session' }));
     await waitFor(() => expect(screen.queryByText(/uses the latest model reference/)).toBeNull());
@@ -431,7 +431,7 @@ describe('live quotes and readable coverage in the scanner', () => {
     renderScanner();
     expect(await screen.findByText('Market scanner')).toBeTruthy();
     expect(screen.getByLabelText('Market universe')).toBeTruthy();
-    expect(screen.getByLabelText('Trading session')).toBeTruthy();
+    expect(screen.getByLabelText('Trading date')).toBeTruthy();
     expect(screen.getByLabelText('Scanner section')).toBeTruthy();
     expect(screen.queryByText(/Market Universe \/ Index/)).toBeNull();
     expect(screen.queryByText(/Switch Universe/)).toBeNull();

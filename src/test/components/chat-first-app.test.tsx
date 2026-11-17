@@ -116,8 +116,10 @@ describe('chat-first application shell', () => {
     expect(screen.queryByTestId('scanner-view')).toBeNull();
     expect(screen.queryByRole('button', { name: /Run current workspace/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Open scanner/i })).toBeNull();
-    // Mounting the unchanged initial workspace no longer writes a new revision.
-    await screen.findByText('Workspace unchanged; no local save yet');
+    // Mounting the unchanged initial workspace no longer writes a new revision,
+    // and a settled save state stays out of the rail.
+    expect(window.localStorage.getItem('stragy_workspace_v1')).toBeNull();
+    expect(screen.queryByText(/Workspace unchanged/)).toBeNull();
   });
 
   it('keeps the conversation mounted and its history intact while another rail view is open', async () => {

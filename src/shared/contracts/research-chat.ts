@@ -13,22 +13,23 @@ export const ResearchChatInputSchema = z.object({
   screenContext:z.object({strategy,universe:z.literal('NIFTY_50'),asOf:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict().optional(),
 }).strict();
 const base={schemaVersion:z.literal(1),originatingRevision:revision,message:z.string().max(12000),method:z.enum(['external_ai','local_heuristic','rule_parser','unavailable']),provider:ProposalProviderSchema,warnings:z.array(z.string().max(2000)).max(40)};
-/** Header facts read from the chart frame, kept separate from inferred conditions. */
-export const ChartHeaderSchema=z.object({
-  symbol:z.string().min(1).max(80).nullable().optional(),
-  exchange:z.string().max(20).nullable().optional(),
-  timeframe:z.string().max(40).nullable().optional(),
-  captureDate:z.string().max(60).nullable().optional(),
-  lastClose:z.number().finite().nullable().optional(),
-  lastChangePct:z.number().finite().nullable().optional(),
-}).strict();
-
 /** Small vision models often write "14" or "14, 14" where an array belongs. */
 const numberList=z.preprocess(value=>{
   if(typeof value==='string')return value.split(/[,\s]+/).map(Number).filter(Number.isFinite);
   if(typeof value==='number'&&Number.isFinite(value))return[value];
   return value;
 },z.array(z.number().finite()).max(12));
+const numberOrNull=(value:unknown):unknown=>{
+  if(value===null||value===undefined)return value;
+  if(typeof value==='number')return Number.isFinite(value)?value:null;
+  if(typeof value==='string'){
+    const parsed=Number(value.replace(/[^0-9.+-]/g,''));
+    return Number.isFinite(parsed)?parsed:null;
+  }
+  return null;
+};
+const optionalNumber=z.preprocess(numberOrNull,z.number().finite().nullable().optional());
+const optionalBars=z.preprocess(numberOrNull,z.number().int().min(1).max(30).nullable().optional().catch(null));
 const lower=(value:unknown)=>typeof value==='string'?value.trim().toLowerCase():value;
 const chartPanel=z.preprocess(lower,z.enum(['price','rsi','other']).catch('other'));
 const chartDirection=z.preprocess(lower,z.enum(['up','down','flat','unknown']).catch('unknown'));
@@ -41,6 +42,16 @@ const eventList=z.preprocess(value=>Array.isArray(value)?value.map(item=>{
   if(item&&typeof item==='object')return String((item as Record<string,unknown>).label??(item as Record<string,unknown>).name??(item as Record<string,unknown>).type??'').trim();
   return '';
 }).filter(Boolean):value,z.array(z.string().max(200)).max(10));
+
+/** Header facts read from the chart frame, kept separate from inferred conditions. */
+export const ChartHeaderSchema=z.object({
+  symbol:z.string().min(1).max(80).nullable().optional(),
+  exchange:z.string().max(20).nullable().optional(),
+  timeframe:z.string().max(40).nullable().optional(),
+  captureDate:z.string().max(60).nullable().optional(),
+  lastClose:optionalNumber,
+  lastChangePct:optionalNumber,
+}).strict();
 
 /**
  * Normalized, model-independent reading of a chart screenshot.
@@ -59,16 +70,16 @@ export const ChartObservationsSchema=z.object({
   }).strict()).max(12),
   drawnLines:z.array(z.object({
     panel:chartPanel, direction:chartDirection, description:z.string().max(200),
-    start:z.object({when:z.string().max(60).nullable(),value:z.number().finite().nullable()}).strict().optional(),
-    end:z.object({when:z.string().max(60).nullable(),value:z.number().finite().nullable()}).strict().optional(),
+    start:z.object({when:z.string().max(60).nullable(),value:optionalNumber}).strict().optional(),
+    end:z.object({when:z.string().max(60).nullable(),value:optionalNumber}).strict().optional(),
     lastBarRelation:chartRelation.optional(),
   }).strict()).max(8),
   recentBars:z.object({
     note:z.string().max(300).nullable().optional(),
-    rsiBelow30BarsAgo:z.number().int().min(1).max(30).nullable().optional(),
+    rsiBelow30BarsAgo:optionalBars,
   }).strict().optional(),
   rangePosition:z.object({
-    approxPctAboveLow:z.number().finite().min(0).max(1000).nullable().optional(),
+    approxPctAboveLow:z.preprocess(numberOrNull,z.number().finite().min(0).max(1000).nullable().optional().catch(null)),
   }).strict().optional(),
   priceTrend:chartTrend,
   nearRange:chartRange,

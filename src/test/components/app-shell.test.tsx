@@ -137,7 +137,7 @@ describe('calm app shell', () => {
       </AppShell>
     );
     expect(screen.getByText('Live quotes · Angel One')).toBeTruthy();
-    expect(screen.getByText('Research bars remain delayed, not live')).toBeTruthy();
+    expect(screen.getByText('Backtests use daily bars')).toBeTruthy();
     expect(screen.queryByText(/Observed public daily data/)).toBeNull();
 
     view.rerender(

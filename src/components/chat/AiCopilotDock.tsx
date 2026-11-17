@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, X, Plus, ImagePlus } from 'lucide-react';
+import { Send, X, Plus, ImagePlus, MoreHorizontal } from 'lucide-react';
 import { z } from 'zod';
 import type { BacktestResponse, StrategyAST, SymbolMeta } from '../../shared/strategy/types';
 import { snapshotStrategy } from '../../client/workspace';
@@ -19,9 +19,12 @@ import { ScreenResultCard } from './ScreenResultCard';
 import { ChartReadingCard } from './ChartReadingCard';
 import { BacktestResultCard } from './BacktestResultCard';
 import { BacktestReviewCard } from './BacktestReviewCard';
+import { AssistantPending } from './AssistantPending';
 import { MessageText } from './MessageText';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
+import { CardShell } from '../common/CardShell';
+import { Disclosure } from '../common/Disclosure';
 import {
   classifyReviewReply,
   parseBacktestIntent,
@@ -156,6 +159,74 @@ const fileSizeLabel = (bytes: number): string => bytes >= 1024 * 1024
   ? (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   : Math.max(1, Math.round(bytes / 1024)) + ' KB';
 
+/**
+ * Server diffs are technical strings ("risk.stopLoss.value: 3.5 -> 3"). A chat
+ * edit only reaches a handful of fields, so those get plain language for the
+ * card title and list; id-only diffs are never shown as a "change".
+ */
+interface DraftChange {
+  label: string;
+  value: string;
+  plain: boolean;
+}
+
+const RISK_FIELDS: Record<string, { label: string; suffix?: '%' }> = {
+  'risk.stopLoss.value': { label: 'Stop loss', suffix: '%' },
+  'risk.takeProfit.value': { label: 'Target', suffix: '%' },
+  'risk.trailingStop.value': { label: 'Trailing stop', suffix: '%' },
+  'risk.positionSizePercent': { label: 'Position size', suffix: '%' },
+  'risk.maxPositions': { label: 'Max positions' },
+  'risk.initialCapital': { label: 'Initial capital' },
+};
+
+/**
+ * A change arrives either as plain language from the server
+ * ("Stop loss: 3.5% → 3%") or, from older builds, as a technical diff
+ * ("risk.stopLoss.value: 3.5 -> 3"). Both are understood; an id-only diff is
+ * never shown as a change.
+ */
+const describeDraftChange = (change: string): DraftChange | null => {
+  const text = change.trim();
+  if (!text) return null;
+  const technical = /^([\w.[\]]+):\s*(.+) -> (.+)$/.exec(text);
+  if (!technical) {
+    if (/(?:^|\.)id\s*:/.test(text)) return null;
+    return { label: text, value: '', plain: true };
+  }
+  const [, path, before, after] = technical;
+  if (/(?:^|\.)id$/.test(path)) return null;
+  const parse = (value: string) => {
+    try { return JSON.parse(value) as unknown; } catch { return value; }
+  };
+  const known = RISK_FIELDS[path];
+  const render = (value: unknown) => typeof value === 'number' ? String(value) : String(value).replace(/^"|"$/g, '');
+  if (!known) return { label: text, value: '', plain: false };
+  const suffix = known.suffix ?? '';
+  return { label: known.label, value: render(parse(before)) + suffix + ' → ' + render(parse(after)) + suffix, plain: true };
+};
+
+/** The card title is the primary change, read as a headline ("Stop loss 3.5% → 3%"). */
+const changeTitle = (change: DraftChange): string => change.value
+  ? change.label + ' ' + change.value
+  : change.label.replace(/^([^:]{1,60}):\s*(.+)$/, '$1 $2');
+
+const RISK_TYPE: Record<string, 'stopLoss' | 'takeProfit' | 'trailingStop'> = {
+  'Stop loss': 'stopLoss',
+  Target: 'takeProfit',
+  'Trailing stop': 'trailingStop',
+};
+
+/** A stop or target is a percent only when the workspace risk model says so. */
+const withPercentSuffix = (change: DraftChange, strategy: StrategyAST): DraftChange => {
+  const key = RISK_TYPE[change.label];
+  if (!key) return change;
+  const type = strategy.risk?.[key]?.type;
+  if (type === 'percent') return change;
+  return { ...change, value: change.value.replace(/%/g, '') };
+};
+
+const DRAFT_MENU_ITEM = 'st-meta flex w-full items-center gap-2 rounded-[var(--r-btn)] px-2.5 py-2 text-left text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:text-[var(--text-disabled)]';
+
 /** A screen response can carry the contract-validated chart fields directly. */
 function chartReadingFromScreen(plan: ResearchScreenPlan): ChartImageReading | null {
   if (plan.source !== 'chart_image' || !plan.observations || plan.confidence === undefined || plan.summary === undefined) return null;
@@ -201,6 +272,11 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [preparingImage, setPreparingImage] = useState(false);
   const [imageError, setImageError] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  /** The last image that was sent, kept so the chart card can show it (P1-3). */
+  const [sentChartImage, setSentChartImage] = useState<ChartImageAttachment | null>(null);
+  /** Auto-scroll only while the reader is at the bottom (P0-6). */
+  const [pinned, setPinned] = useState(true);
+  const [pendingDraftBacktest, setPendingDraftBacktest] = useState<string | null>(null);
   const [screenPlan, setScreenPlan] = useState<ResearchScreenPlan | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanPending, setScanPending] = useState(false);
@@ -233,6 +309,11 @@ export const AiCopilotDock: React.FC<Props> = ({
   const seenNewChat = useRef(newConversationSignal ?? 0);
   const reviewRef = useRef<BacktestReview | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
+  const lastMessageRef = useRef<HTMLDivElement | null>(null);
+  const revealedCard = useRef<Element | null>(null);
+  const pinnedRef = useRef(true);
+  const draftMenuRef = useRef<HTMLDetailsElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const imageGeneration = useRef(0);
@@ -317,14 +398,82 @@ export const AiCopilotDock: React.FC<Props> = ({
     // clearConversation intentionally reads the latest state through function scope.
   }, [newConversationSignal]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages, review, screenPlan, proposal, validatedResult, scanError, error, chartReading]);
+  /**
+   * Scroll helpers. The reader owns the viewport: new content only moves it
+   * while they are already at the bottom (within 48px); otherwise the "Jump to
+   * latest" button appears. A card taller than the log opens at its start so its
+   * header is never clipped.
+   */
+  const NEAR_BOTTOM = 48;
 
+  const scrollToLatest = (behavior: ScrollBehavior = 'smooth') => {
+    const log = logRef.current;
+    if (!log) return;
+    const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typeof log.scrollTo === 'function') log.scrollTo({ top: log.scrollHeight, behavior: reduce ? 'auto' : behavior });
+    else log.scrollTop = log.scrollHeight;
+    pinnedRef.current = true;
+    setPinned(true);
+  };
+
+  const revealCard = (card: Element | null) => {
+    const log = logRef.current;
+    if (!log || !(card instanceof HTMLElement)) return;
+    if (!pinnedRef.current) return;
+    const logBox = log.getBoundingClientRect();
+    const box = card.getBoundingClientRect();
+    if (box.height > log.clientHeight - 16) {
+      log.scrollTop += box.top - logBox.top - 8;
+      return;
+    }
+    scrollToLatest('auto');
+  };
+
+  const onLogScroll = () => {
+    const log = logRef.current;
+    if (!log) return;
+    const next = log.scrollHeight - log.scrollTop - log.clientHeight <= NEAR_BOTTOM;
+    if (next !== pinnedRef.current) {
+      pinnedRef.current = next;
+      setPinned(next);
+    }
+  };
+
+  // After a send the prompt sits at the top of the log with room for the answer;
+  // a reply only follows the reader when they are already at the bottom.
   useEffect(() => {
-    if (!scanResult) return;
-    document.querySelector('article[aria-label="Research screen"]')?.scrollIntoView?.({ block: 'start' });
-  }, [scanResult]);
+    const last = messages[messages.length - 1];
+    const element = lastMessageRef.current;
+    const log = logRef.current;
+    if (!last || !element || !log) return;
+    if (last.sender === 'user') {
+      log.scrollTop += element.getBoundingClientRect().top - log.getBoundingClientRect().top - 12;
+      pinnedRef.current = true;
+      setPinned(true);
+      return;
+    }
+    if (pinnedRef.current) scrollToLatest('auto');
+  }, [messages]);
+
+  // Reveal the newest card once, and only when the reader is at the bottom.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const cards = logRef.current?.querySelectorAll('article[aria-label="Research screen"], article[aria-label="Chart reading"], article[aria-label="Backtest review"], article[aria-label="Backtest result"], article[aria-label="Draft proposal"]');
+      const card = cards && cards.length ? cards[cards.length - 1] : null;
+      if (!card || card === revealedCard.current) return;
+      revealedCard.current = card;
+      revealCard(card);
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [messages, scanResult, review, validatedResult, chartReading, proposal]);
+
+  // The composer grows with the prompt up to five rows (P2-1) and never moves the log.
+  useEffect(() => {
+    const element = promptRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = Math.min(Math.max(element.scrollHeight || 0, 44), 136) + 'px';
+  }, [prompt]);
 
   const append = (sender: ChatMessage['sender'], text: string, extras: Pick<ChatMessage, 'methodLabel' | 'methodTitle' | 'warnings' | 'retryPrompt'> = {}) => {
     setMessages(old => [...old, {
@@ -382,6 +531,8 @@ export const AiCopilotDock: React.FC<Props> = ({
     setApplyStatus('');
     setClipboardStatus('');
     setSaveStatus('');
+    setSentChartImage(null);
+    setPendingDraftBacktest(null);
     pendingApply.current = null;
   };
 
@@ -429,6 +580,8 @@ export const AiCopilotDock: React.FC<Props> = ({
     setApplyStatus('');
     setClipboardStatus('');
     setSaveStatus('');
+    setSentChartImage(null);
+    setPendingDraftBacktest(null);
   };
 
   const cancelPendingRequest = () => {
@@ -1025,7 +1178,13 @@ export const AiCopilotDock: React.FC<Props> = ({
     const text = prompt;
     const image = chartImage;
     setPrompt('');
-    if (image) discardChartImage();
+    if (image) {
+      // The card must still show the image after send (P1-3).
+      setSentChartImage(image);
+      discardChartImage();
+    }
+    // Focus stays in the composer: sending never drops it to <body> (P0-3).
+    promptRef.current?.focus();
     void submitText(text, image);
   };
 
@@ -1044,7 +1203,7 @@ export const AiCopilotDock: React.FC<Props> = ({
 
   const confirmApply = async (candidate: StrategyAST, id: string, successMessage: string) => {
     const applyToWorkspace = onApplyVariation;
-    if (!applyToWorkspace) return;
+    if (!applyToWorkspace) return false;
     const pending = { id, snapshot: JSON.stringify(candidate) };
     pendingApply.current = pending;
     setError('');
@@ -1056,10 +1215,12 @@ export const AiCopilotDock: React.FC<Props> = ({
         pendingApply.current = null;
         setApplied(pending.id);
         setApplyStatus(successMessage);
+        return true;
       } else if (pendingApply.current === pending && pending.snapshot === JSON.stringify(snapshotStrategy(strategy))) {
         pendingApply.current = null;
         setApplied(pending.id);
         setApplyStatus('Workspace already matches this draft. No backtest or broker order was executed.');
+        return true;
       }
     } catch (caught) {
       if (pendingApply.current === pending) {
@@ -1068,17 +1229,39 @@ export const AiCopilotDock: React.FC<Props> = ({
         setError((caught as Error).message);
       }
     }
+    return false;
   };
 
   const apply = async () => {
-    if (!proposal || !onApplyVariation || applied === proposal.id || pendingApply.current) return;
+    if (!proposal || !onApplyVariation || applied === proposal.id || pendingApply.current) return false;
     let candidate: StrategyAST;
     try {
       assertProposalCurrent(proposal, revision.current, proposal.sourceSnapshot, JSON.stringify(strategy));
       candidate = snapshotStrategy(proposal.validatedCandidate);
-    } catch (caught) { setError((caught as Error).message); return; }
-    await confirmApply(candidate, proposal.id, 'Draft applied to the workspace. The assumptions are in the builder; no backtest or broker order was executed.');
+    } catch (caught) { setError((caught as Error).message); return false; }
+    return await confirmApply(candidate, proposal.id, 'Draft applied to the workspace. The assumptions are in the builder; no backtest or broker order was executed.');
   };
+
+  /**
+   * One click from a reviewed draft to a reviewed backtest: apply it, then wait
+   * for the workspace to hold the applied strategy before freezing the review,
+   * so the review can never describe the pre-apply workspace.
+   */
+  const applyAndBacktest = async () => {
+    if (!proposal || !onApplyVariation) return;
+    const id = proposal.id;
+    setPendingDraftBacktest(id);
+    const ok = await apply();
+    if (!ok) setPendingDraftBacktest(null);
+  };
+
+  useEffect(() => {
+    if (!pendingDraftBacktest || applied !== pendingDraftBacktest) return;
+    setPendingDraftBacktest(null);
+    const symbol = symbols.find(candidate => candidate.id === strategy.universe.symbolId);
+    if (symbol) prepareReview('workspace', symbol);
+    else append('assistant', 'The draft is applied, but it has no stock yet. Choose a symbol in the tester, then review a backtest.');
+  }, [pendingDraftBacktest, applied, strategy, symbols]);
 
   const applyScreenDraft = async (override?: StrategyAST) => {
     if (!screenPlan || !onApplyVariation || pendingApply.current) return;
@@ -1128,337 +1311,437 @@ export const AiCopilotDock: React.FC<Props> = ({
   };
 
   const welcome = !messages.length && !review && !proposal && !screenPlan;
+  const cardImage = chartImage ?? sentChartImage;
+  const draftChanges = proposal
+    ? proposal.changes
+      .map(describeDraftChange)
+      .filter((change): change is DraftChange => change !== null)
+      .map(change => withPercentSuffix(change, proposal.validatedCandidate))
+    : [];
+  const headlineChange = draftChanges.find(change => change.plain);
+  const historySaved = historyStatus === 'History stays in this browser.';
+  // ONE polite announcement for the whole conversation: start and finish only.
+  const statusMessage = loading
+    ? 'Stragy is working on your request.'
+    : scanPending
+      ? 'Screen running.'
+      : reviewStatus === 'running'
+        ? 'Backtest running.'
+        : messages.length ? 'Response ready.' : '';
+
+  const closeDraftMenu = () => { if (draftMenuRef.current) draftMenuRef.current.open = false; };
 
   return (
     <section
       aria-label="Research conversation"
-      className={(full ? 'h-full' : 'h-full border-l border-white/10') + ' flex min-h-0 flex-col bg-[#111113]'}
+      className={(full ? 'h-full' : 'h-full border-l border-[var(--line)]') + ' flex min-h-0 flex-col bg-[#111113]'}
       onKeyDown={event => { if (event.key === 'Escape' && onClose) onClose(); }}
     >
-      <div className={(full ? 'max-w-[820px]' : 'max-w-[760px]') + ' mx-auto flex h-full min-h-0 w-full flex-col'}>
-        <div role="log" aria-live="polite" aria-label="Conversation" className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-10">
-          {archivedMessages.length > 0 && (
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-neutral-400">
-              <span>A previous conversation is saved in this browser.</span>
-              <button type="button" onClick={restorePreviousConversation} className="underline decoration-neutral-600 underline-offset-2 hover:text-neutral-200">
-                Restore previous conversation ({archivedMessages.length})
-              </button>
-            </div>
-          )}
-
-          {welcome && (
-            <div className="mx-auto max-w-[680px] pt-6 sm:pt-16">
-              <p className="text-sm text-neutral-400">Stragy research</p>
-              <h1 className="mt-3 max-w-[620px] text-3xl font-medium tracking-[-0.03em] text-neutral-100 sm:text-4xl">Test a trading idea before you trust it.</h1>
-              <p className="mt-4 max-w-[580px] text-sm leading-6 text-neutral-400">
-                Describe a setup or upload a chart. Stragy screens the Nifty 50 on real daily data, shows every assumption, and runs a backtest only after you approve.
-              </p>
-              <div className="mt-7 grid gap-2 sm:grid-cols-3">
-                {STARTERS.map(starter => (
-                  <button
-                    key={starter.label}
-                    type="button"
-                    onClick={() => { setPrompt(''); void submitText(starter.text); }}
-                    className="flex min-h-12 items-center rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-left text-xs leading-5 text-neutral-300 transition hover:border-white/20 hover:text-neutral-100"
-                  >
-                    {starter.label}
-                  </button>
-                ))}
+      <p role="status" aria-live="polite" className="sr-only">{statusMessage}</p>
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={logRef}
+          role="log"
+          aria-label="Conversation"
+          aria-busy={busy || undefined}
+          onScroll={onLogScroll}
+          className="absolute inset-0 min-h-0 overflow-y-auto px-4 py-6 [mask-image:linear-gradient(to_bottom,transparent,#000_8px)] sm:px-6"
+        >
+          <div className="mx-auto w-full max-w-[832px]">
+            {archivedMessages.length > 0 && (
+              <div className="st-meta mb-6 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-2)]">
+                <span>A previous conversation is saved in this browser.</span>
+                <button type="button" onClick={restorePreviousConversation} className="inline-flex min-h-11 items-center underline decoration-[var(--line-strong)] underline-offset-2 transition-colors hover:text-[var(--text-1)] sm:min-h-8">
+                  Restore previous conversation ({archivedMessages.length})
+                </button>
               </div>
-              <p className="mt-6 text-xs leading-5 text-neutral-400">
-                Real NSE daily bars · assumptions shown before anything runs · no broker orders.
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-6">
-            {messages.map(message => message.sender === 'user' ? (
-              <article key={message.id} className="flex justify-end">
-                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-[#24262c] px-4 py-2.5 text-sm leading-6 text-neutral-100 whitespace-pre-wrap break-words">
-                  {message.text}
-                </div>
-              </article>
-            ) : (
-              <article key={message.id} className="max-w-[92%] space-y-1.5">
-                <p className="text-xs uppercase tracking-wide text-neutral-400">Stragy</p>
-                <div className="text-sm leading-7 text-neutral-200 break-words"><MessageText text={message.text} /></div>
-                {message.methodLabel && <p title={message.methodTitle} className="text-xs text-neutral-400">{message.methodLabel}</p>}
-                {message.warnings && message.warnings.length > 0 && (
-                  <details className="text-xs text-neutral-400">
-                    <summary className="cursor-pointer">Warnings ({message.warnings.length})</summary>
-                    <ul className="mt-1 list-disc space-y-1 pl-4">{message.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
-                  </details>
-                )}
-                {message.retryPrompt && (
-                  <button
-                    type="button"
-                    onClick={() => void submitText(message.retryPrompt!)}
-                    className="inline-flex min-h-8 items-center rounded-lg border border-white/15 px-3 py-1 text-xs text-neutral-200 transition hover:bg-white/5"
-                  >
-                    Retry
-                  </button>
-                )}
-              </article>
-            ))}
-
-            {chartReading && screenPlan && (
-              <ChartReadingCard
-                plan={screenPlan}
-                reading={chartReading}
-                busy={busy}
-                canApply={!!onApplyVariation}
-                applied={!!applied && applied.startsWith('screen:')}
-                onUseAsDraft={strategy => void applyScreenDraft(strategy)}
-                onConfirmScan={strategy => void confirmChartScan(strategy)}
-                scanning={scanPending}
-              />
             )}
 
-            {screenPlan && (!awaitingChartConfirm || scanPending || !!scanResult || !!scanError) && (
-              <ScreenResultCard
-                plan={screenPlan}
-                result={scanResult}
-                pending={scanPending}
-                error={scanError}
-                busy={busy}
-                onPrepareBacktest={(symbolId, matchAsOf) => {
-                  const symbol = symbols.find(candidate => candidate.id === symbolId);
-                  if (symbol) prepareReview('screen', symbol, matchAsOf);
-                  else append('assistant', 'The symbol list is unavailable, so I cannot prepare a backtest for that match.');
-                }}
-                onCancelScan={scanPending ? cancelPendingRequest : undefined}
-                onRetryScan={screenPlan && !scanPending ? retryScreenScan : undefined}
-              />
-            )}
-
-            {backtestChoice && screenPlan && (
-              <div aria-label="Choose backtest strategy" className="rounded-xl border border-sky-300/25 bg-[#191b1f] p-4">
-                <p className="text-sm text-neutral-200">
-                  Which strategy should I backtest on {backtestChoice.symbol.ticker}?
+            {welcome && (
+              <div className="mx-auto max-w-[680px] pt-4 sm:pt-12">
+                <h1 className="max-w-[620px] text-3xl font-medium tracking-[-0.02em] text-[var(--text-1)] sm:text-4xl">Test a trading idea before you trust it.</h1>
+                <p className="st-prose mt-4 text-[var(--text-2)]">
+                  Describe a setup or upload a chart. Stragy screens the Nifty 50 on real daily data, shows every assumption, and runs a backtest only after you approve.
                 </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { const choice = backtestChoice; setBacktestChoice(null); prepareReview('screen', choice.symbol, choice.asOf); }}
-                    className="min-h-9 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-200 hover:bg-white/5"
-                  >
-                    Use screen: {screenPlan.strategy.name}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { const choice = backtestChoice; setBacktestChoice(null); prepareReview('workspace', choice.symbol, choice.asOf); }}
-                    className="min-h-9 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-200 hover:bg-white/5"
-                  >
-                    Use my strategy: {strategy.name}
-                  </button>
+                <div className="mt-7 grid gap-2 sm:grid-cols-3">
+                  {STARTERS.map(starter => (
+                    <button
+                      key={starter.label}
+                      type="button"
+                      onClick={() => { setPrompt(''); void submitText(starter.text); }}
+                      className="flex min-h-11 items-center rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3.5 py-2.5 text-left st-meta text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-12"
+                    >
+                      {starter.label}
+                    </button>
+                  ))}
                 </div>
+                <p className="st-meta mt-6 text-[var(--text-3)]">
+                  Real NSE daily bars · assumptions shown before anything runs · no broker orders.
+                </p>
               </div>
             )}
 
-            {review && (
-              <BacktestReviewCard
-                review={review}
-                running={reviewStatus === 'running'}
-                error={reviewError}
-                onApprove={() => void runReview()}
-                onCancelReview={dismissReview}
-                onCancelRun={onCancelResearch ? cancelRun : undefined}
-              />
-            )}
-
-            {proposal && (
-              <article aria-label="Draft proposal" className="rounded-2xl border border-white/10 bg-[#171719] p-4 sm:p-5 space-y-4">
-                <header>
-                  <p className="text-xs uppercase tracking-wide text-neutral-400">Draft · review before use</p>
-                  <h3 className="mt-1 text-lg font-semibold text-neutral-100">{proposal.validatedCandidate.name}</h3>
-                  <p className="mt-1 text-xs text-neutral-400">
-                    {proposal.provider.aiGenerated
-                      ? 'AI-generated via ' + proposal.provider.name + (proposal.provider.model ? ' / ' + proposal.provider.model : '') + '. The rules were schema-validated, not performance-verified.'
-                      : 'Local keyword rules · not AI. Only explicit edits found in your text are proposed.'}
-                  </p>
-                </header>
-                <div>
-                  <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-400">Changes</h4>
-                  <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-neutral-300">
-                    {proposal.changes.length ? proposal.changes.map((change, index) => <li key={index}>{change}</li>) : <li>No parameter changes proposed.</li>}
-                  </ul>
-                </div>
-                <details className="rounded-lg border border-white/8 p-3 text-xs text-neutral-400">
-                  <summary className="cursor-pointer text-neutral-300">Warnings, assumptions and complete strategy</summary>
-                  <ul className="mt-2 list-disc space-y-1 pl-4">
-                    {proposal.warnings.length ? proposal.warnings.map((warning, index) => <li key={index}>{warning}</li>) : <li>No additional warnings.</li>}
-                  </ul>
-                  <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-black/20 p-2">{JSON.stringify(proposal.validatedCandidate, null, 2)}</pre>
-                </details>
-                <p className="text-xs text-neutral-400">Apply changes the workspace draft only. Prepare a separate backtest review to run it. Nothing is saved automatically.</p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className="rounded-lg bg-sky-200 px-3.5 py-2 text-sm font-semibold text-[#101012] hover:bg-sky-100 disabled:opacity-40"
-                    type="button"
-                    disabled={!onApplyVariation || !!pendingApply.current || applied === proposal.id || proposal.sourceSnapshot !== snapshot}
-                    onClick={() => void apply()}
-                  >
-                    Apply draft
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!onResearchBacktest || reviewStatus === 'running'}
-                    onClick={prepareDraftReviewFromButton}
-                    className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-200 hover:bg-white/5 disabled:opacity-40"
-                  >
-                    Prepare backtest
-                  </button>
-                  {onSaveStrategy && (
-                    <button type="button" onClick={() => void save()} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-200 hover:bg-white/5">
-                      Save to My Strategies
+            <div className="space-y-6">
+              {messages.map((message, index) => message.sender === 'user' ? (
+                <article
+                  key={message.id}
+                  ref={index === messages.length - 1 ? lastMessageRef : undefined}
+                  className="flex justify-end"
+                >
+                  <div className="max-w-[min(560px,80%)] whitespace-pre-wrap break-words rounded-[16px] rounded-br-[6px] bg-[var(--surface-3)] px-3.5 py-2.5 text-[15px] leading-[22px] text-[var(--text-1)]">
+                    {message.text}
+                  </div>
+                </article>
+              ) : (
+                <article
+                  key={message.id}
+                  ref={index === messages.length - 1 ? lastMessageRef : undefined}
+                  className="w-full space-y-2"
+                >
+                  {(!messages[index - 1] || messages[index - 1].sender === 'user') && (
+                    <p className="st-meta text-[var(--text-3)]">Stragy</p>
+                  )}
+                  <div className="st-prose break-words text-[var(--text-1)]"><MessageText text={message.text} /></div>
+                  {message.methodLabel && <p title={message.methodTitle} className="st-meta text-[var(--text-3)]">{message.methodLabel}</p>}
+                  {message.warnings && message.warnings.length > 0 && (
+                    <Disclosure summary={'Warnings (' + message.warnings.length + ')'}>
+                      <ul className="list-disc space-y-1 pl-4">{message.warnings.map((warning, warningIndex) => <li key={warningIndex}>{warning}</li>)}</ul>
+                    </Disclosure>
+                  )}
+                  {message.retryPrompt && (
+                    <button
+                      type="button"
+                      onClick={() => void submitText(message.retryPrompt!)}
+                      className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-8"
+                    >
+                      Retry
                     </button>
                   )}
-                  <button type="button" onClick={() => void copy()} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-200 hover:bg-white/5">
-                    Copy draft JSON
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setProposal(null); setClipboardStatus(''); setSaveStatus(''); clipboardGeneration.current++; }}
-                    className="rounded-lg border border-transparent px-3 py-1.5 text-xs text-neutral-400 hover:text-neutral-200"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-                {proposal.sourceSnapshot !== snapshot && <p className="text-xs text-amber-200">The workspace changed after this draft was prepared. Generate a fresh draft before applying.</p>}
-              </article>
-            )}
+                </article>
+              ))}
 
-            {validatedResult && <BacktestResultCard result={validatedResult} onOpenDetails={() => onOpenDetails?.(validatedResult)} />}
-            <div ref={endRef} />
+              {loading && !scanPending && <AssistantPending />}
+
+              {chartReading && screenPlan && (
+                <ChartReadingCard
+                  plan={screenPlan}
+                  reading={chartReading}
+                  busy={busy}
+                  canApply={!!onApplyVariation}
+                  applied={!!applied && applied.startsWith('screen:')}
+                  imageUrl={cardImage?.dataUrl}
+                  imageName={cardImage?.name}
+                  onUseAsDraft={strategy => void applyScreenDraft(strategy)}
+                  onConfirmScan={strategy => void confirmChartScan(strategy)}
+                  scanning={scanPending}
+                />
+              )}
+
+              {screenPlan && (!awaitingChartConfirm || scanPending || !!scanResult || !!scanError) && (
+                <ScreenResultCard
+                  plan={screenPlan}
+                  result={scanResult}
+                  pending={scanPending}
+                  error={scanError}
+                  busy={busy}
+                  onPrepareBacktest={(symbolId, matchAsOf) => {
+                    const symbol = symbols.find(candidate => candidate.id === symbolId);
+                    if (symbol) prepareReview('screen', symbol, matchAsOf);
+                    else append('assistant', 'The symbol list is unavailable, so I cannot prepare a backtest for that match.');
+                  }}
+                  onCancelScan={scanPending ? cancelPendingRequest : undefined}
+                  onRetryScan={screenPlan && !scanPending ? retryScreenScan : undefined}
+                />
+              )}
+
+              {backtestChoice && screenPlan && (
+                <div aria-label="Choose backtest strategy" role="group">
+                  <CardShell
+                    density="compact"
+                    title={'Which strategy should I backtest on ' + backtestChoice.symbol.ticker + '?'}
+                    meta="Nothing has been run."
+                  >
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { const choice = backtestChoice; setBacktestChoice(null); prepareReview('screen', choice.symbol, choice.asOf); }}
+                        className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-8"
+                      >
+                        Use screen: {screenPlan.strategy.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { const choice = backtestChoice; setBacktestChoice(null); prepareReview('workspace', choice.symbol, choice.asOf); }}
+                        className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-8"
+                      >
+                        Use my strategy: {strategy.name}
+                      </button>
+                    </div>
+                  </CardShell>
+                </div>
+              )}
+
+              {review && (
+                <BacktestReviewCard
+                  review={review}
+                  running={reviewStatus === 'running'}
+                  error={reviewError}
+                  onApprove={() => void runReview()}
+                  onCancelReview={dismissReview}
+                  onCancelRun={onCancelResearch ? cancelRun : undefined}
+                />
+              )}
+
+              {proposal && (
+                <article aria-label="Draft proposal">
+                  <CardShell
+                    title={headlineChange ? changeTitle(headlineChange) : proposal.validatedCandidate.name}
+                    meta={proposal.provider.aiGenerated
+                      ? 'AI draft via ' + proposal.provider.name + (proposal.provider.model ? ' / ' + proposal.provider.model : '') + ' · schema-validated, not performance-verified' + (draftChanges.length > 1 ? ' · ' + draftChanges.length + ' changes' : '')
+                      : 'Local keyword rules · not AI' + (draftChanges.length > 1 ? ' · ' + draftChanges.length + ' changes' : '')}
+                    state="idle"
+                    status={proposal.provider.aiGenerated ? 'Draft · not applied' : 'Draft from rules · not applied'}
+                    footer={(
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            aria-label={applied === proposal.id ? 'Draft applied' : 'Apply draft'}
+                            disabled={!onApplyVariation || !!pendingApply.current || applied === proposal.id || proposal.sourceSnapshot !== snapshot}
+                            onClick={() => void apply()}
+                            className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] bg-[var(--accent)] px-3.5 font-semibold text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9"
+                          >
+                            {applied === proposal.id ? 'Applied' : 'Apply'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!onResearchBacktest || reviewStatus === 'running' || !!pendingApply.current || applied === proposal.id || proposal.sourceSnapshot !== snapshot}
+                            onClick={() => void applyAndBacktest()}
+                            className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8"
+                          >
+                            Apply and backtest
+                          </button>
+                          <details ref={draftMenuRef} className="relative ml-auto">
+                            <summary
+                              aria-label="More draft actions"
+                              title="More draft actions"
+                              className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-[var(--r-btn)] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] [&::-webkit-details-marker]:hidden sm:min-h-8 sm:min-w-8"
+                            >
+                              <MoreHorizontal size={16} aria-hidden="true" />
+                            </summary>
+                            <div className="mt-1 space-y-0.5 border-t border-[var(--line)] pt-1">
+                              {onSaveStrategy && (
+                                <button type="button" onClick={() => { closeDraftMenu(); void save(); }} className={DRAFT_MENU_ITEM}>Save to My Strategies</button>
+                              )}
+                              <button type="button" onClick={() => { closeDraftMenu(); void copy(); }} className={DRAFT_MENU_ITEM}>Copy draft JSON</button>
+                              <button
+                                type="button"
+                                onClick={() => { closeDraftMenu(); setProposal(null); setClipboardStatus(''); setSaveStatus(''); clipboardGeneration.current++; }}
+                                className={DRAFT_MENU_ITEM}
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </details>
+                        </div>
+                        {proposal.sourceSnapshot !== snapshot && <p className="st-meta text-[#f5d383]">The workspace changed after this draft was prepared. Generate a fresh draft before applying.</p>}
+                      </div>
+                    )}
+                  >
+                    <div className="space-y-2">
+                      <h4 className="st-meta font-medium text-[var(--text-3)]">Changes</h4>
+                      {draftChanges.length ? (
+                        <dl className="divide-y divide-[var(--line)]">
+                          {draftChanges.map((change, changeIndex) => (
+                            <div key={changeIndex} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 py-1.5 first:pt-0 last:pb-0">
+                              <dt className="text-[13px] leading-5 text-[var(--text-2)]">{change.label}</dt>
+                              {change.value && <dd className="st-tnum text-[13px] leading-5 font-medium text-[var(--text-1)]">{change.value}</dd>}
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <p className="text-[13px] leading-5 text-[var(--text-2)]">No field changes were proposed.</p>
+                      )}
+                    </div>
+                    <p className="st-meta text-[var(--text-3)]">Applying changes the workspace draft only. Nothing is saved or run automatically.</p>
+                    <Disclosure summary="Warnings, assumptions and complete strategy">
+                      <div className="space-y-2">
+                        <ul className="list-disc space-y-1 pl-4">
+                          {proposal.warnings.length ? proposal.warnings.map((warning, warningIndex) => <li key={warningIndex}>{warning}</li>) : <li>No additional warnings.</li>}
+                        </ul>
+                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[12px] leading-5 text-[var(--text-2)]">{JSON.stringify(proposal.validatedCandidate, null, 2)}</pre>
+                      </div>
+                    </Disclosure>
+                  </CardShell>
+                </article>
+              )}
+
+              {validatedResult && <BacktestResultCard result={validatedResult} onOpenDetails={() => onOpenDetails?.(validatedResult)} />}
+              <div ref={endRef} />
+            </div>
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-white/8 bg-[#111113] px-4 py-3 sm:px-6 sm:py-4">
-          <div className={(full ? 'max-w-[820px]' : 'max-w-[760px]') + ' mx-auto space-y-2'}>
-            {applyStatus && <p role="status" className="text-xs text-neutral-400">{applyStatus}</p>}
-            {clipboardStatus && <p role="status" className="text-xs text-neutral-400">{clipboardStatus}</p>}
-            {saveStatus && <p role="status" className="text-xs text-neutral-400">{saveStatus}</p>}
-            {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
-            {scanPending && <p role="status" className="text-xs text-neutral-400">Scanning actual current daily data. Results are pending, not zero.</p>}
-            {loading && !scanPending && <p role="status" className="text-xs text-neutral-400">Preparing a response with validated tools…</p>}
-            {reviewStatus === 'running' && <p role="status" className="text-xs text-neutral-400">Backtest running on the reviewed assumptions…</p>}
-
-            <form
-              onSubmit={send}
-              data-testid="research-composer"
-              onDragEnter={event => {
-                if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) setDragActive(true);
-              }}
-              onDragOver={event => {
-                if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) {
-                  event.preventDefault();
-                  setDragActive(true);
-                }
-              }}
-              onDragLeave={event => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false);
-              }}
-              onDrop={dropChartImage}
+        {!pinned && messages.length > 0 && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-end pr-3">
+            <button
+              type="button"
+              data-testid="jump-to-latest"
+              onClick={() => scrollToLatest()}
+              className="pointer-events-auto st-meta inline-flex min-h-11 items-center rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[var(--text-2)] shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-colors hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
             >
-              <label htmlFor="copilot-prompt" className="sr-only">Research request</label>
-              <div className={(dragActive ? 'border-sky-300/60 bg-sky-400/5' : 'border-white/12 bg-[#18181b]') + ' rounded-2xl border px-3 py-2 shadow-lg shadow-black/20 transition focus-within:border-sky-300/50'}>
-                {chartImage && (
-                  <div className="mb-2 flex items-center gap-2 rounded-xl border border-white/10 bg-[#101012] p-2">
-                    <img src={chartImage.dataUrl} alt="Attached chart preview" className="h-12 w-16 shrink-0 rounded object-cover" />
-                    <div className="min-w-0 flex-1 text-xs leading-4">
-                      <p className="truncate text-neutral-300">{chartImage.name}</p>
-                      <p className="text-neutral-400">{fileSizeLabel(chartImage.bytes)}{chartImage.downscaled ? ' · resized for upload' : ''}</p>
+              Jump to latest
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-[var(--line)] bg-[#111113] px-4 py-3 sm:px-6 sm:py-4">
+        <div className="mx-auto w-full max-w-[832px] space-y-2">
+          {applyStatus && <p role="status" className="st-meta text-[var(--text-3)]">{applyStatus}</p>}
+          {clipboardStatus && <p role="status" className="st-meta text-[var(--text-3)]">{clipboardStatus}</p>}
+          {saveStatus && <p role="status" className="st-meta text-[var(--text-3)]">{saveStatus}</p>}
+          {error && <p role="alert" className="st-meta text-[var(--down)]">{error}</p>}
+          {reviewStatus === 'running' && <p role="status" className="st-meta text-[var(--text-2)]">Backtest running on the reviewed assumptions…</p>}
+
+          <form
+            onSubmit={send}
+            data-testid="research-composer"
+            onDragEnter={event => {
+              if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) setDragActive(true);
+            }}
+            onDragOver={event => {
+              if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) {
+                event.preventDefault();
+                setDragActive(true);
+              }
+            }}
+            onDragLeave={event => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false);
+            }}
+            onDrop={dropChartImage}
+          >
+            <label htmlFor="copilot-prompt" className="sr-only">Research request</label>
+            <div className={(dragActive ? 'border-[var(--accent)]/60 bg-[var(--accent)]/[0.06]' : 'border-[var(--line-strong)] bg-[#18181b]') + ' rounded-[16px] border px-3 py-2 transition-colors focus-within:[outline:2px_solid_rgba(168,199,250,0.75)] focus-within:[outline-offset:2px]'}>
+              {chartImage && (
+                <div className="mb-2 flex items-center gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] p-2">
+                  <img src={chartImage.dataUrl} alt="Attached chart preview" className="h-12 w-16 shrink-0 rounded object-cover" />
+                  <div className="min-w-0 flex-1 text-[12px] leading-4">
+                    <p className="truncate text-[var(--text-2)]">{chartImage.name}</p>
+                    <p className="text-[var(--text-3)]">{fileSizeLabel(chartImage.bytes)}{chartImage.downscaled ? ' · resized for upload' : ''}</p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Remove attached chart image"
+                    onClick={discardChartImage}
+                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--r-btn)] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-8 sm:min-w-8"
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {preparingImage && <p role="status" className="st-meta mb-1 px-1 text-[var(--text-3)]">Preparing chart image…</p>}
+              {imageError && <p role="alert" className="st-meta mb-1 px-1 text-[var(--down)]">{imageError}</p>}
+              {dragActive && <p className="st-meta mb-1 px-1 text-[var(--accent)]">Drop a chart image to attach it.</p>}
+              <textarea
+                id="copilot-prompt"
+                ref={promptRef}
+                rows={1}
+                maxLength={4000}
+                value={prompt}
+                onChange={event => {
+                  setPrompt(event.target.value);
+                  if (scanPending) cancelPendingRequest();
+                }}
+                onPaste={pasteChartImage}
+                onKeyDown={onComposerKeyDown}
+                placeholder={chartImage ? 'Optional hint for this chart…' : 'Describe what you want to research…'}
+                // The global :focus-visible ring would draw inside the composer box;
+                // the wrapper carries the single ring instead (P0-4 double ring).
+                style={{ outline: 'none' }}
+                className="max-h-[136px] min-h-11 w-full resize-none overflow-y-auto bg-transparent px-1 py-2.5 text-[15px] leading-6 text-[var(--text-1)] caret-[var(--accent)] placeholder:text-[var(--text-3)]"
+              />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-0.5">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={CHART_IMAGE_ACCEPT}
+                    aria-label="Chart image file"
+                    tabIndex={-1}
+                    className="sr-only"
+                    onChange={event => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = '';
+                      void attachChartFile(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Attach chart image"
+                    title="Attach a chart image (PNG, JPEG or WebP up to 5 MB)"
+                    disabled={loading || reviewStatus === 'running' || preparingImage || !!pendingApply.current}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--r-btn)] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 sm:min-w-8"
+                  >
+                    <ImagePlus size={15} aria-hidden="true" />
+                  </button>
+                  <details className="relative text-[12px] text-[var(--text-3)]">
+                    <summary aria-label="Request options" className="flex min-h-11 cursor-pointer list-none items-center whitespace-nowrap rounded-[var(--r-btn)] px-2 transition-colors hover:text-[var(--text-1)] [&::-webkit-details-marker]:hidden sm:min-h-8">
+                      <span className="sm:hidden">Options</span>
+                      <span className="hidden sm:inline">Request options</span>
+                    </summary>
+                    <div className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-[var(--r-inner)] border border-[var(--line)] bg-[var(--surface-2)] p-3 shadow-[0_12px_32px_rgba(0,0,0,0.45)]">
+                      <label className="flex items-start gap-2 text-[12px] leading-4 text-[var(--text-2)]">
+                        <input type="checkbox" checked={allowLocal} onChange={event => setAllowLocal(event.target.checked)} className="mt-0.5" />
+                        Allow local keyword fallback (not AI)
+                      </label>
+                      <p className="mt-2 text-[12px] leading-4 text-[var(--text-3)]">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>
                     </div>
+                  </details>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {/* One control in this slot: send, or cancel while a request runs. */}
+                  {busy ? (
                     <button
                       type="button"
-                      aria-label="Remove attached chart image"
-                      onClick={discardChartImage}
-                      className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/5 hover:text-neutral-100"
+                      onClick={reviewStatus === 'running' ? cancelRun : cancelPendingRequest}
+                      className="st-meta inline-flex min-h-11 items-center whitespace-nowrap rounded-[10px] border border-[var(--line-strong)] px-3.5 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:min-h-9"
                     >
-                      <X size={13} />
+                      Cancel research
                     </button>
-                  </div>
-                )}
-                {preparingImage && <p role="status" className="mb-1 px-1 text-xs text-neutral-400">Preparing chart image…</p>}
-                {imageError && <p role="alert" className="mb-1 px-1 text-xs text-red-300">{imageError}</p>}
-                {dragActive && <p className="mb-1 px-1 text-xs text-sky-200">Drop a chart image to attach it.</p>}
-                <textarea
-                  id="copilot-prompt"
-                  ref={promptRef}
-                  rows={2}
-                  maxLength={4000}
-                  value={prompt}
-                  onChange={event => {
-                    setPrompt(event.target.value);
-                    if (scanPending) cancelPendingRequest();
-                  }}
-                  onPaste={pasteChartImage}
-                  onKeyDown={onComposerKeyDown}
-                  placeholder={chartImage ? 'Optional hint for this chart…' : 'Describe what you want to research…'}
-                  className="max-h-40 min-h-[48px] w-full resize-none bg-transparent px-1 py-1.5 text-sm leading-6 text-neutral-100 outline-none placeholder:text-neutral-400"
-                />
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-1">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept={CHART_IMAGE_ACCEPT}
-                      aria-label="Chart image file"
-                      tabIndex={-1}
-                      className="sr-only"
-                      onChange={event => {
-                        const file = event.currentTarget.files?.[0];
-                        event.currentTarget.value = '';
-                        void attachChartFile(file);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Attach chart image"
-                      title="Attach a chart image (PNG, JPEG or WebP up to 5 MB)"
-                      disabled={loading || reviewStatus === 'running' || preparingImage || !!pendingApply.current}
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex min-h-6 min-w-6 items-center justify-center rounded-lg p-1.5 text-neutral-400 hover:bg-white/5 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <ImagePlus size={14} />
-                    </button>
-                    <details className="relative text-xs text-neutral-400">
-                      <summary className="flex min-h-6 cursor-pointer select-none items-center rounded px-1 py-1 hover:text-neutral-300">Request options</summary>
-                      <div className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-xl border border-white/10 bg-[#1d1d20] p-3 shadow-xl">
-                        <label className="flex gap-2 text-xs text-neutral-300">
-                          <input type="checkbox" checked={allowLocal} onChange={event => setAllowLocal(event.target.checked)} />
-                          Allow local keyword fallback (not AI)
-                        </label>
-                        <p className="mt-2 text-xs text-neutral-400">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>
-                      </div>
-                    </details>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {busy && (
-                      <button type="button" onClick={reviewStatus === 'running' ? cancelRun : cancelPendingRequest} className="min-h-6 rounded-lg px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200">
-                        Cancel research
-                      </button>
-                    )}
+                  ) : (
                     <button
                       type="submit"
                       disabled={!canSubmit}
-                      className="flex items-center gap-1.5 rounded-xl bg-sky-200 px-3 py-1.5 text-xs font-semibold text-[#101012] hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="st-meta inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-[var(--accent)] px-3.5 font-semibold text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9"
                     >
-                      <Send size={13} />
+                      <Send size={13} aria-hidden="true" />
                       Send request
                     </button>
-                  </div>
+                  )}
                 </div>
               </div>
-            </form>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-400">
-              <span>Enter to send · Shift+Enter for a new line · no broker orders</span>
             </div>
-            <p className="text-xs text-neutral-400">{historyStatus} Research output is not investment advice.</p>
-            <div className="flex flex-wrap gap-3 text-xs text-neutral-400">
-              {onClose && <button type="button" onClick={onClose} className="flex min-h-6 items-center gap-1 hover:text-neutral-300"><X size={12} /> Close chat</button>}
-              {archivedMessages.length > 0 && <button type="button" onClick={restorePreviousConversation} className="flex min-h-6 items-center gap-1 hover:text-neutral-300"><Plus size={12} /> Restore previous</button>}
-            </div>
+          </form>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <p className="st-meta hidden text-[var(--text-3)] sm:block">Enter to send · Shift+Enter for a new line · no broker orders</p>
+            <p className="st-meta text-[var(--text-3)]">
+              <span className={historySaved ? 'sm:hidden' : ''}>{historySaved ? 'History stays in this browser · not investment advice' : historyStatus}</span>
+              {historySaved && <span className="hidden sm:inline">{historyStatus} Research output is not investment advice.</span>}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {onClose && (
+              <button type="button" onClick={onClose} className="st-meta inline-flex min-h-11 items-center gap-1 text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] sm:min-h-8">
+                <X size={12} aria-hidden="true" /> Close chat
+              </button>
+            )}
+            {archivedMessages.length > 0 && (
+              <button type="button" onClick={restorePreviousConversation} className="st-meta inline-flex min-h-11 items-center gap-1 text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] sm:min-h-8">
+                <Plus size={12} aria-hidden="true" /> Restore previous
+              </button>
+            )}
           </div>
         </div>
       </div>

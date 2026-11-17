@@ -2,8 +2,11 @@ import React from 'react';
 import type { ScanResult } from '../../client/api';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import { formatNumber } from '../../client/format';
+import { formatDate } from '../../shared/format';
 import { describeUnmatchedRule, formatIndicatorValue, getIndicatorLabel, humanObservationFreshness, humanSourceLabel } from '../../shared/strategy/renderPlainLanguage';
-import { truncateAtWord } from '../../shared/format';
+import { CardShell, type CardState } from '../common/CardShell';
+import { DataTable, type DataColumn } from '../common/DataTable';
+import { Disclosure } from '../common/Disclosure';
 import { summarizeProviderFailures } from './researchFollowUp';
 
 interface Props {
@@ -17,69 +20,62 @@ interface Props {
   onRetryScan?: () => void;
 }
 
-const methodLabel = (plan: ResearchScreenPlan) => plan.provider.aiGenerated
-  ? 'AI-assisted plan using ' + plan.provider.name + (plan.provider.model ? ' / ' + plan.provider.model : '') + '. Strategy rules were validated before scanning.'
-  : plan.method === 'rule_parser'
-    ? 'Built-in RSI rule parser (not AI).'
-    : 'Local planning (not AI).';
-
 type ScanMatch = ScanResult['matches'][number];
+type IndicatorEntry = { id: string; label: string; value: number };
 
-const MatchRow: React.FC<{
-  match: ScanMatch;
-  plan: ResearchScreenPlan;
-  busy?: boolean;
-  scoreLabel?: string;
-  onPrepareBacktest: (symbolId: number, asOf?: string) => void;
-  asOfFallback?: string;
-  latestObservedDate?: string;
-}> = ({ match, plan, busy, scoreLabel, onPrepareBacktest, asOfFallback, latestObservedDate }) => {
-  const entryReferences = new Set<string>();
+const universeLabel = (universe: string) => universe === 'NIFTY_50'
+  ? 'Nifty 50'
+  : universe.replace(/_/g, ' ').toLowerCase().replace(/^./, character => character.toUpperCase());
+
+const methodShort = (plan: ResearchScreenPlan) => plan.provider.aiGenerated
+  ? 'AI-assisted plan · ' + plan.provider.name
+  : plan.method === 'rule_parser'
+    ? 'Built-in rule parser · not AI'
+    : 'Local planning · not AI';
+
+/** One entry per indicator id *and* label (P1-10: the old rows repeated RSI twice). */
+function indicatorEntries(plan: ResearchScreenPlan, match: ScanMatch): IndicatorEntry[] {
+  const references = new Set<string>();
   for (const rule of plan.strategy.rules.entry) {
-    entryReferences.add(rule.leftIndicator);
-    if (rule.rightIndicator) entryReferences.add(rule.rightIndicator);
+    references.add(rule.leftIndicator);
+    if (rule.rightIndicator) references.add(rule.rightIndicator);
   }
-  const indicators = plan.strategy.indicators
-    .filter(indicator => entryReferences.has(indicator.id) || [...entryReferences].some(reference => reference.startsWith(indicator.id + '_') || reference.startsWith(indicator.id + '.')))
-    .map(indicator => ({ label: getIndicatorLabel(indicator.id, plan.strategy.indicators), value: match.indicatorValues[indicator.id] }))
-    .filter(entry => typeof entry.value === 'number')
-    .slice(0, 3);
-  return (
-    <li className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-neutral-100">{match.ticker} <span className="font-normal text-neutral-500">{match.name}</span></p>
-        <p className="text-[11px] text-neutral-400">
-          Close {formatNumber(match.lastClose)} · {match.lastDate} · {humanSourceLabel(match.provenance.source)} · {humanObservationFreshness(match.provenance.freshness, match.lastDate, latestObservedDate)}
-        </p>
-        <p className="text-[11px] text-neutral-500">
-          {indicators.length ? indicators.map(entry => entry.label + ' ' + formatIndicatorValue(entry.label, entry.value!)).join(' · ') : 'Indicator values unavailable'}
-        </p>
-        {match.unmatchedRules?.length ? (
-          <ul className="mt-1 space-y-0.5 text-[11px] text-amber-200/90">
-            {match.unmatchedRules.map((missing, index) => {
-              const rule = missing.ruleIndex !== undefined ? plan.strategy.rules.entry[missing.ruleIndex] : undefined;
-              return <li key={index}>Missing: {rule ? describeUnmatchedRule(rule, plan.strategy.indicators, missing.currentActualLeft, missing.currentActualRight) : missing.rule}</li>;
-            })}
-          </ul>
-        ) : null}
-      </div>
-      <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
-        {scoreLabel && <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-200">{scoreLabel}</span>}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onPrepareBacktest(match.symbolId, match.lastDate || asOfFallback)}
-          className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-neutral-200 hover:bg-white/5 disabled:opacity-40"
-        >
-          Prepare backtest for {match.ticker}
-        </button>
-      </div>
-    </li>
-  );
+  const seen = new Set<string>();
+  const entries: IndicatorEntry[] = [];
+  for (const indicator of plan.strategy.indicators) {
+    const referenced = references.has(indicator.id)
+      || [...references].some(reference => reference.startsWith(indicator.id + '_') || reference.startsWith(indicator.id + '.'));
+    if (!referenced) continue;
+    const value = match.indicatorValues[indicator.id];
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    const label = getIndicatorLabel(indicator.id, plan.strategy.indicators);
+    if (seen.has(indicator.id) || seen.has(label)) continue;
+    seen.add(indicator.id);
+    seen.add(label);
+    entries.push({ id: indicator.id, label, value });
+    if (entries.length === 3) break;
+  }
+  return entries;
+}
+
+const indicatorLine = (entries: IndicatorEntry[]) => entries.length
+  ? entries.map(entry => entry.label + ' ' + formatIndicatorValue(entry.label, entry.value)).join(' · ')
+  : 'Not reported';
+
+/** Close matches are a lead, never a match: one sentence says so, once. */
+const scoreLabel = (match: ScanMatch, total: number) => {
+  if (total <= 0) return 'Partial';
+  const score = typeof match.score === 'number' && Number.isFinite(match.score)
+    ? Math.round(Math.max(0, Math.min(1, match.score)) * total)
+    : null;
+  return score === null ? 'Partial' : score + '/' + total;
 };
 
+/**
+ * A read-only screen: one headline, one table of matches, a quiet close-matches
+ * section, and provenance behind a disclosure. No nested boxes, one status chip.
+ */
 export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error, busy, onPrepareBacktest, onCancelScan, onRetryScan }) => {
-  const [showAllNear, setShowAllNear] = React.useState(false);
   const observedInMatches = result
     ? result.matches.reduce((latest, match) => match.lastDate > latest ? match.lastDate : latest, '')
     : '';
@@ -93,153 +89,211 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
   const demo = result?.mode === 'demo';
   const angelData = sources.includes('ANGEL_SMARTAPI') || /angel/i.test(result?.dataSource ?? '');
   const nearMatches = result ? (result.nearMatches ?? []).filter(near => !result.matches.some(match => match.symbolId === near.symbolId)) : [];
+  const totalConditions = plan.strategy.rules.entry.length;
+
+  /** One sentence under the headline. No second count sentence repeats the headline. */
+  const summaryLine = !result
+    ? ''
+    : result.succeeded === 0
+      ? 'No successful data coverage. Matches are unknown, not zero.'
+      : result.matched === 0
+        ? 'No stock meets all conditions today.'
+        : (() => {
+          const parts: string[] = [];
+          if (result.matched > result.matches.length) parts.push('Showing the first ' + result.matches.length + ' of ' + result.matched + ' matches');
+          if (nearMatches.length) parts.push(nearMatches.length + ' close ' + (nearMatches.length === 1 ? 'match' : 'matches') + ' below');
+          return (parts.length ? parts.join('. ') + '.' : 'Every condition held on the latest session.');
+        })();
+
+  const state: CardState = pending ? 'pending' : error && !result ? 'error' : partial ? 'partial' : 'idle';
+  const status = pending
+    ? 'Scanning'
+    : error && !result
+      ? 'Could not complete'
+      : partial && result
+        ? result.succeeded + ' of ' + result.requested + ' evaluated'
+        : demo
+          ? 'Demo data — not observed'
+          : angelData
+            ? 'Angel One daily data'
+            : result
+              ? humanSourceLabel(result.dataSource ?? '') || 'Observed public data'
+              : 'Read-only';
+
+  const columns: DataColumn<ScanMatch>[] = [
+    {
+      key: 'symbol',
+      header: 'Symbol',
+      sticky: true,
+      render: match => (
+        <span className="flex min-w-0 flex-col">
+          <span className="font-semibold text-[var(--text-1)]">{match.ticker}</span>
+          <span className="st-meta block max-w-[9rem] truncate text-[var(--text-3)]">{match.name}</span>
+        </span>
+      ),
+    },
+    { key: 'close', header: 'Close', align: 'right', render: match => formatNumber(match.lastClose) },
+    { key: 'indicators', header: 'Indicators', render: match => <span className="st-meta text-[var(--text-2)]">{indicatorLine(indicatorEntries(plan, match))}</span> },
+    {
+      key: 'conditions',
+      header: 'Conditions',
+      align: 'right',
+      render: match => (result?.matches.includes(match)
+        ? totalConditions > 0 ? totalConditions + '/' + totalConditions : '—'
+        : scoreLabel(match, totalConditions)),
+    },
+    {
+      key: 'action',
+      header: 'Action',
+      align: 'right',
+      render: match => (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onPrepareBacktest(match.symbolId, match.lastDate || result?.asOf)}
+          aria-label={'Prepare backtest for ' + match.ticker}
+          className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] px-2 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--text-disabled)] sm:min-h-8"
+        >
+          Backtest
+        </button>
+      ),
+    },
+  ];
+
+  const rowKey = (match: ScanMatch) => String(match.symbolId);
+
+  const footer = pending && onCancelScan ? (
+    <button
+      type="button"
+      onClick={onCancelScan}
+      className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] px-2.5 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-8"
+    >
+      Cancel scan
+    </button>
+  ) : (
+    <p className="st-meta text-[var(--text-3)]">Read-only screen. Preparing a backtest does not run it.</p>
+  );
 
   return (
-    <article aria-label="Research screen" className="rounded-2xl border border-white/10 bg-[#171719] p-4 sm:p-5 space-y-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] uppercase tracking-wide text-neutral-500">Read-only screen · Nifty 50</p>
-          <h3 className="mt-1 text-lg font-semibold text-neutral-100">{truncateAtWord(plan.strategy.name, 70)}</h3>
-          <p className="mt-1 text-xs text-neutral-400">{methodLabel(plan)}</p>
-        </div>
-        {pending && <span className="rounded-full border border-sky-400/30 px-2.5 py-1 text-[11px] text-sky-200">Scanning…</span>}
-        {result && !demo && <span className="rounded-full border border-emerald-400/30 px-2.5 py-1 text-[11px] text-emerald-200">{angelData ? 'Angel One daily data' : 'Observed public data'}</span>}
-        {demo && <span className="rounded-full border border-amber-400/40 px-2.5 py-1 text-[11px] text-amber-200">Demo data — not observed</span>}
-      </header>
+    <article aria-label="Research screen">
+      <CardShell
+        title={plan.strategy.name}
+        meta={'Read-only screen · ' + universeLabel(plan.universe) + ' · ' + methodShort(plan)}
+        state={state}
+        status={status}
+        footer={footer}
+      >
+        {pending && (
+          <div className="space-y-2">
+            <div className="st-prose space-y-2" aria-hidden="true">
+              <div className="h-3 w-[35%] animate-pulse rounded bg-white/[0.06]" />
+              <div className="h-3 w-[70%] animate-pulse rounded bg-white/[0.06]" />
+              <div className="h-3 w-[55%] animate-pulse rounded bg-white/[0.06]" />
+            </div>
+            <p className="st-meta text-[var(--text-2)]">Results are pending, not zero matches.</p>
+          </div>
+        )}
 
-      {pending && (
-        <div className="flex flex-wrap items-center justify-between gap-3" role="status">
-          <p className="text-sm text-neutral-300">Scanning actual current daily data. Results pending, not zero matches.</p>
-          {onCancelScan && <button type="button" onClick={onCancelScan} className="text-xs underline text-neutral-400">Cancel scan</button>}
-        </div>
-      )}
-
-      {error && (
-        <div role="alert" className="rounded-lg border border-red-400/30 bg-red-400/5 px-3 py-2 text-xs text-red-200">
-          <p>{error.replace(/[.\s]+$/, '')}.</p>
-          {!/not a zero-match result/i.test(error) && <p className="mt-1">No zero-match conclusion.</p>}
-          {onRetryScan && <button type="button" disabled={pending} onClick={onRetryScan} className="mt-2 rounded-lg border border-red-300/40 px-3 py-1.5 text-xs font-medium text-red-100 hover:bg-red-400/10 disabled:opacity-40">Retry scan</button>}
-        </div>
-      )}
-
-      {result && (
-        <div aria-label="Screen results" className="space-y-4">
-          <div>
-            <h4 className="text-base font-semibold text-neutral-100">
-              {result.succeeded > 0 ? (result.matched + (result.matched === 1 ? ' match' : ' matches')) : 'Matches unknown'}
-            </h4>
-            {result.succeeded > 0 ? (
-              result.matched === 0 ? <p className="text-sm text-neutral-300">No stock meets all conditions today.</p> : null
-            ) : (
-              <p className="text-sm text-neutral-300">No successful data coverage. Matches are unknown, not zero.</p>
-            )}
-            <p className="mt-1 text-xs text-neutral-400">
-              Evaluated {result.succeeded} of {result.requested} requested successfully · {result.unavailable} unavailable · {result.failed} failed · source {source} · observed through {observationDate}
-            </p>
-            {result.succeeded > 0 && (
-              <p className="mt-2 text-sm font-medium text-neutral-200">
-                {result.matched} full {result.matched === 1 ? 'match' : 'matches'} · {nearMatches.length} close {nearMatches.length === 1 ? 'match' : 'matches'}{nearMatches.length ? ' (one condition missing)' : ''}
-              </p>
+        {error && (
+          <div role="alert" className="space-y-2">
+            <p className="text-[15px] leading-6 text-[var(--text-1)]">{error.replace(/[.\s]+$/, '')}.</p>
+            {!/not a zero-match result/i.test(error) && <p className="st-meta text-[var(--text-2)]">No zero-match conclusion.</p>}
+            {onRetryScan && (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={onRetryScan}
+                className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-1)] transition-colors hover:bg-[var(--surface-hover)] disabled:opacity-40 sm:min-h-8"
+              >
+                Retry scan
+              </button>
             )}
           </div>
+        )}
 
-          {partial && (
-            <p role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-amber-100">
-              Partial coverage. {result.succeeded} of {result.requested} stocks produced usable observations; matches among the rest are unknown.
-            </p>
-          )}
-          {failures && <p className="text-xs text-neutral-400">Provider failures: {failures}</p>}
-          {result.matched > result.matches.length && (
-            <p className="text-xs text-neutral-400">Showing the first {result.matches.length} of {result.matched} matches.</p>
-          )}
+        {result && (
+          <div aria-label="Screen results" role="group" className="space-y-5">
+            <div className="space-y-1">
+              <p className="st-stat font-semibold text-[var(--text-1)]">
+                {result.succeeded > 0 ? (result.matched + (result.matched === 1 ? ' match' : ' matches')) : 'Matches unknown'}
+              </p>
+              <p className="text-[15px] leading-6 text-[var(--text-2)]">{summaryLine}</p>
+              <p className="st-meta text-[var(--text-3)]">
+                {result.succeeded} of {result.requested} evaluated · {result.unavailable} unavailable · {result.failed} failed · {source} · observed through {/^\d{4}-\d{2}-\d{2}$/.test(observationDate) ? formatDate(observationDate) : observationDate}
+              </p>
+              {partial && (
+                <p className="st-meta text-[#f5d383]">
+                  Partial coverage: matches among the {result.requested - result.succeeded} unevaluated stocks are unknown.
+                </p>
+              )}
+              {failures && <p className="st-meta text-[var(--text-3)]">Provider failures: {failures}</p>}
+            </div>
 
-          {result.matches.length > 0 && (
-            <ul className="divide-y divide-white/8 rounded-xl border border-white/8">
-              {result.matches.map(match => (
-                <MatchRow
-                  key={match.symbolId}
-                  match={match}
-                  plan={plan}
-                  busy={busy}
-                  onPrepareBacktest={onPrepareBacktest}
-                  asOfFallback={result.asOf}
-                  latestObservedDate={observationDate}
-                />
-              ))}
-            </ul>
-          )}
+            {result.matches.length > 0 && (
+              <DataTable
+                caption={'Screen matches, ' + result.matches.length + (result.matches.length === 1 ? ' row' : ' rows')}
+                columns={columns}
+                rows={result.matches}
+                rowKey={rowKey}
+              />
+            )}
 
-          {nearMatches.length > 0 && (() => {
-            const totalConditions = plan.strategy.rules.entry.length;
-            const visible = showAllNear ? nearMatches : nearMatches.slice(0, 3);
-            return (
-              <section aria-label="Close matches" className="rounded-xl border border-amber-400/25 bg-amber-400/[0.03] p-3 space-y-2">
-                <div>
-                  <h4 className="text-sm font-semibold text-amber-100">Close matches (missing one condition)</h4>
-                  <p className="mt-1 text-[11px] text-neutral-400">
-                    Not full matches. Each score counts the entry conditions met, so treat these as research leads.
-                  </p>
+            {nearMatches.length > 0 && (
+              <section aria-label="Close matches" className="space-y-2">
+                <div className="space-y-0.5">
+                  <h4 className="text-[15px] font-semibold leading-6 text-[var(--text-1)]">Close matches (missing one condition)</h4>
+                  <p className="st-meta text-[var(--text-3)]">Research leads, not matches. The score counts the entry conditions met.</p>
                 </div>
-                <ul className="divide-y divide-amber-400/10">
-                  {visible.map(match => {
-                    const score = typeof match.score === 'number' && Number.isFinite(match.score)
-                      ? Math.round(Math.max(0, Math.min(1, match.score)) * totalConditions)
-                      : null;
-                    const scoreLabel = totalConditions > 0 && score !== null
-                      ? score + '/' + totalConditions + ' conditions'
-                      : 'Partial match';
-                    return (
-                      <MatchRow
-                        key={'near-' + match.symbolId}
-                        match={match}
-                        plan={plan}
-                        busy={busy}
-                        scoreLabel={scoreLabel}
-                        onPrepareBacktest={onPrepareBacktest}
-                        asOfFallback={result.asOf}
-                  latestObservedDate={observationDate}
-                      />
-                    );
-                  })}
-                </ul>
-                {nearMatches.length > 3 && (
-                  <button type="button" onClick={() => setShowAllNear(value => !value)} className="text-xs font-medium text-amber-200 underline">
-                    {showAllNear ? 'Show top 3' : 'Show all ' + nearMatches.length}
-                  </button>
+                <DataTable
+                  caption={'Close matches, ' + nearMatches.length + (nearMatches.length === 1 ? ' row' : ' rows')}
+                  columns={columns}
+                  rows={nearMatches}
+                  rowKey={rowKey}
+                  initialLimit={5}
+                />
+                {nearMatches.some(near => near.unmatchedRules?.length) && (
+                  <ul className="space-y-1">
+                    {nearMatches.filter(near => near.unmatchedRules?.length).slice(0, 3).map(near => (
+                      <li key={'missing-' + near.symbolId} className="st-meta text-[var(--text-3)]">
+                        <span className="text-[var(--text-2)]">{near.ticker}:</span>{' '}
+                        {near.unmatchedRules!.map((missing, index) => {
+                          const rule = missing.ruleIndex !== undefined ? plan.strategy.rules.entry[missing.ruleIndex] : undefined;
+                          return rule ? describeUnmatchedRule(rule, plan.strategy.indicators, missing.currentActualLeft, missing.currentActualRight) : missing.rule;
+                        }).join('; ')}
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </section>
-            );
-          })()}
+            )}
 
-          <details className="rounded-xl border border-white/8 bg-black/10 p-3 text-xs text-neutral-400">
-            <summary className="cursor-pointer font-medium text-neutral-300">Screen assumptions and provenance</summary>
-            <div className="mt-3 space-y-3">
-              {plan.assumptions.length > 0 && <ul className="list-disc space-y-1 pl-4">{plan.assumptions.map((assumption, index) => <li key={index}>{assumption}</li>)}</ul>}
-              <p>Data source: {source} · Data cutoff: {result.asOf ?? 'not supplied'} · Scan completed: {result.scannedAt}</p>
-              <p>Observation dates: {result.observationDates ? result.observationDates.earliest + ' to ' + result.observationDates.latest + ' (' + result.observationDates.staleSymbols + ' stale)' : 'Unavailable'}</p>
-              <p>Source coverage: {Object.entries(result.sourceCoverage).map(([name, count]) => humanSourceLabel(name) + ': ' + count).join(' · ') || 'Unavailable'}</p>
-              {result.scanned !== result.requested && <p>Scanned {result.scanned} of {result.requested} requested instruments.</p>}
-              {result.warnings.length > 0 && <ul className="list-disc space-y-1 pl-4">{result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
-              {result.errors.length > 0 && (
-                <details>
-                  <summary className="cursor-pointer">Technical provider errors ({result.errors.length})</summary>
-                  <ul className="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4">
-                    {result.errors.map((item, index) => <li key={index}>{item.ticker ?? 'symbol ' + item.symbolId}: {item.code} — {item.message}</li>)}
+            <Disclosure summary="Assumptions and provenance">
+              <div className="space-y-2">
+                {plan.assumptions.length > 0 && (
+                  <ul className="list-disc space-y-1 pl-4">
+                    {plan.assumptions.map((assumption, index) => <li key={index}>{assumption}</li>)}
                   </ul>
-                </details>
-              )}
-              <details>
-                <summary className="cursor-pointer">Exact screening rules and indicator configuration</summary>
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-black/20 p-2">{JSON.stringify(plan.strategy, null, 2)}</pre>
-              </details>
-            </div>
-          </details>
-
-          <p className="text-xs text-neutral-500">
-            Screening is read-only. A backtest needs exits, sizing, execution and cost assumptions; preparing a review does not run it.
-          </p>
-        </div>
-      )}
+                )}
+                <p>Data source: {source} · Data cutoff: {result.asOf ?? 'not supplied'} · Scan completed: {result.scannedAt}</p>
+                <p>Observation dates: {result.observationDates ? result.observationDates.earliest + ' to ' + result.observationDates.latest + ' (' + result.observationDates.staleSymbols + ' stale)' : 'Unavailable'}</p>
+                <p>Source coverage: {Object.entries(result.sourceCoverage).map(([name, count]) => humanSourceLabel(name) + ': ' + count).join(' · ') || 'Unavailable'}</p>
+                {result.scanned !== result.requested && <p>Scanned {result.scanned} of {result.requested} requested instruments.</p>}
+                {result.warnings.length > 0 && <ul className="list-disc space-y-1 pl-4">{result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
+                {result.errors.length > 0 && (
+                  <Disclosure summary={'Technical provider errors (' + result.errors.length + ')'}>
+                    <ul className="max-h-40 space-y-1 overflow-y-auto">
+                      {result.errors.map((item, index) => <li key={index}>{item.ticker ?? 'symbol ' + item.symbolId}: {item.code} — {item.message}</li>)}
+                    </ul>
+                  </Disclosure>
+                )}
+                <Disclosure summary="Exact screening rules and indicator configuration">
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[12px] leading-5 text-[var(--text-2)]">{JSON.stringify(plan.strategy, null, 2)}</pre>
+                </Disclosure>
+              </div>
+            </Disclosure>
+          </div>
+        )}
+      </CardShell>
     </article>
   );
 };

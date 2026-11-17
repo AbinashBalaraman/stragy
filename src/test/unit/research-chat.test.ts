@@ -77,6 +77,20 @@ it('retries a failed external screen planner once with a shorter prompt and a fu
  expect(second.messages[1].content).not.toContain('history');
 });
 
+it('derives an external screen title from rules and keeps the model summary separate',async()=>{
+ const planned=validStrategy();
+ planned.indicators=[...planned.indicators,{id:'ema50',type:'EMA',params:{period:50}},{id:'rsi14',type:'RSI',params:{period:14}}];
+ planned.rules.entry=[{leftIndicator:'close',operator:'gt',rightIndicator:'ema50'},{leftIndicator:'rsi14',operator:'gte',rightValue:62},{leftIndicator:'rsi14',operator:'lte',rightValue:82}];
+ planned.name='Daily long setup: price is above the drawn 50-period EMA, RSI is';
+ planned.description='Daily long setup above the 50-day EMA. Conditions: RSI (14) is greater than or equal to 62; RSI (14) is less than or equal to 82.';
+ const fetch=vi.fn().mockResolvedValue(fakeResponse({body:openAIBody(JSON.stringify({strategy:planned,assumptions:['Fixture.']}))}));
+ const out=await researchChat({message:'Screen Nifty 50 for a rare divergence pattern',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-title-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ if(out.kind!=='screen')throw Error('Screen absent: '+JSON.stringify(out));
+ expect(out.strategy.name).toBe('Above 50 EMA · RSI 62–82');
+ expect(out.strategy.description).toBe('Daily long setup above the 50-day EMA');
+ expect(out.summary).toBe('Daily long setup above the 50-day EMA');
+});
+
 it('still treats an explicit screening verb plus stock topic as a screen request',async()=>{
  for(const message of ['show me Nifty 50 stocks with RSI oversold after recently overbought','find Nifty 50 stocks with RSI 14 oversold after recently overbought']){
   const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
@@ -97,7 +111,7 @@ it('keeps indicator questions conversational while explicit builds still draft',
 it('surfaces key-free field errors when an AI draft fails schema validation',async()=>{
  const bad:any=validStrategy();delete bad.risk;delete bad.execution;
  const fetch=vi.fn(async()=>fakeResponse({body:openAIBody(JSON.stringify({rationale:'bad draft',warnings:[],strategy:bad}))}));
- const out=await researchChat({message:'set stop loss to 3%',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-warning-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
+ const out=await researchChat({message:'set stop loss to 3% and add an RSI entry',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'openai',OPENAI_API_KEY:'fixture-warning-key',AI_MODEL:'gpt-test',AI_COST_POLICY:'operator-approved'},fetch,budget:createRequestBudget()});
  expect(fetch).toHaveBeenCalledTimes(2);
  expect(out).toMatchObject({kind:'conversation',method:'unavailable'});
  expect(out.warnings.join(' ')).toMatch(/schema validation/i);

@@ -30,7 +30,7 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
   if (indId.endsWith('_line')) {
     const parentId = indId.replace(/_line$/, '');
     const parent = indicators.find(i => i.id === parentId);
-    if (parent?.type === 'RSI_TRENDLINE') return `RSI Falling Trendline (${(parent.params as any).rsiPeriod ?? 14}, ${(parent.params as any).minSpan ?? 30}-${(parent.params as any).maxSpan ?? 180} bars)`;
+    if (parent?.type === 'RSI_TRENDLINE') return 'RSI falling trendline';
     if (parent?.type === 'SUPERTREND') return `Supertrend Line (${(parent.params as any).period ?? 10}, ${(parent.params as any).multiplier ?? 3}x)`;
     return `MACD Line (${(parent?.params as any)?.fastPeriod || 12}, ${(parent?.params as any)?.slowPeriod || 26})`;
   }
@@ -55,11 +55,13 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
     case 'RSI':
       return `RSI (${ind.params.period || 14})`;
     case 'RSI_SMA':
-      return `RSI Signal SMA (${(ind.params as any).rsiPeriod ?? 14}, ${(ind.params as any).period ?? 14})`;
+      return `RSI's ${(ind.params as any).period ?? 14}-day average`;
     case 'RSI_TRENDLINE':
-      return `RSI Falling Trendline (${(ind.params as any).rsiPeriod ?? 14}, ${(ind.params as any).minSpan ?? 30}-${(ind.params as any).maxSpan ?? 180} bars, anchor RSI ≥ ${(ind.params as any).anchorMin ?? 60})`;
-    case 'PCT_ABOVE_LOW':
-      return `Distance Above ${(ind.params as any).period ?? 250}-Bar Low (%)`;
+      return 'RSI falling trendline';
+    case 'PCT_ABOVE_LOW': {
+      const period = (ind.params as any).period ?? 250;
+      return period >= 250 ? '% above its 52-week low' : `% above its ${period}-bar low`;
+    }
     case 'PCT_CHANGE':
       return `${(ind.params as any).period ?? 126}-Bar Change (%)`;
     case 'SUPERTREND':
@@ -147,8 +149,118 @@ const UNMATCHED_VERBS: Record<string, string> = {
   crossesBelow: 'has not yet crossed below',
 };
 
+/** "Close above 50-day EMA" instead of "Close Price is greater than EMA (50)". */
+function closeAverageTarget(rule: RuleNode, indicators: IndicatorConfig[]): { period: number; type: 'SMA' | 'EMA' } | null {
+  if (rule.leftIndicator !== 'close' || !rule.rightIndicator) return null;
+  const average = indicators.find(indicator => indicator.id === rule.rightIndicator);
+  if (!average || (average.type !== 'SMA' && average.type !== 'EMA')) return null;
+  return { period: (average.params as any).period ?? 20, type: average.type };
+}
+
+function closeAveragePhrase(rule: RuleNode, average: { period: number; type: 'SMA' | 'EMA' }): string {
+  const verb = rule.operator === 'gt' ? 'above'
+    : rule.operator === 'lt' ? 'below'
+      : rule.operator === 'gte' ? 'at or above'
+        : rule.operator === 'lte' ? 'at or below'
+          : formatOperator(rule.operator);
+  return `Close ${verb} ${average.period}-day ${average.type}`;
+}
+
+function rsiTrendlinePhrase(rule: RuleNode, indicators: IndicatorConfig[], unmatched = false): string | null {
+  const rsi = indicators.find(indicator => indicator.id === rule.leftIndicator && indicator.type === 'RSI');
+  const trendline = rule.rightIndicator
+    ? indicators.find(indicator => indicator.id === rule.rightIndicator?.replace(/_line$/, '') && indicator.type === 'RSI_TRENDLINE')
+    : undefined;
+  if (!rsi || !trendline) return null;
+  if (rule.operator === 'crossesAbove') return unmatched ? 'RSI has not crossed above its falling trendline yet' : 'RSI crossed above its falling trendline';
+  if (rule.operator === 'crossesBelow') return unmatched ? 'RSI has not crossed below its falling trendline yet' : 'RSI crossed below its falling trendline';
+  const direction = rule.operator === 'lt' ? 'below' : rule.operator === 'gt' ? 'above' : null;
+  if (!direction) return null;
+  if (rule.lookback) {
+    const days = rule.lookback.bars;
+    return unmatched
+      ? `RSI has not been ${direction} its falling trendline in the last ${days} ${days === 1 ? 'day' : 'days'} yet`
+      : `RSI was ${direction} its falling trendline in the last ${days} ${days === 1 ? 'day' : 'days'}`;
+  }
+  return unmatched ? `RSI is not ${direction} its falling trendline yet` : `RSI is ${direction} its falling trendline`;
+}
+
+function highBreakoutPhrase(rule: RuleNode, indicators: IndicatorConfig[]): string | null {
+  if (rule.leftIndicator !== 'close' || !rule.rightIndicator) return null;
+  const high = indicators.find(indicator => indicator.id === rule.rightIndicator && indicator.type === 'HIGHEST');
+  if (!high) return null;
+  const period = (high.params as any).period ?? 20;
+  if (rule.operator === 'crossesAbove') return `Close crossed above the ${period}-day high`;
+  if (rule.operator === 'gt') return `Close is above the ${period}-day high`;
+  if (rule.operator === 'lt') return `Close is below the ${period}-day high`;
+  return null;
+}
+
+function rsiSignalPhrase(rule: RuleNode, indicators: IndicatorConfig[]): string | null {
+  const rsi = indicators.find(indicator => indicator.id === rule.leftIndicator && indicator.type === 'RSI');
+  const signal = rule.rightIndicator
+    ? indicators.find(indicator => indicator.id === rule.rightIndicator && indicator.type === 'RSI_SMA')
+    : undefined;
+  if (!rsi || !signal) return null;
+  const period = (signal.params as any).period ?? 14;
+  if (rule.operator === 'gt') return `RSI is above its ${period}-day average`;
+  if (rule.operator === 'lt') return `RSI is below its ${period}-day average`;
+  if (rule.operator === 'crossesAbove') return `RSI crossed above its ${period}-day average`;
+  if (rule.operator === 'crossesBelow') return `RSI crossed below its ${period}-day average`;
+  return null;
+}
+
+function rsiBelowPhrase(rule: RuleNode, indicators: IndicatorConfig[]): string | null {
+  const rsi = indicators.find(indicator => indicator.id === rule.leftIndicator && indicator.type === 'RSI');
+  if (!rsi || rule.rightValue === undefined || (rule.operator !== 'lt' && rule.operator !== 'lte')) return null;
+  const threshold = ruleValue(rule.rightValue);
+  if (!rule.lookback) return `RSI is ${rule.operator === 'lt' ? 'below' : 'at or below'} ${threshold}`;
+  const days = rule.lookback.bars;
+  return `RSI was ${rule.operator === 'lt' ? 'below' : 'at or below'} ${threshold} in the last ${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
+function nearLowPhrase(rule: RuleNode, indicators: IndicatorConfig[]): string | null {
+  const near = nearLowLabel(rule, indicators);
+  if (!near) return null;
+  if (rule.operator === 'lt' || rule.operator === 'lte') {
+    return `Close is within ${near.threshold}% of its ${near.label}`;
+  }
+  if (rule.operator === 'gt' || rule.operator === 'gte') {
+    return `Close is at least ${near.threshold}% above its ${near.label}`;
+  }
+  return null;
+}
+
+function nearLowLabel(rule: RuleNode, indicators: IndicatorConfig[]): { label: string; threshold: string } | null {
+  const indicator = indicators.find(item => item.id === rule.leftIndicator);
+  if (indicator?.type !== 'PCT_ABOVE_LOW' || rule.rightValue === undefined) return null;
+  const period = (indicator.params as any).period ?? 250;
+  return {
+    label: period >= 250 ? '52-week low' : `${period}-bar low`,
+    threshold: ruleValue(rule.rightValue),
+  };
+}
+
 /** Plain-language reason a near-match is missing one screen condition. */
 export function describeUnmatchedRule(rule: RuleNode, indicators: IndicatorConfig[], currentLeft?: number | null, currentRight?: number | null): string {
+  const current = currentLeft === null
+    ? ' (current value unavailable)'
+    : typeof currentLeft === 'number' && Number.isFinite(currentLeft) ? ` (now ${ruleValue(currentLeft)})` : '';
+  const trendline = rsiTrendlinePhrase(rule, indicators, true);
+  if (trendline) return `${trendline}${current}.`;
+  const average = closeAverageTarget(rule, indicators);
+  if (average) {
+    const missing = rule.operator === 'gt' ? 'is not above'
+      : rule.operator === 'lt' ? 'is not below'
+        : rule.operator === 'crossesAbove' ? 'has not crossed above'
+          : rule.operator === 'crossesBelow' ? 'has not crossed below'
+            : 'does not yet satisfy';
+    return `Close ${missing} ${average.period}-day ${average.type} yet${current}.`;
+  }
+  const nearLow = nearLowLabel(rule, indicators);
+  if (nearLow) {
+    return `Close is not within ${nearLow.threshold}% of its ${nearLow.label} yet${current ? current.replace(')', '% above)') : ''}.`;
+  }
   const left = getIndicatorLabel(rule.leftIndicator, indicators);
   const right = rule.rightIndicator
     ? getIndicatorLabel(rule.rightIndicator, indicators)
@@ -157,9 +269,6 @@ export function describeUnmatchedRule(rule: RuleNode, indicators: IndicatorConfi
       : '';
   const verb = UNMATCHED_VERBS[rule.operator] ?? 'does not yet satisfy';
   const lookback = rule.lookback ? ` within the preceding ${rule.lookback.bars} completed bars` : '';
-  const current = currentLeft === null
-    ? ' (current value unavailable)'
-    : typeof currentLeft === 'number' && Number.isFinite(currentLeft) ? ` (now ${ruleValue(currentLeft)})` : '';
   void currentRight;
   return `${left} ${verb} ${right} yet${lookback}${current}.`;
 }
@@ -178,17 +287,29 @@ export function formatOperator(op: string): string {
 }
 
 export function renderRuleInPlainLanguage(rule: RuleNode, indicators: IndicatorConfig[]): string {
-  const left = rule.leftValue !== undefined ? String(rule.leftValue) : getIndicatorLabel(rule.leftIndicator, indicators);
-  const op = formatOperator(rule.operator);
-  let right = '';
-
-  if (rule.rightIndicator) {
-    right = getIndicatorLabel(rule.rightIndicator, indicators);
-  } else if (rule.rightValue !== undefined) {
-    right = `${rule.rightValue}`;
-  }
-
-  const comparison = rule.operator === 'approxEq' ? `${left} approximately equals ${right} (absolute difference < ${rule.absoluteTolerance})` : `${left} ${op} ${right}`;
+  const trendline = rsiTrendlinePhrase(rule, indicators);
+  if (trendline) return trendline;
+  const highBreakout = highBreakoutPhrase(rule, indicators);
+  if (highBreakout) return highBreakout;
+  const rsiSignal = rsiSignalPhrase(rule, indicators);
+  if (rsiSignal) return rsiSignal;
+  const rsiBelow = rsiBelowPhrase(rule, indicators);
+  if (rsiBelow) return rsiBelow;
+  const nearLow = nearLowPhrase(rule, indicators);
+  if (nearLow) return nearLow;
+  const average = closeAverageTarget(rule, indicators);
+  const comparison = average
+    ? closeAveragePhrase(rule, average)
+    : (() => {
+      const left = rule.leftValue !== undefined ? String(rule.leftValue) : getIndicatorLabel(rule.leftIndicator, indicators);
+      const op = formatOperator(rule.operator);
+      let right = '';
+      if (rule.rightIndicator) right = getIndicatorLabel(rule.rightIndicator, indicators);
+      else if (rule.rightValue !== undefined) right = `${rule.rightValue}`;
+      return rule.operator === 'approxEq'
+        ? `${left} approximately equals ${right} (absolute difference < ${rule.absoluteTolerance})`
+        : `${left} ${op} ${right}`;
+    })();
   return rule.lookback ? `${comparison} on at least one of the preceding ${rule.lookback.bars} completed bars (excluding the current bar)` : comparison;
 }
 

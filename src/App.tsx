@@ -322,30 +322,28 @@ export default function App() {
     });
   };
 
-  const footer = (
+  // The rail keeps one quiet data line; the save state appears only when needed.
+  const footer = (saveStatus.startsWith('Not saved') || saveStatus === 'Saving' || saveStatus === 'Saving locally' || previousStrategy || workspaceConflict) ? (
     <div className="space-y-1.5">
-      <p role="status" aria-live="polite">
-        {saveStatus}
-        {backtestResult && (runDraftSignature === null
-          ? ' · Retained run selected; builder draft unchanged'
-          : JSON.stringify(strategy) !== runDraftSignature
-            ? ' · Draft changed since this run'
-            : '')}
-      </p>
+      {(saveStatus.startsWith('Not saved') || saveStatus === 'Saving' || saveStatus === 'Saving locally') && (
+        <p role="status" aria-live="polite" className={saveStatus.startsWith('Not saved') ? 'text-[#f5d383]' : undefined}>
+          {saveStatus.startsWith('Not saved') ? 'Unsaved changes' : 'Saving…'}
+        </p>
+      )}
       {previousStrategy && <button type="button" onClick={undoDraftChange} className="underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300">Undo last draft change</button>}
       {workspaceConflict && (
         <button
           type="button"
           onClick={reloadWorkspace}
           title="Discard unsaved draft changes and load the workspace saved in this browser"
-          className="ml-3 underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300"
+          className="underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300"
         >
           Reload workspace
         </button>
       )}
-      {saveStatus.startsWith('Not saved:') && <button type="button" onClick={exportDraft} className="ml-3 underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300">Export unsaved draft</button>}
+      {saveStatus.startsWith('Not saved') && <button type="button" onClick={exportDraft} className="underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300">Export unsaved draft</button>}
     </div>
-  );
+  ) : undefined;
 
   return (
     <AppShell

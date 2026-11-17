@@ -7,7 +7,7 @@ import type { StrategyAST } from '../../shared/strategy/types';
 import {
   AIRuntimeConfig, EnvLike, FetchLike, RequestBudget, callProvider, resolveAIConfig,
 } from './provider';
-import { INPUT_LIMITS, boundHistory, diffStrategies, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
+import { INPUT_LIMITS, boundHistory, describeStrategyChanges, diffStrategies, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
 import { buildStrategySystemPrompt } from './strategyPrompt';
 import { LOCAL_LABEL, localCreateFromPrompt, localEditStrategy } from './heuristics';
 import type {
@@ -62,6 +62,9 @@ function normaliseRevision(r: unknown): number | string | null | undefined {
   return undefined;
 }
 
+const SIMPLE_EDIT = /^(?:please\s+)?(?:set|change|switch|use|make)\b/i;
+const COMPLEX_EDIT = /\b(?:add|remove|entry|exit|indicator|rule|strategy|backtest|compare|optimi[sz]e)\b/i;
+
 const PROVIDER_CODE_MAP: Record<string, ProposalErrorCode> = {
   not_configured: 'ai_not_configured', budget_exceeded: 'ai_budget_exceeded', request_too_large: 'ai_request_too_large',
   timeout: 'ai_timeout', network_error: 'ai_network_error', http_error: 'ai_http_error',
@@ -103,10 +106,32 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
   if (bounded.truncated) warnings.push('Conversation history was truncated or filtered to the allowed size.');
 
   const cfg = deps.config ?? resolveAIConfig(deps.env ?? process.env);
-  const mk = (p: Omit<StrategyProposalV2, 'schemaVersion' | 'id' | 'status' | 'createdAt' | 'originatingRevision' | 'applied' | 'executes' | 'changes'>): StrategyProposalV2 => ({
-    schemaVersion: 2, id: `prop_${newId()}`, status: 'draft', createdAt: now().toISOString(), originatingRevision: rev,
-    changes: current ? diffStrategies(current, p.candidate) : [], applied: false, executes: false, ...p,
-  });
+  const mk = (p: Omit<StrategyProposalV2, 'schemaVersion' | 'id' | 'status' | 'createdAt' | 'originatingRevision' | 'applied' | 'executes' | 'changes' | 'changeDetails'>): StrategyProposalV2 => {
+    const changeSet = current ? describeStrategyChanges(current, p.candidate) : { changes: [], details: [] };
+    return {
+      schemaVersion: 2, id: `prop_${newId()}`, status: 'draft', createdAt: now().toISOString(), originatingRevision: rev,
+      changes: changeSet.changes, changeDetails: changeSet.details, applied: false, executes: false, ...p,
+    };
+  };
+
+  // Explicit edits of a stated value are deterministic. Do not spend a provider
+  // call (or label the draft AI-generated) when keyword rules already apply the
+  // exact instruction.
+  if (mode === 'edit' && current && SIMPLE_EDIT.test(prompt) && !COMPLEX_EDIT.test(prompt)) {
+    const edit = localEditStrategy(current, prompt);
+    if (edit.recognised) {
+      return {
+        ok: true,
+        proposal: mk({
+          method: 'local_heuristic',
+          provider: { name: LOCAL_LABEL, model: null, aiGenerated: false },
+          candidate: edit.strategy,
+          rationale: 'Applied only the explicit edit in your text using local keyword rules (not AI).',
+          warnings: [...warnings, ...edit.warnings, 'Local keyword edit. Review before applying.'],
+        }),
+      };
+    }
+  }
 
   // ---- external AI path: only when the selected provider is fully configured ----
   if (cfg.ready) {

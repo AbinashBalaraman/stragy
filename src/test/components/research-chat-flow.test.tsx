@@ -40,7 +40,7 @@ it('does not duplicate the zero-match headline with a count sentence',async()=>{
 });
 
 it('rejects even empty demo scans instead of presenting them as current market answers',async()=>{vi.mocked(requestScan).mockResolvedValue({...zero(),mode:'demo'});render(<AiCopilotDock strategy={validStrategy()}/>);send();expect((await screen.findByRole('alert')).textContent).toContain('Demo results were not presented');expect(screen.queryByLabelText('Screen results')).toBeNull();});
-it('aborts pending scan ownership when conversation is cleared',async()=>{let signal:AbortSignal|undefined;let finish!:(v:ReturnType<typeof zero>)=>void;vi.mocked(requestScan).mockImplementation((_input,s)=>{signal=s;return new Promise(resolve=>{finish=resolve;});});const view=render(<AiCopilotDock strategy={validStrategy()}/>);send();await waitFor(()=>expect(screen.getAllByText(/Scanning actual current daily data/).length).toBeGreaterThan(0));view.rerender(<AiCopilotDock strategy={validStrategy()} newConversationSignal={1}/>);expect(signal?.aborted).toBe(true);finish(zero());await waitFor(()=>expect(screen.queryByLabelText('Screen results')).toBeNull());});
+it('aborts pending scan ownership when conversation is cleared',async()=>{let signal:AbortSignal|undefined;let finish!:(v:ReturnType<typeof zero>)=>void;vi.mocked(requestScan).mockImplementation((_input,s)=>{signal=s;return new Promise(resolve=>{finish=resolve;});});const view=render(<AiCopilotDock strategy={validStrategy()}/>);send();await waitFor(()=>expect(screen.getAllByText(/Results are pending, not zero matches/).length).toBeGreaterThan(0));view.rerender(<AiCopilotDock strategy={validStrategy()} newConversationSignal={1}/>);expect(signal?.aborted).toBe(true);finish(zero());await waitFor(()=>expect(screen.queryByLabelText('Screen results')).toBeNull());});
 it('prepares a reviewed backtest on the current screen only after explicit consent and refuses negation',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this on RELIANCE');const review=await screen.findByRole('article',{name:'Backtest review'});expect(within(review).getByText(/Backtest RELIANCE/)).toBeTruthy();expect(within(review).getByText(/Reliance Industries \(NSE\)/)).toBeTruthy();expect(within(review).getByText(/nothing has been run or applied/i)).toBeTruthy();expect(run).not.toHaveBeenCalled();sendText("no, don't run it");expect(await screen.findByText(/Nothing was run\. The review is still open/)).toBeTruthy();expect(run).not.toHaveBeenCalled();expect(screen.getByRole('article',{name:'Backtest review'})).toBeTruthy();sendText('use these assumptions and run');await waitFor(()=>expect(run).toHaveBeenCalledTimes(1));expect(run.mock.calls[0]?.[0].universe.symbolId).toBe(7);expect(run.mock.calls[0]?.[0].rules.entry[1]?.lookback?.bars).toBe(20);expect(await screen.findByText(/Backtest completed/)).toBeTruthy();});
 it('asks for a missing or ambiguous stock instead of guessing one',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn().mockResolvedValue(undefined);render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol,reliancePowerSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this');expect(await screen.findByText(/Which stock should I test/)).toBeTruthy();expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();sendText('cancel');expect(await screen.findByText('No backtest was prepared. Nothing was run.')).toBeTruthy();sendText('backtest this on REL');expect(await screen.findByText(/more than one possible stock/i)).toBeTruthy();expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();sendText('RELIANCE');expect(await screen.findByRole('article',{name:'Backtest review'})).toBeTruthy();expect(run).not.toHaveBeenCalled();});
 
@@ -109,13 +109,13 @@ it('restores a previous conversation without keeping the current screen, scan or
   const cancel=vi.fn();
   render(<AiCopilotDock strategy={validStrategy()} onCancelResearch={cancel}/>);
   send();
-  await waitFor(()=>expect(screen.getAllByText(/Scanning actual current daily data/).length).toBeGreaterThan(0));
+  await waitFor(()=>expect(screen.getAllByText(/Results are pending, not zero matches/).length).toBeGreaterThan(0));
   expect(screen.getByLabelText('Research screen')).toBeTruthy();
   fireEvent.click(screen.getByRole('button',{name:/^Restore previous conversation/}));
   expect(signal?.aborted).toBe(true);
   expect(cancel).toHaveBeenCalledTimes(1);
   expect(screen.queryByLabelText('Research screen')).toBeNull();
-  expect(screen.queryByText(/Scanning actual current daily data/)).toBeNull();
+  expect(screen.queryByText(/Results are pending, not zero matches/)).toBeNull();
   expect(await screen.findByText('Archived earlier reply')).toBeTruthy();
 });
 
@@ -146,7 +146,7 @@ it('fills the strategy tester from a rule sentence and never runs or applies it'
   const review=await screen.findByRole('article',{name:'Backtest review'});
   expect(requestFeatureSetup).toHaveBeenCalledTimes(1);
   expect(within(review).getByText(/Backtest RELIANCE/)).toBeTruthy();
-  expect(within(review).getByText(/RSI \(14\) is less than 30/)).toBeTruthy();
+  expect(within(review).getByText(/RSI is below 30/)).toBeTruthy();
   expect(within(review).getByText(/RSI \(14\) is greater than 70/)).toBeTruthy();
   expect(within(review).getByText(/3.5% below the entry price/)).toBeTruthy();
   expect(within(review).getAllByText(/2023-11-17 to 2026-11-16/).length).toBeGreaterThan(0);

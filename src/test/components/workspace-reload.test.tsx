@@ -57,7 +57,10 @@ describe('workspace autosave and conflict recovery', () => {
   it('does not rewrite an unchanged persisted workspace on mount', async () => {
     const { raw } = seed('Workspace A');
     render(<App />);
-    expect(await screen.findByText('Workspace unchanged; saved locally')).toBeTruthy();
+    expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
+    // Settled save states stay out of the rail; only unsaved work is announced.
+    expect(screen.queryByText(/Workspace unchanged/)).toBeNull();
+    expect(screen.queryByText(/Saved locally/)).toBeNull();
     expect(storage().getItem(WORKSPACE_KEY)).toBe(raw);
   });
 
@@ -72,7 +75,7 @@ describe('workspace autosave and conflict recovery', () => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } });
 
     render(<App />);
-    await screen.findByText('Workspace unchanged; saved locally');
+    await screen.findByText('Test a trading idea before you trust it.');
     fireEvent.click(sidebar().getByRole('button', { name: 'Strategy tester' }));
     expect((await screen.findByTestId('builder-name')).textContent).toBe('Workspace A');
 
@@ -84,12 +87,12 @@ describe('workspace autosave and conflict recovery', () => {
     const saved = saveWorkspace(storage(), otherTab, raw);
     release();
 
-    expect(await screen.findByText(/Not saved: Workspace changed in another tab/)).toBeTruthy();
+    expect(await screen.findByText('Unsaved changes')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Export unsaved draft' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Reload workspace' }));
 
     await waitFor(() => expect(screen.getByTestId('builder-name').textContent).toBe('Workspace C'));
     expect(storage().getItem(WORKSPACE_KEY)).toBe(saved.revision);
-    expect(await screen.findByText(/Reloaded the workspace saved in this browser/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull());
   });
 });

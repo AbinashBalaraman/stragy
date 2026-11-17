@@ -8,6 +8,13 @@ import type { IndicatorConfig } from '../../shared/strategy/types';
 import { strategy,bars } from '../fixtures/research';
 describe('strict strategy contracts',()=>{
   it.each(STRATEGY_TEMPLATES)('S01 validates the complete $name template',t=>{expect(validateStrategy(t.strategy).success).toBe(true);});
+  it('S01b publishes plain template descriptions without marketing or provider tickers',()=>{
+    for(const template of STRATEGY_TEMPLATES){
+      expect(template.description).not.toMatch(/institutional|canonical|premier|blue[ -]chip/i);
+      expect(template.suitability).not.toMatch(/\.NSE?\b|\.BO\b/i);
+      expect(template.description.length).toBeGreaterThan(20);
+    }
+  });
   it('S02 preserves fractional allocation, AND exits and legacy tolerance',()=>{const s=strategy();s.version=1;s.risk.positionSizing={type:'fixedFraction',fraction:.15};s.rules.exit.push({leftIndicator:'close',operator:'gt',rightValue:1000});const r=readStrategy(s);expect(r.success).toBe(true);if(!r.success)throw Error('failed');expect(r.data.risk.positionSizing).toEqual({type:'fixedFraction',allocationPct:15});expect(r.data.rules.exit.all).toHaveLength(2);expect(r.data.rules.entry.all[0]).toMatchObject({operator:'approxEq',absoluteTolerance:.0001});});
   it('S03 exact canonical equality remains exact through the UI/engine adapter',()=>{const v=readStrategy(strategy());if(!v.success)throw Error('failed');v.data.rules.entry.all[0]={left:{kind:'price',field:'close'},operator:'eq',right:{kind:'constant',value:100}};const s=toLegacyStrategy(v.data);expect(s.rules.entry[0].equality).toBe('exact');expect(readStrategy(s)).toMatchObject({success:true,data:{rules:{entry:{all:[{operator:'eq'}]}}}});const data=bars([[100,101,99,100.000001],[100,101,99,100]]);expect(simulate(s,data,{robustness:false}).trades).toHaveLength(0);});
   it('S04 aliases are normalized but conflicting aliases are rejected',()=>{const s=strategy();s.indicators=[{id:'m',type:'MACD',params:{fast:3,slow:5,signal:2}}];expect(validateStrategy(s).data?.indicators[0].params).toEqual({fastPeriod:3,slowPeriod:5,signalPeriod:2});s.indicators[0].params.fastPeriod=4;expect(validateStrategy(s).success).toBe(false);});

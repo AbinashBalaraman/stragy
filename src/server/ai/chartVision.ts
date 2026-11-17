@@ -21,9 +21,9 @@ import { evaluateCondition } from '../backtest/rules';
 import { AI_LIMITS, callProvider, resolveVisionConfig, type AIRuntimeConfig, type EnvLike, type FetchLike, type RequestBudget } from './provider';
 import { parseModelJson, sanitizeText } from './validation';
 import { STRATEGY_JSON_RULES, strategyExample } from './strategyPrompt';
-import { renderRuleInPlainLanguage, renderStrategyInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
+import { renderRuleInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
+import { buildScreenTitle, cleanScreenSummary } from '../../shared/strategy/screenTitle';
 import { describeConfigState } from './proposals';
-import { truncateAtWord } from '../../shared/format';
 
 export const CHART_IMAGE_LIMITS = {
   maxDataUrlChars: 7_000_000,
@@ -135,8 +135,9 @@ function lastBarRelation(line: ChartObservations['drawnLines'][number]): string 
 }
 
 function roundUpRangePct(value: number): number {
-  // The guide's example: 11% above the low becomes a 15% condition.
-  return clamp(Math.ceil((value + 1) / 5) * 5, 1, 100);
+  // The guide's example: 11% above the low becomes a 15% condition. A tight
+  // model value such as 4% is never kept as 5%; 15% is the findable default.
+  return clamp(Math.max(15, Math.ceil((value + 1) / 5) * 5), 1, 100);
 }
 
 /**
@@ -158,8 +159,11 @@ export function deriveChartConditions(observations: ChartObservations): { condit
   const barsSinceDip = observations.recentBars?.rsiBelow30BarsAgo ?? null;
 
   const rsiLine = observations.drawnLines.find(line => line.panel === 'rsi'
-    && line.direction === 'down'
-    && lastBarRelation(line) === 'crossed_above');
+    && (line.direction === 'down' || /fall(?:ing)?|downward|descending/i.test(line.description))
+    && (lastBarRelation(line) === 'crossed_above'
+      || /breakout|cross(?:ed|es)?\s*(?:above|over)/i.test(line.description)
+      || observations.events.some(event => /breakout|cross(?:ed|es)?\s*(?:above|over)/i.test(event))
+      || /breakout|cross(?:ed|es)?\s*(?:above|over)/i.test(observations.recentBars?.note ?? '')));
   if (rsiLine) {
     add({
       type: 'rsi_trendline_breakout',
@@ -183,6 +187,11 @@ export function deriveChartConditions(observations: ChartObservations): { condit
   if (pctAboveLow !== null && pctAboveLow !== undefined && (observations.nearRange === 'low' || pctAboveLow <= 20)) {
     add({ type: 'near_period_low', period: 250, value: roundUpRangePct(pctAboveLow) });
     assumptions.push(`Close is about ${pctAboveLow.toFixed(0)}% above the 250-bar low; condition loosened to ${roundUpRangePct(pctAboveLow)}%.`);
+  } else if (observations.nearRange === 'low') {
+    // A weak model may omit the numeric distance. Keep the guide's default
+    // 15% one-notch loosening rather than a tight model value such as 5%.
+    add({ type: 'near_period_low', period: 250, value: 15 });
+    assumptions.push('Close is near the 52-week low; the distance condition uses the guide default of 15%.');
   }
 
   const box = observations.drawnLines.find(line => line.panel === 'price'
@@ -234,8 +243,55 @@ function legendMaValues(observations: ChartObservations): Set<number> {
 
 function sanitizeModelConditions(conditions: ChartCondition[], observations: ChartObservations): ChartCondition[] {
   const maValues = legendMaValues(observations);
-  return conditions.filter(condition => condition.value === undefined
-    || !maValues.has(Number(condition.value.toFixed(4))));
+  // The model may supply the last-bar relation when the observation's prose is
+  // abbreviated; the drawn panel/direction is the minimum visible evidence.
+  const hasRsiLine = observations.drawnLines.some(line => line.panel === 'rsi'
+    && (line.direction === 'down' || /fall(?:ing)?|downward|descending/i.test(line.description)));
+  const hasPriceBox = observations.drawnLines.some(line => line.panel === 'price' && (line.direction === 'flat' || line.direction === 'up'));
+  const pct = observations.rangePosition?.approxPctAboveLow;
+  return conditions.filter(condition => {
+    if (condition.value !== undefined && maValues.has(Number(condition.value.toFixed(4)))) return false;
+    // A model may propose a drawn-line pattern that is not on the image.
+    if (condition.type === 'rsi_trendline_breakout' && !hasRsiLine) return false;
+    if (condition.type === 'price_breakout_high' && !hasPriceBox) return false;
+    if (condition.type === 'near_period_low' && observations.nearRange !== 'low' && !(typeof pct === 'number' && pct <= 20)) return false;
+    return true;
+  });
+}
+
+const CONDITION_PRIORITY: Record<ChartCondition['type'], number> = {
+  rsi_trendline_breakout: 0,
+  price_breakout_high: 0,
+  rsi_around_value: 1,
+  rsi_above_signal: 1,
+  price_above_sma: 1,
+  price_below_sma: 1,
+  price_above_ema: 1,
+  price_below_ema: 1,
+  macd_above_signal: 4,
+  rsi_below: 2,
+  near_period_low: 3,
+  negative_period_change: 4,
+  volume_above_sma: 4,
+};
+
+function conditionLabel(condition: ChartCondition): string {
+  const period = condition.period ? ' period ' + condition.period : '';
+  switch (condition.type) {
+    case 'rsi_trendline_breakout': return 'RSI trendline breakout';
+    case 'price_breakout_high': return 'N-day high breakout';
+    case 'rsi_around_value': return 'RSI band ' + (condition.value ?? '') + period;
+    case 'rsi_above_signal': return 'RSI above its average';
+    case 'price_above_sma': return 'price above SMA' + period;
+    case 'price_below_sma': return 'price below SMA' + period;
+    case 'price_above_ema': return 'price above EMA' + period;
+    case 'price_below_ema': return 'price below EMA' + period;
+    case 'macd_above_signal': return 'MACD above signal';
+    case 'rsi_below': return 'RSI below ' + (condition.value ?? '') + ' in the recent bars';
+    case 'near_period_low': return 'within ' + (condition.value ?? '') + '% of the ' + (condition.period ?? 250) + '-bar low';
+    case 'negative_period_change': return (condition.period ?? 126) + '-bar decline';
+    case 'volume_above_sma': return 'volume above its average';
+  }
 }
 
 export function mergeChartConditions(
@@ -245,6 +301,9 @@ export function mergeChartConditions(
 ): { conditions: ChartCondition[]; assumptions: string[] } {
   const derived = deriveChartConditions(observations);
   const safeModel = sanitizeModelConditions(modelConditions, observations);
+  if (safeModel.length < modelConditions.length) {
+    derived.assumptions.push('dropped model conditions that were not visible on the chart.');
+  }
   const merged = derived.conditions.map(base => {
     const candidate = safeModel.find(condition => condition.type === base.type);
     if (mode === 'repair' && candidate) {
@@ -260,10 +319,30 @@ export function mergeChartConditions(
   for (const condition of safeModel) {
     if (!merged.some(existing => existing.type === condition.type)) merged.push(condition);
   }
-  // The guide asks for 3-5, but an older valid plan may carry six catalog
-  // conditions. Never truncate the model below its own size.
-  const max = Math.max(5, Math.min(8, modelConditions.length));
-  return { conditions: merged.slice(0, max), assumptions: derived.assumptions };
+
+  // The guide asks for 3-5. Loosen a tight near-low threshold before capping,
+  // then keep the five most distinctive conditions in a stable priority order.
+  const near = merged.find(condition => condition.type === 'near_period_low');
+  const modelNear = safeModel.find(condition => condition.type === 'near_period_low');
+  const pctAboveLow = observations.rangePosition?.approxPctAboveLow;
+  if (near && (observations.nearRange === 'low' || (pctAboveLow !== null && pctAboveLow !== undefined && pctAboveLow <= 20))) {
+    const target = pctAboveLow !== null && pctAboveLow !== undefined ? roundUpRangePct(pctAboveLow) : 15;
+    const current = typeof near.value === 'number' ? near.value : 0;
+    if (current < target) {
+      near.value = target;
+      derived.assumptions.push(`Near-low threshold widened to ${target}% to keep the scan findable.`);
+    } else if (typeof modelNear?.value === 'number' && modelNear.value < target) {
+      derived.assumptions.push(`Near-low threshold widened to ${target}% to keep the scan findable.`);
+    }
+  }
+
+  merged.sort((a, b) => CONDITION_PRIORITY[a.type] - CONDITION_PRIORITY[b.type]);
+  const kept = merged.slice(0, 5);
+  const dropped = merged.slice(5);
+  if (dropped.length) {
+    derived.assumptions.push('dropped to keep the scan findable: ' + dropped.map(conditionLabel).join('; ') + '.');
+  }
+  return { conditions: kept, assumptions: derived.assumptions };
 }
 
 /** Normalizes a company name/header so "Reliance Industries Ltd." maps to RELIANCE. */
@@ -434,9 +513,10 @@ function buildStrategy(
         const lookbackBars = clamp(condition.lookbackBars ?? 3, 1, 30);
         const rsi = addIndicator('RSI', { period }, 'cx_rsi' + period);
         const trendline = addIndicator('RSI_TRENDLINE', { rsiPeriod: period, minSpan: 30, maxSpan: 180, anchorMin: 60 }, 'cx_rsi_tl');
+        // The crossing itself implies the prior bar was below the line; keeping
+        // one card condition avoids two rows for one guide condition.
         addRule({ leftIndicator: rsi, operator: 'crossesAbove', rightIndicator: trendline + '_line' });
-        addRule({ leftIndicator: rsi, operator: 'lt', rightIndicator: trendline + '_line', lookback: { bars: lookbackBars, includeCurrent: false, match: 'any' } });
-        assumptions.push(`RSI(${period}) broke a causal falling trendline fitted only to prior RSI peaks (anchor RSI ≥ 60), after being below it within ${lookbackBars} completed bars.`);
+        assumptions.push(`RSI(${period}) broke a causal falling trendline fitted only to prior RSI peaks; technical fit uses a 30–180 bar span and anchors on RSI ≥ 60. The guide lookback was ${lookbackBars} completed bars.`);
         break;
       }
       case 'rsi_above_signal': {
@@ -501,11 +581,11 @@ function buildStrategy(
   // Preserve every workspace indicator so existing exit rules keep their exact semantics.
   for (const indicator of current.indicators) if (!indicators.some(i => i.id === indicator.id)) indicators.push(JSON.parse(JSON.stringify(indicator)));
   const strategy: StrategyAST = JSON.parse(JSON.stringify(current));
-  strategy.name = truncateAtWord(plan.summary, 70);
-  strategy.description = sanitizeText(plan.summary, 2_000);
   strategy.universe = { ...strategy.universe, timeframe: '1D' };
   strategy.indicators = indicators;
   strategy.rules = { entry, exit: strategy.rules.exit };
+  strategy.name = buildScreenTitle(strategy, 70);
+  strategy.description = cleanScreenSummary(plan.summary, 'Chart setup');
   return { strategy, assumptions };
 }
 
@@ -692,8 +772,7 @@ export async function analyzeChart(input: ChartAnalysisInput, deps: ChartVisionD
   }
 
   const confidence = clamp(finalPlan.confidence, 0, 1);
-  const deterministicConditions = renderStrategyInPlainLanguage(finalStrategy).entrySummary.join('; ');
-  const summary = sanitizeText(finalPlan.summary + ' Conditions: ' + deterministicConditions, 2_000);
+  const summary = cleanScreenSummary(finalPlan.summary, 'Chart setup');
   const assumptions = [
     ...finalPlan.assumptions.map(a => sanitizeText(a, 500)),
     ...finalAssumptions,

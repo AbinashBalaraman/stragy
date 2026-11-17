@@ -1,6 +1,7 @@
 import { StrategySchema, PriceFieldSchema, validateStrategy } from '../../shared/strategy/schema';
-import type { StrategyAST } from '../../shared/strategy/types';
-import { ALL_SYMBOLS } from '../data/symbols';
+import type { IndicatorConfig, RuleNode, StrategyAST } from '../../shared/strategy/types';
+import { ALL_SYMBOLS, getSymbolById } from '../data/symbols';
+import { renderRuleInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
 
 /** Bounds for untrusted text going into an AI prompt. */
 export const INPUT_LIMITS = {
@@ -114,12 +115,134 @@ export function parseModelJson(text: string): { ok: true; value: Record<string, 
   }
 }
 
-/** Human-readable list of leaf-level differences (bounded). */
-export function diffStrategies(before: unknown, after: unknown, limit = 40): string[] {
-  const out: string[] = [];
+export interface StrategyChangeDetail {
+  /** Raw strategy path for the JSON view. */
+  path: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface StrategyChangeSet {
+  /** Plain-language list for the draft card. */
+  changes: string[];
+  /** Raw paths and values for the JSON view. */
+  details: StrategyChangeDetail[];
+}
+
+const INTERNAL_KEYS = new Set([
+  'id', 'version', 'createdAt', 'updatedAt', 'canonicalOrigin', 'strategySignature',
+  'instrumentId', 'metadata',
+]);
+
+const VALUE_PERCENT_PATHS = new Set([
+  'risk.stopLoss.value', 'risk.takeProfit.value', 'risk.trailingStop.value',
+  'risk.maxDrawdownCutoff', 'risk.positionSizing.fraction',
+]);
+
+function formatValue(value: unknown, path = ''): string {
+  if (value === undefined) return 'absent';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return VALUE_PERCENT_PATHS.has(path) ? `${Number(value.toFixed(4))}%` : String(Number(value.toFixed(4)));
+  }
+  if (typeof value === 'string') return value;
+  if (value === null) return 'none';
+  if (typeof value === 'boolean') return value ? 'on' : 'off';
+  return JSON.stringify(value);
+}
+
+function symbolName(value: unknown): string {
+  if (typeof value !== 'number') return formatValue(value);
+  try { return getSymbolById(value).ticker; } catch { return `symbol ${value}`; }
+}
+
+function humanPath(path: string): string {
+  const labels: Record<string, string> = {
+    name: 'Name',
+    description: 'Description',
+    'universe.timeframe': 'Timeframe',
+    'universe.symbolId': 'Symbol',
+    'risk.stopLoss.type': 'Stop loss type',
+    'risk.stopLoss.value': 'Stop loss',
+    'risk.takeProfit.type': 'Take profit type',
+    'risk.takeProfit.value': 'Take profit',
+    'risk.trailingStop.type': 'Trailing stop type',
+    'risk.trailingStop.value': 'Trailing stop',
+    'risk.maxDrawdownCutoff': 'Max drawdown cutoff',
+    'risk.positionSizing.type': 'Position sizing',
+    'risk.positionSizing.fraction': 'Position size',
+    'risk.positionSizing.quantity': 'Position size',
+    'risk.positionSizing.riskPerTrade': 'Risk per trade',
+    'execution.allowLong': 'Allow long',
+    'execution.allowShort': 'Allow short',
+    'execution.orderType': 'Order type',
+    'costs.slippageBps': 'Slippage (bps)',
+    'costs.brokerageFlat': 'Brokerage (₹)',
+    'costs.tradeType': 'Trade type',
+    'costs.applyIndianTaxes': 'Indian taxes',
+  };
+  return labels[path] ?? path.split('.').map(part => part.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ')).join(' ').replace(/^./, c => c.toUpperCase());
+}
+
+function formatChange(detail: StrategyChangeDetail): string {
+  const path = detail.path;
+  if (path === 'universe.symbolId') return `Symbol: ${symbolName(detail.before)} → ${symbolName(detail.after)}`;
+  if (path === 'name' || path === 'description') return `${humanPath(path)}: ${formatValue(detail.before)} → ${formatValue(detail.after)}`;
+  return `${humanPath(path)}: ${formatValue(detail.before, path)} → ${formatValue(detail.after, path)}`;
+}
+
+function ruleLabel(rule: RuleNode, indicators: IndicatorConfig[]): string {
+  try { return renderRuleInPlainLanguage(rule, indicators); } catch { return rule.leftIndicator; }
+}
+
+function ruleKey(rule: RuleNode): string {
+  const copy = { ...rule } as Record<string, unknown>;
+  delete copy.id;
+  return JSON.stringify(copy);
+}
+
+function indicatorLabel(indicator: IndicatorConfig): string {
+  const params = Object.entries(indicator.params).map(([key, value]) => `${key} ${value}`).join(', ');
+  return `${indicator.type}(${params})`;
+}
+
+/**
+ * Strategy changes for people, with a parallel raw-path array for the JSON view.
+ * Internal identity/timestamp fields are never user-facing changes.
+ */
+export function describeStrategyChanges(before: unknown, after: unknown, limit = 40): StrategyChangeSet {
+  const details: StrategyChangeDetail[] = [];
+  const add = (path: string, oldValue: unknown, newValue: unknown) => {
+    if (details.length >= limit) return;
+    details.push({ path, before: oldValue, after: newValue });
+  };
+  const beforeStrategy = before as StrategyAST | null;
+  const afterStrategy = after as StrategyAST | null;
+
+  // Rules are compared as a set, not as internal index/ID edits.
+  for (const group of ['entry', 'exit'] as const) {
+    const oldRules = beforeStrategy?.rules?.[group] ?? [];
+    const newRules = afterStrategy?.rules?.[group] ?? [];
+    const oldKeys = new Map(oldRules.map(rule => [ruleKey(rule), rule]));
+    const newKeys = new Map(newRules.map(rule => [ruleKey(rule), rule]));
+    for (const [key, rule] of newKeys) if (!oldKeys.has(key)) add(`rules.${group}`, undefined, rule);
+    for (const [key, rule] of oldKeys) if (!newKeys.has(key)) add(`rules.${group}`, rule, undefined);
+  }
+
+  for (const field of ['indicators'] as const) {
+    const oldItems = beforeStrategy?.[field] ?? [];
+    const newItems = afterStrategy?.[field] ?? [];
+    const oldKeys = new Map(oldItems.map(item => [JSON.stringify({ ...item, id: undefined }), item]));
+    const newKeys = new Map(newItems.map(item => [JSON.stringify({ ...item, id: undefined }), item]));
+    for (const [key, item] of newKeys) if (!oldKeys.has(key)) add(field, undefined, item);
+    for (const [key, item] of oldKeys) if (!newKeys.has(key)) add(field, item, undefined);
+  }
+
   const walk = (a: any, b: any, path: string) => {
-    if (out.length >= limit) return;
+    if (details.length >= limit) return;
     if (a === b) return;
+    const key = path.split('.').pop() ?? '';
+    if (INTERNAL_KEYS.has(key)) return;
+    if (path === 'rules.entry' || path === 'rules.exit' || path === 'indicators') return;
     const aObj = a && typeof a === 'object';
     const bObj = b && typeof b === 'object';
     if (aObj && bObj && Array.isArray(a) === Array.isArray(b)) {
@@ -128,9 +251,30 @@ export function diffStrategies(before: unknown, after: unknown, limit = 40): str
       return;
     }
     if (JSON.stringify(a) === JSON.stringify(b)) return;
-    const fmt = (v: unknown) => (v === undefined ? '(absent)' : JSON.stringify(v));
-    out.push(`${path || 'strategy'}: ${fmt(a)} -> ${fmt(b)}`);
+    add(path || 'strategy', a, b);
   };
   walk(before, after, '');
-  return out;
+
+  const changes = details.map(detail => {
+    if (detail.path === 'rules.entry' || detail.path === 'rules.exit') {
+      const group = detail.path.endsWith('entry') ? 'Entry' : 'Exit';
+      const rules = (detail.after ?? detail.before) as RuleNode;
+      const indicators = detail.after ? (afterStrategy?.indicators ?? []) : (beforeStrategy?.indicators ?? []);
+      if (detail.before === undefined) return `${group}: added '${ruleLabel(rules, indicators)}'`;
+      if (detail.after === undefined) return `${group}: removed '${ruleLabel(rules, indicators)}'`;
+      return `${group}: changed`;
+    }
+    if (detail.path === 'indicators') {
+      const item = (detail.after ?? detail.before) as IndicatorConfig;
+      return detail.before === undefined ? `Indicator: added ${indicatorLabel(item)}` : `Indicator: removed ${indicatorLabel(item)}`;
+    }
+    return formatChange(detail);
+  });
+
+  return { changes, details };
+}
+
+/** Human-readable list of leaf-level differences (bounded). */
+export function diffStrategies(before: unknown, after: unknown, limit = 40): string[] {
+  return describeStrategyChanges(before, after, limit).changes;
 }

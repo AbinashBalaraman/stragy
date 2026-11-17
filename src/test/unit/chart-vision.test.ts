@@ -126,6 +126,9 @@ describe('chart analysis', () => {
     expect(result).toMatchObject({ universe: 'NIFTY_50', source: 'chart_image', backtestReady: false, confidence: 0.74, method: 'external_ai' });
     expect(result.observations).toEqual(observations);
     expect(result.summary).toContain('falling trendline');
+    expect(result.summary).not.toMatch(/Conditions:/i);
+    expect(result.strategy.name).toBe('RSI trendline breakout · near 52-week low');
+    expect(result.assumptions.join(' ')).toMatch(/dropped to keep the scan findable:/i);
     expect(result.missingBacktestRules).toEqual(['exits', 'positionSizing', 'executionAndCosts']);
     expect(result.strategy.universe.timeframe).toBe('1D');
     expect(result.strategy.execution).toMatchObject({ allowLong: true, allowShort: false, orderType: 'MARKET' });

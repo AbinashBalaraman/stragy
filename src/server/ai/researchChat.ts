@@ -6,6 +6,7 @@ import { createProposal, describeConfigState, type AIServiceDeps } from './propo
 import { handleAIChat } from './copilot';
 import { AI_LIMITS, callProvider, resolveAIConfig } from './provider';
 import { resolveFeatureSetup } from './featureSetup';
+import { buildScreenTitle, cleanScreenSummary } from '../../shared/strategy/screenTitle';
 import { boundHistory, parseModelJson, sanitizeText, strictValidateStrategy } from './validation';
 import { isInformationalQuestion } from './intent';
 import { resolveActiveConfig } from './providerRegistry';
@@ -93,11 +94,13 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
         if('error'in planned)return unavailable(planned.error+' No scan was run.',rev);
         Object.assign(candidate,planned.strategy);candidate.rules.exit=current.rules.exit;candidate.risk=current.risk;candidate.execution=current.execution;candidate.costs=current.costs;
         for(const indicator of current.indicators)if(!candidate.indicators.some((i:{id:string})=>i.id===indicator.id))candidate.indicators.push(indicator);
+        candidate.name=buildScreenTitle(candidate,70);
+        candidate.description=cleanScreenSummary(candidate.description,'Screen setup');
         assumptions.push(...planned.assumptions);method='external_ai';provider={name:cfg.provider,model:cfg.model,aiGenerated:true};
       }
     }
     const check=strictValidateStrategy(candidate); if(!check.success)return unavailable('Screen strategy is invalid: '+check.errors?.join('; '),rev);
-    return parseResearchChatResponse({...base,kind:'screen',message:screenMessage,method,provider,universe:'NIFTY_50',strategy:check.data,assumptions:[...assumptions,'Workspace exits, risk, sizing, execution and costs are unused placeholders for screening only.'],missingBacktestRules:['exits','positionSizing','executionAndCosts'],backtestReady:false});
+    return parseResearchChatResponse({...base,kind:'screen',message:screenMessage,method,provider,universe:'NIFTY_50',strategy:check.data,assumptions:[...assumptions,'Workspace exits, risk, sizing, execution and costs are unused placeholders for screening only.'],missingBacktestRules:['exits','positionSizing','executionAndCosts'],backtestReady:false,...(method==='external_ai'?{summary:cleanScreenSummary(candidate.description,'Screen setup')}:{})});
   }
   if(!isInformationalQuestion(message)&&/\b(strategy|setup|backtest|stop[ -]?loss|take[ -]?profit|trailing|set|change|build|create)\b/i.test(message)){
     const result=await createProposal({prompt:message,history:input.history,currentStrategy:input.currentStrategy,originatingRevision:rev,allowLocalFallback:input.allowLocalFallback},d);

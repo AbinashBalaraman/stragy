@@ -158,13 +158,10 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
   const quotesFailed = dataMode === 'real' && liveQuotes?.failed === true && !live && !checkingQuotes;
   const liveProvider = liveQuotes?.provider === 'angel' ? 'Angel One' : 'broker';
   const statusFooter = live ? (
-    <div className="space-y-0.5">
-      <p className="flex items-center gap-1.5 text-[11px] leading-4 text-emerald-300/90">
-        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-        Live quotes · {liveProvider}
-      </p>
-      <p className="text-[10px] leading-4 text-neutral-400">Research bars remain delayed, not live</p>
-    </div>
+    <p className="flex items-center gap-1.5 text-[11px] leading-4 text-emerald-300/90">
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+      Live quotes · {liveProvider}
+    </p>
   ) : checkingQuotes ? (
     <p role="status" className="text-[11px] leading-4 text-neutral-400">Checking quotes…</p>
   ) : quotesFailed ? (
@@ -202,19 +199,17 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
         <aside aria-label="Workspace navigation" className="hidden w-60 shrink-0 flex-col border-r border-white/8 bg-[#131315] px-3 py-4 lg:flex">
           <button type="button" onClick={() => navigate('chat')} className="mb-6 flex items-center gap-2 px-2 text-left">
             <span aria-hidden="true" className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03] text-[13px] font-semibold text-neutral-100">S</span>
-            <span>
-              <span className="block text-sm font-semibold tracking-tight text-neutral-100">Stragy</span>
-              <span className="block text-[10px] uppercase tracking-[0.18em] text-neutral-500">Research chat</span>
-            </span>
+            <span className="text-sm font-semibold tracking-tight text-neutral-100">Stragy</span>
           </button>
           <NavItems
             activeView={activeView}
             onNavigate={navigate}
             onNewChat={newChat}
           />
-          <div className="mt-auto space-y-3 px-2 pt-6">
+          <div className="mt-auto space-y-2 px-2 pt-6">
             {statusFooter}
-            {footer && <div className="text-[11px] leading-4 text-neutral-500">{footer}</div>}
+            <p className="text-[10px] leading-4 text-[var(--text-3)]">Backtests use daily bars</p>
+            {footer && <div className="text-[11px] leading-4 text-[var(--text-3)]">{footer}</div>}
           </div>
         </aside>
 

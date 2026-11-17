@@ -54,6 +54,17 @@ describe('chart guide deterministic mapping', () => {
     expect(merged.assumptions.join(' ')).toMatch(/drawn falling RSI line crossed above/i);
   });
 
+  it('infers the falling RSI breakout when the model marks only the breakout event', () => {
+    const merged = mergeChartConditions(observations({
+      drawnLines: [{ panel: 'rsi', direction: 'unknown', description: 'falling RSI resistance' }],
+      events: ['breakout above the falling RSI resistance'],
+      nearRange: 'high',
+    }), []);
+    expect(merged.conditions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'rsi_trendline_breakout', period: 14 }),
+    ]));
+  });
+
   it('never accepts a legend MA value as a threshold', () => {
     const merged = mergeChartConditions(observations(), [
       { type: 'rsi_around_value', value: 31.9, tolerance: 6 },
@@ -86,6 +97,33 @@ describe('chart guide deterministic mapping', () => {
     expect(built.strategy.indicators.some(indicator => indicator.type === 'HIGHEST' && indicator.params.period === 60)).toBe(true);
     expect(built.strategy.rules.entry.some(rule => rule.operator === 'crossesAbove' && rule.leftIndicator === 'close')).toBe(true);
     expect(validateStrategy(built.strategy).success).toBe(true);
+  });
+
+  it('loosens a tight near-low value from the model and reports the drop when capping at five', () => {
+    const chart = observations({
+      drawnLines: [{ panel: 'rsi', direction: 'down', description: 'falling RSI line', lastBarRelation: 'crossed_above' }],
+      recentBars: { note: 'RSI dipped', rsiBelow30BarsAgo: 3 },
+      rangePosition: undefined,
+      nearRange: 'low',
+    });
+    const merged = mergeChartConditions(chart, [
+      { type: 'near_period_low', period: 250, value: 5 },
+      { type: 'rsi_around_value', value: 45.76, tolerance: 6 },
+      { type: 'macd_above_signal' },
+      { type: 'volume_above_sma', period: 20 },
+    ]);
+    expect(merged.conditions).toHaveLength(5);
+    expect(merged.conditions.find(condition => condition.type === 'near_period_low')?.value).toBe(15);
+    expect(merged.assumptions.join(' ')).toMatch(/near-low threshold widened to 15%/i);
+    expect(merged.assumptions.join(' ')).toMatch(/dropped to keep the scan findable:/i);
+  });
+
+  it('drops a model-only breakout that is not visible as a drawn price box', () => {
+    const merged = mergeChartConditions(observations({ drawnLines: [], priceTrend: 'sideways', nearRange: 'high' }), [
+      { type: 'price_breakout_high', period: 60 },
+    ]);
+    expect(merged.conditions.some(condition => condition.type === 'price_breakout_high')).toBe(false);
+    expect(merged.assumptions.join(' ')).toMatch(/dropped model conditions that were not visible/i);
   });
 
   it('maps price above a legend EMA to price_above_ema with the legend period', () => {
@@ -139,6 +177,8 @@ describe('chart observation schema compatibility', () => {
       priceTrend: 'DOWNTREND',
       nearRange: 'LOW',
       lastCandle: 'BULLISH',
+      recentBars: { note: 'RSI dipped', rsiBelow30BarsAgo: '13 bars' },
+      rangePosition: { approxPctAboveLow: '4%' },
       events: [{ type: 'dividend', label: 'D' }],
     });
     expect(parsed.success).toBe(true);
@@ -147,6 +187,8 @@ describe('chart observation schema compatibility', () => {
     expect(parsed.data.indicators[0].legendValues).toEqual([45.76, 31.9]);
     expect(parsed.data.drawnLines[0].panel).toBe('rsi');
     expect(parsed.data.drawnLines[0].lastBarRelation).toBe('crossed_above');
+    expect(parsed.data.recentBars?.rsiBelow30BarsAgo).toBe(13);
+    expect(parsed.data.rangePosition?.approxPctAboveLow).toBe(4);
     expect(parsed.data.events).toEqual(['D']);
   });
 });

@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { IndicatorConfig } from '../../shared/strategy/types';
 import {
-  describeUnmatchedRule, formatIndicatorValue, getIndicatorLabel, humanFreshnessLabel, humanObservationFreshness, humanSourceLabel,
+  describeUnmatchedRule, formatIndicatorValue, getIndicatorLabel, humanFreshnessLabel, humanObservationFreshness,
+  humanSourceLabel, renderRuleInPlainLanguage,
 } from '../../shared/strategy/renderPlainLanguage';
 
 const indicators: IndicatorConfig[] = [
   { id: 'rsi14', type: 'RSI', params: { period: 14 } },
+  { id: 'rsi_sma', type: 'RSI_SMA', params: { rsiPeriod: 14, period: 14 } },
+  { id: 'tl', type: 'RSI_TRENDLINE', params: { rsiPeriod: 14, minSpan: 30, maxSpan: 180, anchorMin: 60 } },
+  { id: 'low250', type: 'PCT_ABOVE_LOW', params: { period: 250 } },
+  { id: 'ema50', type: 'EMA', params: { period: 50 } },
   { id: 'vol_sma_20', type: 'VOLUME_SMA', params: { period: 20 } },
   { id: 'high20', type: 'HIGHEST', params: { period: 20 } },
 ];
@@ -25,6 +30,32 @@ describe('screen evidence presentation', () => {
     expect(formatIndicatorValue('Volume avg 20d', 12_500_000)).toBe('1.3 Cr');
     expect(getIndicatorLabel('vol_sma_20', indicators)).toBe('Volume avg 20d');
     expect(getIndicatorLabel('high20', indicators)).toBe('Highest high of previous 20 bars');
+    expect(getIndicatorLabel('low250', indicators)).toBe('% above its 52-week low');
+    expect(getIndicatorLabel('rsi_sma', indicators)).toBe("RSI's 14-day average");
+    expect(renderRuleInPlainLanguage({ leftIndicator: 'close', operator: 'gt', rightIndicator: 'ema50' }, indicators)).toBe('Close above 50-day EMA');
+    expect(renderRuleInPlainLanguage({ leftIndicator: 'rsi14', operator: 'crossesAbove', rightIndicator: 'tl_line' }, indicators))
+      .toBe('RSI crossed above its falling trendline');
+    expect(renderRuleInPlainLanguage({
+      leftIndicator: 'rsi14', operator: 'lt', rightIndicator: 'tl_line',
+      lookback: { bars: 5, includeCurrent: false, match: 'any' },
+    }, indicators)).toBe('RSI was below its falling trendline in the last 5 days');
+    expect(renderRuleInPlainLanguage({ leftIndicator: 'rsi14', operator: 'gt', rightIndicator: 'rsi_sma' }, indicators))
+      .toBe('RSI is above its 14-day average');
+    expect(renderRuleInPlainLanguage({
+      leftIndicator: 'rsi14', operator: 'lt', rightValue: 30,
+      lookback: { bars: 5, includeCurrent: false, match: 'any' },
+    }, indicators)).toBe('RSI was below 30 in the last 5 days');
+    expect(renderRuleInPlainLanguage({ leftIndicator: 'low250', operator: 'lt', rightValue: 15 }, indicators))
+      .toBe('Close is within 15% of its 52-week low');
+    expect(renderRuleInPlainLanguage({ leftIndicator: 'close', operator: 'crossesAbove', rightIndicator: 'high20' }, indicators))
+      .toBe('Close crossed above the 20-day high');
+  });
+
+  it('describes a near-low miss and a close-vs-average miss in plain language', () => {
+    expect(describeUnmatchedRule({ leftIndicator: 'low250', operator: 'lt', rightValue: 5 }, indicators, 13.04))
+      .toBe('Close is not within 5% of its 52-week low yet (now 13.04% above).');
+    expect(describeUnmatchedRule({ leftIndicator: 'close', operator: 'gt', rightIndicator: 'ema50' }, indicators, 1344.8))
+      .toBe('Close is not above 50-day EMA yet (now 1,344.8).');
   });
 
   it('describes the missing screen condition in plain words with its current value', () => {
