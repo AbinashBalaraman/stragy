@@ -61,5 +61,5 @@ describe('GTT preview clipboard', () => {
     expect(screen.queryByText('Copied!')).toBeNull(); expect(screen.queryByRole('button', { name: 'Copy preview with warnings' })).toBeNull();
     await flush(300); fireEvent.click(screen.getByRole('button', { name: 'Copy preview with warnings' })); await flush();
     expect(screen.getByRole('alert').textContent).toContain('Clipboard copy failed');
-  });
+  }, 40000); // Fake-timer flushes on a loaded CI box can pass 15 s; the body is deterministic.
 });

@@ -3,7 +3,7 @@ import React from 'react';
 import { JSDOM } from 'jsdom';
 import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { requestScan, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
@@ -16,6 +16,10 @@ vi.mock('../../client/api', async importOriginal => {
   return { ...actual, requestScan: vi.fn() };
 });
 vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+
+// The preview comes from a FileReader and the reading from a mocked fetch; on
+// a loaded box both can take longer than the 1 s query default to settle.
+configure({ asyncUtilTimeout: 5000 });
 
 let dom: JSDOM;
 let fetchMock: ReturnType<typeof vi.fn>;
