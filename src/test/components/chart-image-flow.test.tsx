@@ -236,6 +236,45 @@ describe('chart image research flow', () => {
     }
   });
 
+  it('shows Try again when an async chart job fails, then re-reads the same image and hint', async () => {
+    const jobId = '11111111-1111-4111-8111-111111111111';
+    const jobFetch = (failFirst: boolean) => {
+      let polls = 0;
+      const mock = vi.fn(async (url: string) => {
+        if (String(url).includes('/api/v2/chart-analysis')) {
+          return { ok: true, status: 202, json: async () => ({ schemaVersion: 2, jobId, status: 'queued' }) };
+        }
+        if (String(url).includes('/api/v2/jobs/')) {
+          polls += 1;
+          if (failFirst && polls === 1) {
+            return { ok: true, status: 200, json: async () => ({ id: jobId, kind: 'chart', status: 'failed', error: { code: 'CHART_READ_FAILED', message: "I couldn't read this chart. The AI models didn't return a reading. Try again, or describe the setup in words." } }) };
+          }
+          return { ok: true, status: 200, json: async () => ({ id: jobId, kind: 'chart', status: 'succeeded', result: chartScreen() }) };
+        }
+        return { ok: true, status: 200, json: async () => chartResponse };
+      });
+      return mock;
+    };
+    fetchMock = jobFetch(true);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AiCopilotDock strategy={chartTemplate()} />);
+    attachFile(pngFile());
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Focus on the RSI breakout' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    fetchMock = jobFetch(false);
+    vi.stubGlobal('fetch', fetchMock);
+    fireEvent.click(retry);
+    const card = await screen.findByRole('article', { name: 'Chart reading' });
+    expect(within(card).getByText(/Price sits near a 250-bar low/)).toBeTruthy();
+    const posts = fetchMock.mock.calls.filter(call => String(call[0]).includes('/api/v2/chart-analysis'));
+    expect(posts).toHaveLength(1);
+    const body = JSON.parse(String(posts[0][1].body));
+    expect(body.hint).toBe('Focus on the RSI breakout');
+    expect(body.image.startsWith('data:image/png;base64,')).toBe(true);
+  });
+
   it('shows close matches with scores and still requires explicit approval before a backtest', async () => {
     const fiveRules: StrategyAST = {
       ...chartTemplate(),

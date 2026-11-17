@@ -743,7 +743,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
                 {marketCoverage.succeeded} of {marketCoverage.requested} stocks priced
                 {dataEvidence.status ? ' · ' + dataEvidence.status + ' coverage' : ''}
-                {marketUnavailable.length > 0 && (
+                {marketCoverage.succeeded > 0 && marketUnavailable.length > 0 && (
                   ' · ' + (unavailableNames.length <= 3 ? unavailableNames.join(', ') + ' unavailable' : `${unavailableNames.length} unavailable`)
                 )}
               </p>

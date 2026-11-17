@@ -78,7 +78,9 @@ export async function buildMarketSnapshot(universe: string, date?: string, mode:
     result.progress = { processed: symbols.length, total: symbols.length, stage };
     const refused = result.trends.length === 0;
     result.status = refused ? 'unavailable' : result.deadline?.truncated || result.errors.length ? 'partial' : 'complete';
-    result.retryable = result.status !== 'complete';
+    // Only a retry that can actually change the answer is advertised as retryable:
+    // a provider outage or a deadline stop. Permanent unmapped tickers are not.
+    result.retryable = result.status === 'unavailable' || Boolean(result.deadline?.truncated);
     if (refused) {
       const codes = [...new Set(result.errors.map(error => error.code))].slice(0, 4);
       result.statusReason = result.deadline?.truncated

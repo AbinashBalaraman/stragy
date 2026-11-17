@@ -74,6 +74,7 @@ export function observationAttemptTimeouts(
       return 0;
     });
   }
+  if (attempts.length === 1) return [Math.min(VISION_OBSERVATION_ALLOCATION_MS.primaryFree, budgetMs)];
   const share = Math.floor(budgetMs / Math.max(1, attempts.length));
   return attempts.map(() => Math.min(VISION_ATTEMPT_TIMEOUT_MS, share));
 }

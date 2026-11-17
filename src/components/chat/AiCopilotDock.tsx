@@ -21,7 +21,7 @@ import { BacktestResultCard } from './BacktestResultCard';
 import { BacktestReviewCard } from './BacktestReviewCard';
 import { AssistantPending } from './AssistantPending';
 import { MessageText } from './MessageText';
-import { RequestOptionsButton, RequestOptionsPanel } from './ComposerOptions';
+import { Checkbox } from '../common/Checkbox';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
 import { ActionRow } from '../common/ActionRow';
@@ -1647,7 +1647,18 @@ export const AiCopilotDock: React.FC<Props> = ({
         if (attachedImage) setChartReading(null);
       }
     } catch (caught) {
-      if (generation.current === owned && !controller.signal.aborted) setError((caught as Error).message);
+      if (generation.current !== owned || controller.signal.aborted) return;
+      if (attachedImage) {
+        const raw = caught instanceof Error ? caught.message : 'The chart image could not be read.';
+        const failure = /describe the setup/i.test(raw)
+          ? raw
+          : raw.replace(/\s*Try again\.?$/i, '') + ' Try again, or describe the setup in words.';
+        const id = append('assistant', failure, { methodLabel: 'AI unavailable', tone: 'error' });
+        setChartRetry({ image: attachedImage, hint: text, messageId: id });
+        setError('');
+      } else {
+        setError((caught as Error).message);
+      }
     } finally {
       if (generation.current === owned) setLoading(false);
     }
@@ -2296,14 +2307,22 @@ export const AiCopilotDock: React.FC<Props> = ({
               {imageError && <p role="alert" className="st-meta mb-1 px-1 text-[var(--down)]">{imageError}</p>}
               {dragActive && <p className="st-meta mb-1 px-1 text-[var(--accent)]">Drop a chart image to attach it.</p>}
               {optionsOpen && (
-                <RequestOptionsPanel
-                  checked={allowLocal}
-                  onChange={setAllowLocal}
-                  onClose={() => {
+                <div
+                  id="composer-options"
+                  onKeyDown={event => {
+                    if (event.key !== 'Escape') return;
+                    event.stopPropagation();
                     setOptionsOpen(false);
                     optionsButtonRef.current?.focus();
                   }}
-                />
+                  className="mb-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2"
+                >
+                  <label className="flex min-h-11 items-start gap-2 text-[12px] leading-4 text-[var(--text-2)] sm:min-h-6">
+                    <Checkbox checked={allowLocal} onChange={setAllowLocal} className="mt-0.5" />
+                    Allow local keyword fallback (not AI)
+                  </label>
+                  <p className="mt-2 text-[12px] leading-4 text-[var(--text-3)]">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>
+                </div>
               )}
               <textarea
                 id="copilot-prompt"
@@ -2348,7 +2367,17 @@ export const AiCopilotDock: React.FC<Props> = ({
                   >
                     <ImagePlus size={15} aria-hidden="true" />
                   </button>
-                  <RequestOptionsButton ref={optionsButtonRef} open={optionsOpen} onToggle={() => setOptionsOpen(open => !open)} />
+                  <button
+                    type="button"
+                    ref={optionsButtonRef}
+                    aria-label="Request options"
+                    aria-expanded={optionsOpen}
+                    aria-controls="composer-options"
+                    onClick={() => setOptionsOpen(open => !open)}
+                    className="flex min-h-11 cursor-pointer items-center whitespace-nowrap rounded-[var(--r-btn)] px-2 text-[12px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
+                  >
+                    Request options
+                  </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   {/* One control in this slot: send, or cancel while a request runs. */}

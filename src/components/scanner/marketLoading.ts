@@ -8,7 +8,11 @@ const COUNT_STAGE = /(\d+)\s*(?:of|\/)\s*(\d+)\s*$/i;
  * when the server actually reports them, and queued work says what it waits on.
  */
 export function marketLoadingMessage(progress: ResearchJobProgress | null, label: string): string {
-  if (progress?.status === 'queued') return 'Waiting for the current scan to finish…';
+  if (progress?.status === 'queued') {
+    const behind = progress.queuedBehind;
+    if (typeof behind === 'number' && behind > 0) return `Waiting behind ${behind} earlier ${behind === 1 ? 'job' : 'jobs'}…`;
+    return 'Waiting for the current scan to finish…';
+  }
   const stage = progress?.stage?.trim() ?? '';
   const counts = stage.match(COUNT_STAGE);
   if (counts) return `Loading ${label} prices · ${counts[1]} of ${counts[2]}`;

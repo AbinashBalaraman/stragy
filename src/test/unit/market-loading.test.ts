@@ -4,7 +4,8 @@ import { marketLoadingMessage } from '../../components/scanner/marketLoading';
 describe('market scanner loading copy', () => {
   it('names the queue instead of showing an unexplained skeleton', () => {
     expect(marketLoadingMessage({ status: 'queued' }, 'Nifty 50')).toBe('Waiting for the current scan to finish…');
-    expect(marketLoadingMessage({ status: 'queued', queuedBehind: 2 }, 'Nifty 50')).toBe('Waiting for the current scan to finish…');
+    expect(marketLoadingMessage({ status: 'queued', queuedBehind: 2 }, 'Nifty 50')).toBe('Waiting behind 2 earlier jobs…');
+    expect(marketLoadingMessage({ status: 'queued', queuedBehind: 1 }, 'Nifty 50')).toBe('Waiting behind 1 earlier job…');
   });
 
   it('shows the first-load expectation before any job status arrives', () => {

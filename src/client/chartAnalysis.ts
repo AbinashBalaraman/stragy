@@ -15,7 +15,13 @@ export const CHART_JOB_POLL_MS = 1_500;
  * short enough that a dead provider is not an endless spinner.
  */
 export const CHART_ANALYSIS_DEADLINE_MS = 210_000;
-const POLL_MAX_CONSECUTIVE_FAILURES = 10;
+/**
+ * The API allows 90 requests a minute per client, and a page sharing the
+ * tunnel can spend part of that budget elsewhere. During a rate-limit window
+ * every poll fails at once, so a few seconds of 429s must not discard a job
+ * that is still running; the 210 s deadline remains the hard stop.
+ */
+const POLL_MAX_CONSECUTIVE_FAILURES = 40;
 const MAX_SOURCE_SIDE = 2000;
 const DATA_URL = /^data:image\/(png|jpeg|webp);base64,/i;
 

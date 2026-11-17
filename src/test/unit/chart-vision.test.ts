@@ -147,7 +147,7 @@ describe('vision time budget', () => {
     const freeOnly = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: false }]);
     expect(freeOnly.every(ms => ms <= VISION_ATTEMPT_TIMEOUT_MS)).toBe(true);
     expect(freeOnly.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
-    expect(observationAttemptTimeouts([{ approvedPaid: true }])[0]).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+    expect(observationAttemptTimeouts([{ approvedPaid: true }])[0]).toBe(VISION_OBSERVATION_ALLOCATION_MS.primaryFree);
   });
 
   it('gives the plan pass the reserve after observations succeed', async () => {
