@@ -19,6 +19,8 @@ interface Props {
   statusBelow?: boolean;
   /** Footer actions, max two. */
   footer?: React.ReactNode;
+  /** Stretch to the grid row and keep the footer at the bottom. */
+  fillHeight?: boolean;
   children: React.ReactNode;
   className?: string;
 }
@@ -61,6 +63,7 @@ export const CardShell: React.FC<Props> = ({
   status,
   statusBelow = false,
   footer,
+  fillHeight = false,
   children,
   className = '',
 }) => {
@@ -71,7 +74,7 @@ export const CardShell: React.FC<Props> = ({
     <section
       aria-labelledby={titleId}
       aria-busy={state === 'pending' || undefined}
-      className={`st-card-surface ${toneClass[tone]} ${className}`}
+      className={`st-card-surface ${toneClass[tone]} ${fillHeight ? 'flex h-full flex-col' : ''} ${className}`}
     >
       <header className={spacing.header}>
         <div className={(statusBelow ? 'max-sm:block ' : '') + 'flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5'}>
@@ -92,7 +95,7 @@ export const CardShell: React.FC<Props> = ({
           )}
         </div>
       </header>
-      <div className={spacing.body + ' ' + spacing.gap}>{children}</div>
+      <div className={(fillHeight ? 'flex-1 ' : '') + spacing.body + ' ' + spacing.gap}>{children}</div>
       {footer && <footer className={spacing.footer + ' border-t border-[var(--line)]'}>{footer}</footer>}
     </section>
   );

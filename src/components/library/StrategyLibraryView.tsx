@@ -311,6 +311,7 @@ export const StrategyLibraryView: React.FC<StrategyLibraryViewProps> = ({ onLoad
           return (
             <CardShell
               key={template.id}
+              fillHeight
               title={template.name}
               meta={`${categoryLabel(template.category)} · illustrative costs`}
               footer={(

@@ -44,6 +44,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [runPhase, setRunPhase] = useState<ResearchPhase | null>(null);
   const [runError, setRunError] = useState('');
+  /** A chat-initiated run already printed this failure in the conversation. */
+  const [runErrorFromChat, setRunErrorFromChat] = useState(false);
   const [saveStatus, setSaveStatus] = useState('Saving');
   const [workspaceConflict, setWorkspaceConflict] = useState(false);
   const [preferences, setPreferences] = useState<UserPreferences>(() => readPreferences());
@@ -191,6 +193,7 @@ export default function App() {
     setIsLoading(true);
     setRunPhase('preparing');
     setRunError('');
+    setRunErrorFromChat(false);
     try {
       const result = await requestBacktest(snapshot, controller.current.signal, options, phase => {
         if (owner.current.owns(id)) setRunPhase(phase);
@@ -278,8 +281,14 @@ export default function App() {
     // The chat review freezes its exact tester inputs (start/end/asOf/capital/seed/
     // robustness). An additive third argument keeps the older asOf-only callers
     // working while the reviewed run finally uses the window it displayed.
-    if (runOptions) return await runSnapshot(input, false, { ...runOptions, ...(asOf && !runOptions.asOf ? { asOf } : {}) });
-    return await runSnapshot(input, false, asOf ? scannerBacktestOptions(asOf) : {});
+    try {
+      if (runOptions) return await runSnapshot(input, false, { ...runOptions, ...(asOf && !runOptions.asOf ? { asOf } : {}) });
+      return await runSnapshot(input, false, asOf ? scannerBacktestOptions(asOf) : {});
+    } catch (error) {
+      // The conversation owns this failure; the page banner would repeat it.
+      setRunErrorFromChat(true);
+      throw error;
+    }
   };
 
   const saveStrategyToLibrary = async (input: StrategyAST) => {
@@ -294,6 +303,7 @@ export default function App() {
     setNewConversationSignal(signal => signal + 1);
     setActiveView('chat');
     setRunError('');
+    setRunErrorFromChat(false);
   };
 
   const exportDraft = () => {
@@ -357,8 +367,8 @@ export default function App() {
       liveQuotes={liveQuoteStatus}
       footer={footer}
     >
-      {runError && activeView !== 'builder' && (
-        <div role="alert" className="shrink-0 border-b border-[var(--warn)]/20 bg-[var(--warn)]/[0.03] px-4 py-2 text-xs text-[#f5d383] sm:px-6">
+      {runError && activeView !== 'builder' && !(activeView === 'chat' && runErrorFromChat) && (
+        <div role="alert" data-testid="run-error-banner" className="shrink-0 border-b border-[var(--warn)]/20 bg-[var(--warn)]/[0.03] px-4 py-2 text-xs text-[#f5d383] sm:px-6">
           {runError}
         </div>
       )}

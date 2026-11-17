@@ -21,6 +21,7 @@ import { BacktestResultCard } from './BacktestResultCard';
 import { BacktestReviewCard } from './BacktestReviewCard';
 import { AssistantPending } from './AssistantPending';
 import { MessageText } from './MessageText';
+import { Checkbox } from '../common/Checkbox';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
 import { ActionRow } from '../common/ActionRow';
@@ -118,10 +119,13 @@ function saveMessages(key: string, messages: ChatMessage[]): boolean {
 type Proposal = StrategyProposal & { sourceSnapshot: string; validatedCandidate: StrategyAST };
 
 const STARTERS = [
-  { label: 'Nifty 50: RSI oversold after overbought', text: 'Find Nifty 50 RSI oversold stocks after recently overbought' },
+  { label: 'RSI oversold after overbought', text: 'Find Nifty 50 RSI oversold stocks after recently overbought' },
   { label: 'Set my stop loss to 3%', text: 'Set my stop loss to 3%' },
   { label: 'Use a 2% trailing stop', text: 'Set my trailing stop to 2%' },
 ];
+
+/** One shape for all three starters: same padding, same height, equal row. */
+const STARTER_CHIP_CLASS = 'flex min-h-11 items-center rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3.5 py-2.5 text-left st-meta text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-12';
 
 function providerModel(provider: { name: string; model: string | null }): { providerName: string; model: string } {
   const at = provider.name.indexOf(':');
@@ -1934,7 +1938,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                       key={starter.label}
                       type="button"
                       onClick={() => { setPrompt(''); void submitText(starter.text); }}
-                      className="flex min-h-11 items-center rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3.5 py-2.5 text-left st-meta text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-12"
+                      className={STARTER_CHIP_CLASS}
                     >
                       {starter.label}
                     </button>
@@ -2141,12 +2145,11 @@ export const AiCopilotDock: React.FC<Props> = ({
                   </button>
                   <details className="relative text-[12px] text-[var(--text-3)]">
                     <summary aria-label="Request options" className="flex min-h-11 cursor-pointer list-none items-center whitespace-nowrap rounded-[var(--r-btn)] px-2 transition-colors hover:text-[var(--text-1)] [&::-webkit-details-marker]:hidden sm:min-h-8">
-                      <span className="sm:hidden">Options</span>
-                      <span className="hidden sm:inline">Request options</span>
+                      Request options
                     </summary>
                     <div className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-[var(--r-inner)] border border-[var(--line)] bg-[var(--surface-2)] p-3 shadow-[0_12px_32px_rgba(0,0,0,0.45)]">
-                      <label className="flex items-start gap-2 text-[12px] leading-4 text-[var(--text-2)]">
-                        <input type="checkbox" checked={allowLocal} onChange={event => setAllowLocal(event.target.checked)} className="mt-0.5" />
+                      <label className="flex min-h-11 items-start gap-2 text-[12px] leading-4 text-[var(--text-2)] sm:min-h-6">
+                        <Checkbox checked={allowLocal} onChange={setAllowLocal} className="mt-0.5" />
                         Allow local keyword fallback (not AI)
                       </label>
                       <p className="mt-2 text-[12px] leading-4 text-[var(--text-3)]">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>

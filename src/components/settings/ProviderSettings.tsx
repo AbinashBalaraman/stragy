@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown, ChevronUp, KeyRound, List, Pencil, Plus, RefreshCw, Search, Trash2, X,
 } from 'lucide-react';
+import { Checkbox } from '../common/Checkbox';
 import type {
   AIChainEntryInput, AIChainEntryPublic, AIChainLastStatus, AIProviderModelPublic, AIProviderPublic,
   AIProviderTestResponse, AIProviderWriteInput, AIProvidersResponse,
@@ -581,8 +582,8 @@ export const ProviderSettings: React.FC = () => {
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />Remove saved key
               </button>
             )}
-            <label className="flex min-h-6 items-center gap-2 text-xs text-neutral-300">
-              <input type="checkbox" className="h-4 w-4 accent-[#a8c7fa]" checked={form.enabled} onChange={event => setForm(current => current && { ...current, enabled: event.target.checked })} />
+            <label className="flex min-h-11 items-center gap-2 text-xs text-neutral-300 sm:min-h-6">
+              <Checkbox checked={form.enabled} onChange={enabled => setForm(current => current && { ...current, enabled })} />
               Enabled
             </label>
             <div className="space-y-2">
@@ -645,8 +646,8 @@ export const ProviderSettings: React.FC = () => {
                     {provider.extraHeaderNames.length > 0 && <p className="mt-1 text-[10px] text-neutral-500">Headers: {provider.extraHeaderNames.join(', ')} (values hidden)</p>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex min-h-6 items-center gap-2 text-xs text-neutral-300">
-                      <input type="checkbox" className="h-4 w-4 accent-[#a8c7fa]" checked={provider.enabled} disabled={!writable || busy} onChange={event => void toggleProvider(provider, event.target.checked)} aria-label={'Enable ' + provider.label} />
+                    <label className="inline-flex min-h-11 items-center gap-2 text-xs text-neutral-300 sm:min-h-6">
+                      <Checkbox checked={provider.enabled} disabled={!writable || busy} onChange={enabled => void toggleProvider(provider, enabled)} aria-label={'Enable ' + provider.label} />
                       Enabled
                     </label>
                     <button type="button" onClick={() => void openModels(provider)} className={secondary}>
@@ -683,8 +684,8 @@ export const ProviderSettings: React.FC = () => {
           )}
           {!modelsError && selectedModels.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-400">
-              <label className="inline-flex min-h-6 items-center gap-2 text-xs text-neutral-300">
-                <input type="checkbox" className="h-4 w-4 accent-[#a8c7fa]" checked={freeOnly} onChange={event => setFreeOnly(event.target.checked)} />
+              <label className="inline-flex min-h-11 items-center gap-2 text-xs text-neutral-300 sm:min-h-6">
+                <Checkbox checked={freeOnly} onChange={setFreeOnly} />
                 Free only
               </label>
               <span>{selectedModels.length} models · {freeModelCount} free</span>
@@ -787,17 +788,17 @@ export const ProviderSettings: React.FC = () => {
                   <div className="flex items-center gap-1">
                     <button type="button" onClick={() => moveChain(index, -1)} disabled={!writable || index === 0} className={secondary} aria-label={'Move ' + entry.model + ' up'}><ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />Up</button>
                     <button type="button" onClick={() => moveChain(index, 1)} disabled={!writable || index === chain.length - 1} className={secondary} aria-label={'Move ' + entry.model + ' down'}><ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />Down</button>
-                    <button type="button" onClick={() => removeChain(index)} disabled={!writable} className={danger} aria-label={'Remove ' + entry.model + ' from chain'}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" /></button>
+                    <button type="button" onClick={() => removeChain(index)} disabled={!writable} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--r-btn)] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 sm:min-w-8" aria-label={'Remove ' + entry.model + ' from the chain'}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" /></button>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                  <label className="inline-flex min-h-6 items-center gap-2 text-xs text-neutral-300">
-                    <input type="checkbox" className="h-4 w-4 accent-[#a8c7fa]" checked={entry.vision} disabled={!writable} onChange={event => updateChain(index, { vision: event.target.checked })} />
+                  <label className="inline-flex min-h-11 items-center gap-2 text-xs text-neutral-300 sm:min-h-6">
+                    <Checkbox checked={entry.vision} disabled={!writable} onChange={vision => updateChain(index, { vision })} />
                     Vision
                   </label>
                   {paid && (
-                    <label className="inline-flex min-h-6 items-center gap-2 text-xs text-amber-100/90">
-                      <input type="checkbox" className="h-4 w-4 accent-[#a8c7fa]" checked={entry.paidApproved} disabled={!writable} onChange={event => updateChain(index, { paidApproved: event.target.checked })} />
+                    <label className="inline-flex min-h-11 items-center gap-2 text-xs text-amber-100/90 sm:min-h-6">
+                      <Checkbox checked={entry.paidApproved} disabled={!writable} onChange={paidApproved => updateChain(index, { paidApproved })} />
                       Approve paid use
                     </label>
                   )}

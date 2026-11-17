@@ -60,7 +60,7 @@ describe('bounded lazy market scanner flow', () => {
     expect(await screen.findByText(/Price source not reported; observed coverage unverified/)).toBeTruthy();
   });
 
-  it('applies a chat scanner prefill: universe, cutoff, limit, tab and note', async () => {
+  it('sanitizes a chat scanner prefill to the verified Nifty 50 and says so', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (String(url) === '/api/market/dates') {
         return { ok: true, status: 200, json: async () => ({ success: true, dates: [{ date: '2025-01-02', label: '2025-01-02', isLatest: true }, { date: '2025-01-01', label: '2025-01-01', isLatest: false }] }) };
@@ -74,18 +74,37 @@ describe('bounded lazy market scanner flow', () => {
     } as ScannerPrefill;
     render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} prefill={prefill} />);
     expect(await screen.findByText(/Filled from chat/)).toBeTruthy();
-    expect((screen.getByLabelText('Market universe') as HTMLSelectElement).value).toBe('NIFTY_IT');
-    await waitFor(() => expect(scan).toHaveBeenCalledWith(expect.objectContaining({ universe: 'NIFTY_IT', limit: 12, asOf: '2025-01-01' }), expect.anything()));
+    expect((screen.getByLabelText('Market universe') as HTMLSelectElement).value).toBe('NIFTY_50');
+    expect(screen.getByText(/Only the Nifty 50 has verified membership today/)).toBeTruthy();
+    await waitFor(() => expect(scan).toHaveBeenCalledWith(expect.objectContaining({ universe: 'NIFTY_50', limit: 12, asOf: '2025-01-01' }), expect.anything()));
   });
 
-  it('uses the remembered universe as the default and reports changes', async () => {
+  it('falls back from a remembered unsupported universe without a failing request', async () => {
     const onUniverseChange = vi.fn();
     render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} initialUniverse="NIFTY_IT" onUniverseChange={onUniverseChange} />);
     expect(await screen.findByText('Market scanner')).toBeTruthy();
     const select = screen.getByLabelText('Market universe') as HTMLSelectElement;
-    expect(select.value).toBe('NIFTY_IT');
-    fireEvent.change(select, { target: { value: 'NIFTY_AUTO' } });
-    expect(onUniverseChange).toHaveBeenCalledWith('NIFTY_AUTO');
+    expect(select.value).toBe('NIFTY_50');
+    expect(screen.getByText(/Only the Nifty 50 has verified membership today\. The other index pools are illustrative\./)).toBeTruthy();
+    expect(onUniverseChange).not.toHaveBeenCalled();
+    expect(market).toHaveBeenCalledWith({ universe: 'NIFTY_50', asOf: undefined }, expect.anything(), expect.anything());
+    expect(market).toHaveBeenCalledTimes(1);
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('marks every unverified pool unavailable and never requests a disabled selection', async () => {
+    const onUniverseChange = vi.fn();
+    render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} onUniverseChange={onUniverseChange} />);
+    await waitFor(() => expect(screen.getByText('Date: 02 Jan 2025')).toBeTruthy());
+    for (const label of ['All markets (NSE + BSE) · not available', 'All NSE stocks · not available', 'Bank NIFTY · not available', 'NIFTY IT · not available', 'NIFTY FMCG · not available']) {
+      expect((screen.getByRole('option', { name: label }) as HTMLOptionElement).disabled).toBe(true);
+    }
+    expect((screen.getByRole('option', { name: 'Nifty 50' }) as HTMLOptionElement).disabled).toBe(false);
+    fireEvent.change(universe(), { target: { value: 'NIFTY_IT' } });
+    expect((universe() as HTMLSelectElement).value).toBe('NIFTY_50');
+    expect(onUniverseChange).not.toHaveBeenCalled();
+    expect(market).toHaveBeenCalledTimes(1);
+    expect(scan).not.toHaveBeenCalled();
   });
 
   it('renders matched rule evidence in plain language when the rule index is known', async () => {
@@ -364,30 +383,37 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.getByRole('button', { name: /Strategy matches/i })).toBeTruthy();
   });
 
-  it('ignores late scan completion and errors from replaced universe contexts', async () => {
+  it('ignores late scan completion and errors from replaced strategy contexts', async () => {
     const first = deferred<Awaited<ReturnType<typeof requestScan>>>();
     const second = deferred<Awaited<ReturnType<typeof requestScan>>>();
-    scan.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockResolvedValueOnce(scanResult({ universe: 'BSE', scanned: 3, succeeded: 3 }));
-    renderScanner(); openMatches();
-    fireEvent.change(universe(), { target: { value: 'NSE' } });
-    fireEvent.change(universe(), { target: { value: 'BSE' } });
+    scan.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockResolvedValueOnce(scanResult({ scanned: 3, succeeded: 3 }));
+    const { rerender } = renderScanner(); openMatches();
+    const nextStrategy = { name: 'Replacement rules' } as unknown as StrategyAST;
+    rerender(<MarketScannerView strategy={nextStrategy} onSelectStockAndBacktest={vi.fn()} />);
+    rerender(<MarketScannerView strategy={{ name: 'Final rules' } as unknown as StrategyAST} onSelectStockAndBacktest={vi.fn()} />);
     await screen.findByText(/No matches in the 3 evaluated symbols/);
     expect(scan.mock.calls[0][1]?.aborted).toBe(true);
     expect(scan.mock.calls[1][1]?.aborted).toBe(true);
     await act(async () => { first.resolve(scanResult({ succeeded: 84 })); second.reject(new Error('old HTTP 504')); });
     expect(screen.getByText(/No matches in the 3 evaluated symbols/)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(scan.mock.calls.map(call => call[0].universe)).toEqual(['NIFTY_50', 'NSE', 'BSE']);
+    expect(scan.mock.calls.map(call => call[0].universe)).toEqual(['NIFTY_50', 'NIFTY_50', 'NIFTY_50']);
     expect(market).toHaveBeenCalledTimes(1);
   });
 
-  it('isolates market failures from scans and ignores old market completions after context changes', async () => {
+  it('isolates market failures from scans and ignores old market completions after a date change', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url) === '/api/market/dates') return { ok: true, status: 200, json: async () => ({ success: true, dates: [{ date: '2025-01-01', label: '2025-01-01', isLatest: false }] }) };
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }));
     const old = deferred<Awaited<ReturnType<typeof requestMarketSnapshot>>>();
     market.mockReturnValueOnce(old.promise).mockRejectedValueOnce(new Error('HTTP 504 market job'));
     renderScanner();
-    fireEvent.change(universe(), { target: { value: 'NSE' } });
+    await screen.findByRole('option', { name: '2025-01-01' });
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: '2025-01-01' } });
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('504'));
     expect(market.mock.calls[0][1]?.aborted).toBe(true);
+    expect(market.mock.calls[1][0]).toEqual({ universe: 'NIFTY_50', asOf: '2025-01-01' });
     await act(async () => { old.resolve(snapshot()); });
     expect(screen.queryByText('Date: 02 Jan 2025')).toBeNull();
     openMatches();

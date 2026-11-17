@@ -5,8 +5,27 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../App';
+import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 
-vi.mock('../../components/chat/AiCopilotDock', () => ({ AiCopilotDock: () => <div>Copilot</div> }));
+vi.mock('../../components/chat/AiCopilotDock', () => ({
+  AiCopilotDock: ({ onResearchBacktest }: { onResearchBacktest: (strategy: unknown) => Promise<unknown> }) => {
+    const [failure, setFailure] = React.useState('');
+    return (
+      <div>
+        Copilot
+        <button
+          type="button"
+          onClick={() => {
+            void onResearchBacktest(STRATEGY_TEMPLATES[0].strategy).catch((error: Error) => setFailure(error.message));
+          }}
+        >
+          Chat run test
+        </button>
+        {failure && <p role="alert">{failure}</p>}
+      </div>
+    );
+  },
+}));
 vi.mock('../../components/strategy/StrategyBuilder', () => ({
   StrategyBuilder: ({ onRunBacktest, runError }: { onRunBacktest: () => void; runError?: string }) => (
     <div>
@@ -47,6 +66,26 @@ afterEach(() => {
 });
 
 describe('run errors stay where the run happened', () => {
+  it('does not repeat a chat run failure as a page banner', async () => {
+    render(<App />);
+    await screen.findByText('Copilot');
+    fireEvent.click(screen.getByRole('button', { name: 'Chat run test' }));
+
+    const message = 'Angel One rate limit reached; the request will be retried after a short backoff';
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByTestId('run-error-banner')).toBeNull();
+    expect(screen.getAllByText(message)).toHaveLength(1);
+  });
+
+  it('keeps an error that never reached the chat log as a page banner', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/symbols')) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, json: async () => ({ quotes: [], configured: false, available: false, source: 'ANGEL_SMARTAPI', fetchedAt: '2026-11-16T00:00:00Z', delay: 'unknown' }) };
+    }));
+    render(<App />);
+    expect(await screen.findByTestId('run-error-banner')).toHaveTextContent('Symbol service unavailable');
+  });
+
   it('shows the provider-busy message in the tester and not again as a page banner', async () => {
     render(<App />);
     await screen.findByText('Copilot');

@@ -26,7 +26,7 @@ const viewLabel: Record<AppView, string> = {
   results: 'Backtest results',
   scanner: 'Market scanner',
   library: 'Saved strategies',
-  settings: 'AI providers',
+  settings: 'Settings',
 };
 
 /** Rail order is fixed by the owner: chat, then the research tools, then settings. */

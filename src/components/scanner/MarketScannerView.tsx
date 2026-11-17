@@ -259,8 +259,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     | 'trends'
     | 'strategy_matches'
   >('movers');
-  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>(() =>
-    initialUniverse && UNIVERSE_LIST.some(item => item.id === initialUniverse) ? initialUniverse : 'NIFTY_50');
+  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>('NIFTY_50');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
   const [moreTabsOpen, setMoreTabsOpen] = useState(false);
@@ -443,7 +442,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     if (!incomingPrefill || appliedPrefill.current === incomingPrefill) return;
     appliedPrefill.current = incomingPrefill;
     setPrefill(incomingPrefill);
-    if (UNIVERSE_LIST.some(item => item.id === incomingPrefill.universe)) setSelectedUniverse(incomingPrefill.universe as MarketUniverseType);
     setScanLimit(incomingPrefill.limit);
     setActiveTab('strategy_matches');
   }, [incomingPrefill]);
@@ -476,7 +474,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const initialLoading = !dataEvidence && !activeError && !marketDeadline && !marketCancelled;
 
   const handleUniverseChange = (newUniv: MarketUniverseType) => {
-    if (newUniv === selectedUniverse) return;
+    if (newUniv !== 'NIFTY_50' || newUniv === selectedUniverse) return;
     marketOwner.current.cancel(); scanOwner.current.cancel();
     setSelectedUniverse(newUniv);
     onUniverseChange?.(newUniv);
@@ -688,22 +686,22 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               className="min-w-0 flex-1 rounded-lg border border-white/12 bg-[#101012] px-2.5 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-[#a8c7fa]/60"
             >
               <optgroup label="Broad and exchanges">
-                <option value="ALL">All markets (NSE + BSE)</option>
-                <option value="NSE">All NSE stocks</option>
-                <option value="BSE">All BSE stocks</option>
+                <option value="ALL" disabled>All markets (NSE + BSE) · not available</option>
+                <option value="NSE" disabled>All NSE stocks · not available</option>
+                <option value="BSE" disabled>All BSE stocks · not available</option>
               </optgroup>
               <optgroup label="Benchmark indices">
                 <option value="NIFTY_50">Nifty 50</option>
-                <option value="BANK_NIFTY">Bank NIFTY</option>
-                <option value="BSE_SENSEX">BSE SENSEX 30</option>
-                <option value="POPULAR_INDICES">Popular indices</option>
+                <option value="BANK_NIFTY" disabled>Bank NIFTY · not available</option>
+                <option value="BSE_SENSEX" disabled>BSE SENSEX 30 · not available</option>
+                <option value="POPULAR_INDICES" disabled>Popular indices · not available</option>
               </optgroup>
               <optgroup label="Sectoral indices">
-                <option value="NIFTY_IT">NIFTY IT</option>
-                <option value="NIFTY_AUTO">NIFTY Auto</option>
-                <option value="NIFTY_PHARMA">NIFTY Pharma</option>
-                <option value="NIFTY_METAL">NIFTY Metal</option>
-                <option value="NIFTY_FMCG">NIFTY FMCG</option>
+                <option value="NIFTY_IT" disabled>NIFTY IT · not available</option>
+                <option value="NIFTY_AUTO" disabled>NIFTY Auto · not available</option>
+                <option value="NIFTY_PHARMA" disabled>NIFTY Pharma · not available</option>
+                <option value="NIFTY_METAL" disabled>NIFTY Metal · not available</option>
+                <option value="NIFTY_FMCG" disabled>NIFTY FMCG · not available</option>
               </optgroup>
             </select>
           </label>
@@ -743,6 +741,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             )}
           </div>
         </div>
+        <p className="text-[11px] leading-4 text-[var(--text-3)]">Only the Nifty 50 has verified membership today. The other index pools are illustrative.</p>
 
         {/* Core sections first; the specialists live under More. */}
         <label className="md:hidden block">

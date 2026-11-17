@@ -10,6 +10,7 @@ import type { RunRequestOptions } from '../../client/api';
 import { plainRule } from '../../client/plainRules';
 import { PrefillNote } from '../common/PrefillNote';
 import { Disclosure } from '../common/Disclosure';
+import { Checkbox } from '../common/Checkbox';
 import type { TesterPrefill, UserPreferences } from '../../shared/contracts/featureRegistry';
 import { SymbolSearchSelector } from '../layout/SymbolSearchSelector';
 
@@ -679,8 +680,8 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
               </label>
             </div>
 
-            <label className="flex gap-2 text-sm">
-              <input type="checkbox" checked={!!strategy.risk.takeProfit} onChange={event => risk({ takeProfit: event.target.checked ? { type: 'percent', value: 5 } : null })} />
+            <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-6">
+              <Checkbox checked={!!strategy.risk.takeProfit} onChange={checked => risk({ takeProfit: checked ? { type: 'percent', value: 5 } : null })} />
               Enable take profit
             </label>
             {strategy.risk.takeProfit && (
@@ -700,8 +701,8 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
               </div>
             )}
 
-            <label className="flex gap-2 text-sm">
-              <input type="checkbox" checked={!!strategy.risk.trailingStop} onChange={event => risk({ trailingStop: event.target.checked ? { type: 'percent', value: 2 } : null })} />
+            <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-6">
+              <Checkbox checked={!!strategy.risk.trailingStop} onChange={checked => risk({ trailingStop: checked ? { type: 'percent', value: 2 } : null })} />
               Enable trailing stop, changes active next bar
             </label>
             {strategy.risk.trailingStop && (
@@ -753,8 +754,8 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
                 <input aria-label="Brokerage per fill" className={control} type="number" value={strategy.costs.brokerageFlat} onChange={event => update({ costs: { ...strategy.costs, brokerageFlat: Number(event.target.value) } })} />
               </label>
             </div>
-            <label className="flex gap-2 text-sm">
-              <input type="checkbox" checked={strategy.costs.applyIndianTaxes} onChange={event => update({ costs: { ...strategy.costs, applyIndianTaxes: event.target.checked } })} />
+            <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-6">
+              <Checkbox checked={strategy.costs.applyIndianTaxes} onChange={checked => update({ costs: { ...strategy.costs, applyIndianTaxes: checked } })} />
               Include illustrative, unverified Indian cash-fee rates
             </label>
             <p className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-100/90">
