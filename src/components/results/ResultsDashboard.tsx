@@ -78,10 +78,6 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
     );
   }
 
-  const comparisonCount = Math.max(
-    comparisonResults.length,
-    comparisonResults.some(r => r.strategy.id === result.strategy.id) ? comparisonResults.length : comparisonResults.length + 1
-  );
   const survivorship = survivorshipBasis(result);
 
   return (
@@ -95,13 +91,6 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab('compare')}
-              className="rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-2 text-xs font-medium text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
-            >
-              Compare variations ({comparisonCount})
-            </button>
             <button
               type="button"
               onClick={() => onReRun(result)}

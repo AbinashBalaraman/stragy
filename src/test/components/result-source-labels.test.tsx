@@ -21,6 +21,14 @@ describe('result source and benchmark labels', () => {
     run.provenance = { mode: 'real', source: 'Direct dataset' };
     expect(renderToStaticMarkup(<RunProvenance result={run} />)).not.toContain('Manifest dataset');
   });
+  it('keeps the provenance line to source and range, with freshness in the disclosure', () => {
+    const html = renderToStaticMarkup(<RunProvenance result={result({ mode: 'real', source: 'ANGEL_SMARTAPI', actualRange: { start: '2024-01-01', end: '2025-01-02' } })} />);
+    expect(html).toContain('Angel One daily bars · 01 Jan 2024 – 02 Jan 2025');
+    expect(html).not.toContain('delayed EOD, not live');
+    expect(html).not.toContain('verification not implied');
+    expect(html).toContain('Delayed end-of-day bars, not a live feed; verification and entitlement are not implied.');
+  });
+
   it('shows the real capital and instrument benchmark, without double signs or NIFTY substitution', () => {
     const points = [{ date: '2025-01-01', timestamp: 1, equity: 49000, benchmarkEquity: 50000, drawdown: 1000, drawdownPercent: 2 }, { date: '2025-01-02', timestamp: 2, equity: 45000, benchmarkEquity: 48000, drawdown: 5000, drawdownPercent: 10 }] satisfies EquityPoint[];
     const html = renderToStaticMarkup(<EquityCharts equityCurve={points} initialCapital={50000} benchmarkLabel="RELIANCE buy-and-hold" />);

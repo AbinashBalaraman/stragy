@@ -10,7 +10,7 @@ const text = (input: unknown): string => (typeof input === 'string' && input.tri
 const sourceLabel = (value: unknown): string => {
   if (typeof value !== 'string' || !value.trim()) return 'Source unavailable';
   if (value === 'YAHOO_PUBLIC_CHART') return 'Yahoo public chart';
-  if (value === 'ANGEL_SMARTAPI') return 'Angel One SmartAPI';
+  if (value === 'ANGEL_SMARTAPI') return 'Angel One daily bars';
   if (value === 'DETERMINISTIC_DEMO_V1') return 'Generated demo data';
   return value.replace(/_/g, ' ');
 };
@@ -28,8 +28,7 @@ export function RunProvenance({ result }: { result: BacktestResponse }) {
   ];
   const mode = data.mode === 'demo' ? 'demo' : data.mode === 'real' ? 'real' : 'unknown';
   const datasetRange = `${formatDate(range.start as string | undefined)} – ${formatDate(range.end as string | undefined)}`;
-  const freshness = mode === 'real' ? 'delayed EOD, not live' : mode === 'demo' ? 'generated demo, not observed prices' : 'data mode unavailable';
-  const summary = `${sourceLabel(data.source)} · ${datasetRange} · ${freshness} · verification not implied`;
+  const summary = `${sourceLabel(data.source)} · ${datasetRange}`;
 
   return (
     <Disclosure summary={<span title={summary}>{summary}</span>}>
@@ -50,7 +49,7 @@ export function RunProvenance({ result }: { result: BacktestResponse }) {
           {mode === 'demo'
             ? 'GENERATED DEMO DATA: these are not observed market prices.'
             : mode === 'real'
-              ? 'Provider data: verification and entitlement are not implied, and this is not a live exchange feed.'
+              ? 'Delayed end-of-day bars, not a live feed; verification and entitlement are not implied.'
               : 'Data provenance unavailable: do not treat this as observed market data.'}
         </p>
 

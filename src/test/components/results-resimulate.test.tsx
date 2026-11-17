@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { ResultsDashboard } from '../../components/results/ResultsDashboard';
 import type { BacktestResponse } from '../../shared/strategy/types';
 
@@ -77,6 +77,14 @@ describe('results re-simulation ownership', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run again/ }));
     expect(onReRun).toHaveBeenCalledTimes(1);
     expect(onReRun).toHaveBeenCalledWith(displayed);
+  });
+
+  it('offers Compare variations once, as a result view rather than a header duplicate', () => {
+    render(<ResultsDashboard result={displayed} onReRun={vi.fn()} isLoading={false} />);
+    const nav = screen.getByRole('navigation', { name: 'Result views' });
+    expect(within(nav).getByRole('button', { name: 'Compare variations' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Compare variations \(/ })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Compare variations' })).toHaveLength(1);
   });
 
   it('keeps the empty state pointed at the current draft', () => {

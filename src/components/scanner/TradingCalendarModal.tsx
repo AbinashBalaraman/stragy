@@ -372,7 +372,7 @@ export const TradingCalendarModal: React.FC<TradingCalendarModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] text-[var(--text-3)]">Jump to</span>
-              <span className="text-[10px] text-neutral-500">{availableDates.length} Data Sessions Available</span>
+              <span className="text-[10px] text-neutral-500">{availableDates.length} days with data</span>
             </div>
             <div className="flex flex-wrap gap-1.5 text-xs">
               {([
