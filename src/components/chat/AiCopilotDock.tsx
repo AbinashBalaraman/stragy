@@ -21,7 +21,6 @@ import { BacktestResultCard } from './BacktestResultCard';
 import { BacktestReviewCard } from './BacktestReviewCard';
 import { AssistantPending } from './AssistantPending';
 import { MessageText } from './MessageText';
-import { Checkbox } from '../common/Checkbox';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
 import { ActionRow } from '../common/ActionRow';
@@ -371,9 +370,6 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [pinned, setPinned] = useState(true);
   /** "Jump to latest" appears once the newest content is clearly out of view. */
   const [jumpVisible, setJumpVisible] = useState(false);
-  /** Request options open inline in the composer, never over the textarea. */
-  const [optionsOpen, setOptionsOpen] = useState(false);
-  const optionsButtonRef = useRef<HTMLButtonElement | null>(null);
   /** Apply-and-backtest: the draft id plus the exact strategy the workspace must hold. */
   const [pendingDraftBacktest, setPendingDraftBacktest] = useState<{ id: string; snapshot: string } | null>(null);
   /** One absolute deadline per apply: re-renders can neither postpone nor cancel it. */
@@ -407,7 +403,8 @@ export const AiCopilotDock: React.FC<Props> = ({
   /** A chart reading must be confirmed/edited before any scan starts. */
   const [awaitingChartConfirm, setAwaitingChartConfirm] = useState(false);
   const [proposal, setProposal] = useState<Proposal | null>(null);
-  const [allowLocal, setAllowLocal] = useState(true);
+  /** Local keyword fallback is always available; the advanced toggle was removed to keep the composer simple. */
+  const allowLocal = true;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [applied, setApplied] = useState<string | null>(null);
@@ -2184,7 +2181,6 @@ export const AiCopilotDock: React.FC<Props> = ({
                     // Retry belongs to the latest answer only (older ones keep Copy),
                     // and an error reply's action is the card's own Retry.
                     const retryText = index === lastAssistantIndex && message.tone !== 'error' ? promptForMessage(index) : '';
-                    const failedChart = chartRetry?.messageId === message.id ? chartRetry : null;
                     return (
                       <ActionRow
                         actions={[
@@ -2203,20 +2199,25 @@ export const AiCopilotDock: React.FC<Props> = ({
                             onClick: () => void submitText(retryText),
                             disabled: busy,
                           }] : []),
-                          ...(failedChart ? [{
-                            id: 'retry-chart',
-                            label: 'Try again',
-                            icon: <RefreshCw size={14} aria-hidden="true" />,
-                            onClick: () => {
-                              setSentChartImage(failedChart.image);
-                              void submitText(failedChart.hint, failedChart.image);
-                            },
-                            disabled: busy,
-                          }] : []),
                         ]}
                       />
                     );
                   })()}
+                  {chartRetry?.messageId === message.id && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const failed = chartRetry;
+                        if (!failed) return;
+                        setSentChartImage(failed.image);
+                        void submitText(failed.hint, failed.image);
+                      }}
+                      className="st-meta inline-flex min-h-11 items-center gap-1.5 rounded-[var(--r-btn)] border border-[var(--line)] px-3 text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8"
+                    >
+                      <RefreshCw size={14} aria-hidden="true" /> Try again
+                    </button>
+                  )}
                 </article>
                 )}
                 {workingAnchorId === message.id && <div className="space-y-6">{workingCards}</div>}
@@ -2306,24 +2307,6 @@ export const AiCopilotDock: React.FC<Props> = ({
               {preparingImage && <p role="status" className="st-meta mb-1 px-1 text-[var(--text-3)]">Preparing chart image…</p>}
               {imageError && <p role="alert" className="st-meta mb-1 px-1 text-[var(--down)]">{imageError}</p>}
               {dragActive && <p className="st-meta mb-1 px-1 text-[var(--accent)]">Drop a chart image to attach it.</p>}
-              {optionsOpen && (
-                <div
-                  id="composer-options"
-                  onKeyDown={event => {
-                    if (event.key !== 'Escape') return;
-                    event.stopPropagation();
-                    setOptionsOpen(false);
-                    optionsButtonRef.current?.focus();
-                  }}
-                  className="mb-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2"
-                >
-                  <label className="flex min-h-11 items-start gap-2 text-[12px] leading-4 text-[var(--text-2)] sm:min-h-6">
-                    <Checkbox checked={allowLocal} onChange={setAllowLocal} className="mt-0.5" />
-                    Allow local keyword fallback (not AI)
-                  </label>
-                  <p className="mt-2 text-[12px] leading-4 text-[var(--text-3)]">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>
-                </div>
-              )}
               <textarea
                 id="copilot-prompt"
                 ref={promptRef}
@@ -2366,17 +2349,6 @@ export const AiCopilotDock: React.FC<Props> = ({
                     className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--r-btn)] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 sm:min-w-8"
                   >
                     <ImagePlus size={15} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    ref={optionsButtonRef}
-                    aria-label="Request options"
-                    aria-expanded={optionsOpen}
-                    aria-controls="composer-options"
-                    onClick={() => setOptionsOpen(open => !open)}
-                    className="flex min-h-11 cursor-pointer items-center whitespace-nowrap rounded-[var(--r-btn)] px-2 text-[12px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
-                  >
-                    Request options
                   </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">

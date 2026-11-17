@@ -20,5 +20,5 @@ export function marketLoadingMessage(progress: ResearchJobProgress | null, label
   if (job && Number.isFinite(job.processed) && Number.isFinite(job.total) && job.total > 0) {
     return `Loading ${label} prices · ${job.processed} of ${job.total}`;
   }
-  return `Loading ${label} prices. The first load takes up to 4 minutes; later loads are instant.`;
+  return `Loading ${label} prices. A cold snapshot usually finishes in 90 seconds (up to 210 seconds for broad universes); later loads are instant.`;
 }

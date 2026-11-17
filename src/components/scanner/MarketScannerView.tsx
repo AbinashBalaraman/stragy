@@ -342,6 +342,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [marketError, setMarketError] = useState('');
   const [marketProgress, setMarketProgress] = useState<ResearchJobProgress | null>(null);
   const [marketSlow, setMarketSlow] = useState(false);
+  const [liveSlow, setLiveSlow] = useState(false);
   const [marketAttempt, setMarketAttempt] = useState(0);
   const [universeNoData, setUniverseNoData] = useState(false);
   const [marketDeadline, setMarketDeadline] = useState<{ jobId: string } | null>(null);
@@ -375,6 +376,17 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const baseUniverseConfig = UNIVERSE_LIST.find(u => u.id === selectedUniverse) || UNIVERSE_LIST[0];
   const officialMembership = dataEvidence?.mode === 'real' && dataEvidence.membership?.source === 'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv';
   const currentUniverseConfig = selectedUniverse === 'NIFTY_50' && officialMembership ? {...baseUniverseConfig,label:'NIFTY 50 (official constituent feed)',description:'Official NSE constituent feed retrieved '+scannerDateTime(dataEvidence?.membership?.observedAt)+'. Historical research uses current constituents and has survivorship bias.'} : baseUniverseConfig;
+  const coverageShortLabel = !dataEvidence || !marketCoverage
+    ? ''
+    : dataEvidence.status === 'unavailable' || marketCoverage.succeeded === 0
+      ? 'No coverage'
+      : dataEvidence.status === 'partial' || marketCoverage.unavailable > 0
+        ? 'Partial coverage'
+        : 'Complete coverage';
+  const membershipVerified = dataEvidence?.membership?.verified === true
+    || dataEvidence?.membership?.basis === 'official-feed'
+    || officialMembership;
+  const membershipUnverified = Boolean(dataEvidence?.mode === 'real' && !membershipVerified);
 
   // Fetch available trading session dates on mount
   useEffect(() => {
@@ -689,6 +701,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     enabled: !isStrategyView && (activeTab === 'movers' || activeTab === 'trends'),
   });
   const liveQuoteFor = (symbolId: number) => liveQuotes.quotes.find(quote => quote.symbolId === symbolId);
+  // A pending quote overlay must not stay "checking" forever on a loaded result.
+  useEffect(() => {
+    if (!hasLiveOverlay || !liveQuotes.loading) { setLiveSlow(false); return; }
+    const timer = setTimeout(() => setLiveSlow(true), 12_000);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    return () => clearTimeout(timer);
+  }, [hasLiveOverlay, liveQuotes.loading]);
   const rankingSession = movers?.formattedDate || movers?.asOfDate || dataCutoff || 'latest observed session';
   const latestOnlyView = ['option_chain', 'volume_profile', 'gtt_bracket', 'basis_spreads'].includes(activeTab);
   const latestSessionSelected = !selectedDate || (!!latestDataCutoff && selectedDate === latestDataCutoff);
@@ -736,8 +755,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                       live prices from Angel One
                     </span>
-                  ) : liveQuotes.loading || initialLoading ? (
-                    <span className="text-neutral-500">checking live prices…</span>
+                  ) : liveQuotes.loading && !liveSlow ? (
+                    <span className="inline-flex items-center rounded-[var(--r-btn)] bg-[var(--surface-2)] px-2 py-0.5 text-[11px] text-[var(--text-3)]">live prices loading…</span>
                   ) : (
                     <span className="text-neutral-500">live prices unavailable</span>
                   )}
@@ -746,29 +765,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </p>
             {!isStrategyView && dataEvidence && marketCoverage && (
               <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
-                {marketCoverage.succeeded} of {marketCoverage.requested} stocks priced
-                {dataEvidence.status ? ' · ' + dataEvidence.status + ' coverage' : ''}
-                {marketCoverage.succeeded > 0 && marketUnavailable.length > 0 && (
-                  ' · ' + (unavailableNames.length <= 3 ? unavailableNames.join(', ') + ' unavailable' : `${unavailableNames.length} unavailable`)
-                )}
+                {coverageShortLabel} · {marketCoverage.succeeded} of {marketCoverage.requested} priced
+                {membershipUnverified ? ' · Membership unverified' : ''}
               </p>
-            )}
-            {dataEvidence?.warnings && dataEvidence.warnings.length > 0 && (
-              <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">{dataEvidence.warnings.join(' · ')}</p>
-            )}
-            {dataEvidence?.membership && (
-              <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
-                Membership check: {dataEvidence.membership.requested} requested · {dataEvidence.membership.unmapped.length} unmapped · {dataEvidence.membership.freshness}
-              </p>
-            )}
-            {dataEvidence?.membership?.warnings && dataEvidence.membership.warnings.length > 0 && (
-              <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">{dataEvidence.membership.warnings.join(' · ')}</p>
-            )}
-            {dataEvidence && marketCoverage && marketUnavailable.length > 3 && (
-              <details className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
-                <summary className="w-fit cursor-pointer hover:text-[var(--text-2)]">Which symbols</summary>
-                <p className="mt-1">{unavailableNames.join(', ')}</p>
-              </details>
             )}
             {dataEvidence && (
               <details className="mt-2 text-[11px] leading-5 text-neutral-500">
@@ -781,8 +780,25 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <p>{currentUniverseConfig.description}</p>
                   <p>Derivatives/OI/PCR and related model fields are model-only, not observed derivatives or live quotes. Universe membership is unverified unless explicitly reported; current membership may introduce survivorship bias.</p>
                   <p>Coverage detail: {coverageDetail} {sourceSummary(dataEvidence?.sourceCoverage)}.</p>
+                  {dataEvidence?.status && <p>Coverage status: {dataEvidence.status}.</p>}
+                  {marketUnavailable.length > 0 && <p>Unavailable names: {unavailableNames.join(', ')}.</p>}
                   {dataEvidence?.observationDates && <p>Observed sessions: {dataEvidence.observationDates.earliest} to {dataEvidence.observationDates.latest}; stale datasets: {dataEvidence.observationDates.staleSymbols}.</p>}
-                  {dataEvidence?.membership && <p>Membership: {dataEvidence.membership.requested} requested, {dataEvidence.membership.unmapped.length} unmapped; source {dataEvidence.membership.source}; retrieved {scannerDateTime(dataEvidence.membership.observedAt)}; {dataEvidence.membership.freshness}.</p>}
+                  {dataEvidence?.membership && (
+                    <p>
+                      Membership: {dataEvidence.membership.requested} requested, {dataEvidence.membership.unmapped.length} unmapped
+                      {typeof dataEvidence.membership.available === 'number' ? `, ${dataEvidence.membership.available} available` : ''}
+                      {typeof dataEvidence.membership.selected === 'number' ? `, ${dataEvidence.membership.selected} selected` : ''}
+                      {typeof dataEvidence.membership.cap === 'number' ? `, cap ${dataEvidence.membership.cap}` : ''}
+                      {dataEvidence.membership.truncated ? ', truncated' : ''}
+                      {dataEvidence.membership.basis ? `, basis ${dataEvidence.membership.basis}` : ''}
+                      {typeof dataEvidence.membership.verified === 'boolean' ? `, verified ${dataEvidence.membership.verified ? 'yes' : 'no'}` : ''}
+                      ; source {dataEvidence.membership.source}; retrieved {scannerDateTime(dataEvidence.membership.observedAt)}; {dataEvidence.membership.freshness}.
+                    </p>
+                  )}
+                  {dataEvidence?.membership?.unavailableReason && <p>Membership unavailable: {dataEvidence.membership.unavailableReason}.</p>}
+                  {dataEvidence?.membership?.recommendations?.map((item, index) => <p key={'membership-rec-' + index}>{item}</p>)}
+                  {dataEvidence?.warnings?.map((warning, index) => <p key={'warning-' + index}>Warning: {warning}</p>)}
+                  {dataEvidence?.membership?.warnings?.map((warning, index) => <p key={'membership-warning-' + index}>Membership warning: {warning}</p>)}
                 </div>
               </details>
             )}
@@ -947,7 +963,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       ) : marketNoData && !modelOnlyTab && !isStrategyView ? (
         <ScannerUnavailablePanel
           title={'No verified data for ' + currentUniverseConfig.shortLabel + ' in the current feed'}
-          why="The feed returned no evaluated symbols for this universe. Try again, or choose another universe above."
+          why="This is not a zero-match result: the feed returned no evaluated symbols for this universe."
           actionLabel="Retry snapshot"
           onAction={() => void fetchMarketData()}
         />

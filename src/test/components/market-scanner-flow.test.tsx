@@ -109,14 +109,15 @@ describe('bounded lazy market scanner flow', () => {
 
   it('shows a compact inline status when the selected universe has no data', async () => {
     market.mockResolvedValueOnce({
-      ...snapshot(), universe: 'NIFTY_IT',
+      ...snapshot(), mode: 'real', universe: 'NIFTY_IT',
       coverage: { requested: 50, succeeded: 0, unavailable: 50 },
       errors: Array.from({ length: 50 }, (_, index) => ({ symbolId: index + 1, code: 'NO_MEMBERSHIP', ticker: 'S' + index })),
     } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} initialUniverse="NIFTY_IT" />);
 
     expect(await screen.findByText('No verified data for NIFTY IT in the current feed')).toBeTruthy();
-    expect(screen.getByText(/The feed returned no evaluated symbols for this universe/)).toBeTruthy();
+    expect(screen.getByText('No coverage · 0 of 50 priced · Membership unverified')).toBeTruthy();
+    expect(screen.getByText(/This is not a zero-match result: the feed returned no evaluated symbols/)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Retry snapshot' }));
     await waitFor(() => expect(market).toHaveBeenCalledTimes(2));
@@ -169,9 +170,9 @@ describe('bounded lazy market scanner flow', () => {
     try {
       market.mockImplementationOnce(() => new Promise(() => {}));
       renderScanner();
-      expect(screen.getByText(/Loading Nifty 50 prices\. The first load takes up to 4 minutes/)).toBeTruthy();
+      expect(screen.getByText(/Loading Nifty 50 prices\. A cold snapshot usually finishes in 90 seconds/)).toBeTruthy();
       act(() => { vi.advanceTimersByTime(10_000); });
-      expect(screen.getByText(/Loading Nifty 50 prices\. The first load takes up to 4 minutes/)).toBeTruthy();
+      expect(screen.getByText(/Loading Nifty 50 prices\. A cold snapshot usually finishes in 90 seconds/)).toBeTruthy();
       expect(screen.queryByText(/Still loading market data/)).toBeNull();
       expect(screen.queryByText(/end-of-day loading|checking live prices|Refreshing…/)).toBeNull();
     } finally {
@@ -185,7 +186,7 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.getByText(/Loading Nifty 50 prices/)).toBeTruthy();
     expect(screen.getByText('checking latest close…')).toBeTruthy();
     expect(screen.queryByText(/session unavailable/)).toBeNull();
-    expect(screen.queryByText('checking live prices…')).toBeNull();
+    expect(screen.queryByText(/checking live prices/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     expect(screen.queryByText('Refreshing…')).toBeNull();
   });
@@ -246,10 +247,15 @@ describe('bounded lazy market scanner flow', () => {
       errors: [{ symbolId: 18, code: 'PROVIDER_RATE_LIMITED', ticker: 'TATAMOTORS' }],
     } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     renderScanner();
-    expect(await screen.findByText(/49 of 50 stocks priced · partial coverage · TATAMOTORS unavailable/)).toBeTruthy();
-    expect(screen.getByText('Two symbols had no close for this session.')).toBeTruthy();
+    expect(await screen.findByText('Partial coverage · 49 of 50 priced')).toBeTruthy();
+    expect(document.body.textContent).toContain('Warning: Two symbols had no close for this session.');
+    const details = screen.getByText('Data details').closest('details') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    fireEvent.click(screen.getByText('Data details'));
+    expect(details.open).toBe(true);
+    expect(screen.getByText('Warning: Two symbols had no close for this session.')).toBeTruthy();
     expect(screen.getByText(/Membership: 50 requested, 1 unmapped/)).toBeTruthy();
-    expect(screen.getByText(/Membership check: 50 requested · 1 unmapped · official feed observed/)).toBeTruthy();
+    expect(screen.getByText('Unavailable names: TATAMOTORS.')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(document.body.textContent).not.toContain('symbolId');
     expect(document.body.textContent).not.toContain('PROVIDER_RATE_LIMITED');
@@ -301,14 +307,15 @@ describe('bounded lazy market scanner flow', () => {
     expect(await screen.findByText('Market load cancelled.')).toBeTruthy();
   });
 
-  it('keeps more than three unpriced names behind a quiet disclosure', async () => {
+  it('keeps unpriced names inside Data details instead of a wall above the rows', async () => {
     const errors = ['AAA', 'BBB', 'CCC', 'DDD'].map((ticker, index) => ({ symbolId: 100 + index, code: 'PROVIDER_RATE_LIMITED', ticker }));
     market.mockResolvedValueOnce({ ...snapshot(), coverage: { requested: 50, succeeded: 46, unavailable: 4 }, errors } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     renderScanner();
-    expect(await screen.findByText('46 of 50 stocks priced · 4 unavailable')).toBeTruthy();
+    expect(await screen.findByText('Partial coverage · 46 of 50 priced')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByText('Which symbols')).toBeTruthy();
-    expect(document.body.textContent).toContain('AAA, BBB, CCC, DDD');
+    expect(screen.queryByText('Which symbols')).toBeNull();
+    fireEvent.click(screen.getByText('Data details'));
+    expect(screen.getByText('Unavailable names: AAA, BBB, CCC, DDD.')).toBeTruthy();
   });
 
   it('says the session is unavailable only after an empty snapshot finishes', async () => {
@@ -618,6 +625,27 @@ describe('live quotes and readable coverage in the scanner', () => {
     await waitFor(() => expect(screen.getAllByText('TRENDCO').length).toBeGreaterThan(0));
     await waitFor(() => expect(screen.getAllByText('Live', { exact: true }).length).toBeGreaterThan(0));
     expect(screen.getByText('1 stock · 13 Nov close. Live prices shown separately.')).toBeTruthy();
+  });
+
+  it('shows a pending live-price chip that settles to the provider state', async () => {
+    market.mockResolvedValueOnce(liveSnapshot() as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    let resolveQuotes: (() => void) | undefined;
+    const fetch = vi.fn((url: string) => {
+      if (String(url).startsWith('/api/v2/quotes')) {
+        return new Promise(resolve => {
+          resolveQuotes = () => resolve({ ok: true, status: 200, json: async () => quoteResponse(quotedIds(url)) });
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, dates: [] }) });
+    });
+    vi.stubGlobal('fetch', fetch);
+    renderScanner();
+    await screen.findByRole('heading', { name: /^Top gainers —/i });
+    expect(await screen.findByText('live prices loading…')).toBeTruthy();
+    expect(screen.queryByText(/checking live prices/)).toBeNull();
+    await act(async () => { resolveQuotes?.(); await Promise.resolve(); });
+    expect(await screen.findByText('live prices from Angel One')).toBeTruthy();
+    expect(screen.queryByText(/live prices loading/)).toBeNull();
   });
 
   it('shows 20 regime rows first and expands to all 25', async () => {

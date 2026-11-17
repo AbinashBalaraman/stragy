@@ -23,5 +23,25 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strictNullChecks": true
-  }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "server.ts",
+    "start.js",
+    "neon.ts",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "coverage",
+    "playwright-report",
+    "test-results",
+    ".cache",
+    ".cache-test-*",
+    ".verify-cjs",
+    ".tool-registry"
+  ]
 }
