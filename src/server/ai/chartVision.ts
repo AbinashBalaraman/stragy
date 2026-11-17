@@ -32,12 +32,12 @@ const CHART_READ_FAILURE_MESSAGE = "I couldn't read this chart. The AI models di
 export const VISION_ATTEMPT_TIMEOUT_MS = 55_000;
 /** Keep the whole chart request inside the client's 180 s deadline, with margin. */
 export const VISION_TOTAL_BUDGET_MS = 170_000;
-/** The plan pass needs roughly 45–55 s; never let observations spend this. */
-export const VISION_PLAN_RESERVE_MS = 60_000;
+/** The plan pass needs roughly 45–55 s; keep 65 s so a slow first plan call still fits. */
+export const VISION_PLAN_RESERVE_MS = 65_000;
 /** Observations may use at most this much of the total budget. */
 export const VISION_OBSERVATIONS_BUDGET_MS = VISION_TOTAL_BUDGET_MS - VISION_PLAN_RESERVE_MS;
 /** Keep enough of the observations budget for the last approved paid model. */
-export const VISION_PAID_OBSERVATION_RESERVE_MS = 55_000;
+export const VISION_PAID_OBSERVATION_RESERVE_MS = 65_000;
 
 /**
  * Split the observations budget across the model chain. Free attempts share
@@ -53,12 +53,12 @@ export function observationAttemptTimeouts(
   const freeCount = attempts.length - (paidIndex >= 0 ? 1 : 0);
   if (freeCount === 0) {
     const share = Math.floor(budgetMs / Math.max(1, attempts.length));
-    return attempts.map(() => Math.min(VISION_ATTEMPT_TIMEOUT_MS, share));
+    return attempts.map(() => Math.min(VISION_PAID_OBSERVATION_RESERVE_MS, share));
   }
   const freePool = Math.max(0, budgetMs - (paidIndex >= 0 ? VISION_PAID_OBSERVATION_RESERVE_MS : 0));
   const freeShare = freeCount > 0 ? Math.floor(freePool / freeCount) : 0;
   return attempts.map((_, index) => index === paidIndex
-    ? Math.min(VISION_ATTEMPT_TIMEOUT_MS, VISION_PAID_OBSERVATION_RESERVE_MS, budgetMs)
+    ? Math.min(VISION_PAID_OBSERVATION_RESERVE_MS, budgetMs)
     : Math.min(VISION_ATTEMPT_TIMEOUT_MS, freeShare));
 }
 
@@ -70,16 +70,16 @@ export function visionAttemptTimeout(remainingMs: number, attempts: number, cap 
 }
 
 /** Clone a provider config with a shorter per-attempt timeout, preserving the non-enumerable key. */
-export function withVisionTimeout(config: AIRuntimeConfig, timeoutMs = VISION_ATTEMPT_TIMEOUT_MS): AIRuntimeConfig {
+export function withVisionTimeout(config: AIRuntimeConfig, timeoutMs = VISION_ATTEMPT_TIMEOUT_MS, allowLonger = false): AIRuntimeConfig {
   const cap = Math.max(1, Math.floor(timeoutMs));
-  const timeout = Math.min(config.timeoutMs, cap);
+  const timeout = allowLonger ? cap : Math.min(config.timeoutMs, cap);
   if (timeout === config.timeoutMs) return config;
   const clone: AIRuntimeConfig = { ...config, timeoutMs: timeout };
   const key = (config as AIRuntimeConfig & { apiKey?: string }).apiKey;
   if (key) Object.defineProperty(clone, 'apiKey', { value: key, enumerable: false });
   if (config.fallbackTargets) {
     clone.fallbackTargets = config.fallbackTargets.map(target => target.config
-      ? { ...target, config: withVisionTimeout(target.config, timeout) }
+      ? { ...target, config: withVisionTimeout(target.config, timeout, allowLonger) }
       : target);
   }
   return clone;
@@ -156,7 +156,7 @@ async function callChartModel(
       ? Math.min(VISION_ATTEMPT_TIMEOUT_MS, remaining)
       : visionAttemptTimeout(remaining, attemptsLeft);
   if (timeoutMs <= 0) return { ok: false, code: 'timeout', message: 'Chart analysis budget exhausted.' };
-  const cfg = withVisionTimeout(attempt.config, timeoutMs);
+  const cfg = withVisionTimeout(attempt.config, timeoutMs, timeoutOverride !== undefined && attempt.approvedPaid);
   if (attempt.approvedPaid && cfg.costPolicy === 'free-only') {
     console.info(JSON.stringify({ event: 'ai_paid_fallback', provider: attempt.provider, model: attempt.model, at: new Date().toISOString() }));
   }
@@ -817,6 +817,19 @@ export function chartObservationSummary(observations: ChartObservations): string
 
 const safeParseJson = (text: string): { ok: true; value: unknown } | { ok: false; message: string } => parseModelJson(text);
 
+/** Models sometimes add an extra note field; keep the known observation keys. */
+function parseChartObservations(raw: unknown): ChartObservations | null {
+  const checked = ChartObservationsSchema.safeParse(raw);
+  if (checked.success) return checked.data;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const shape = ChartObservationsSchema.shape;
+    const stripped = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter(([key]) => key in shape));
+    const retry = ChartObservationsSchema.safeParse(stripped);
+    if (retry.success) return retry.data;
+  }
+  return null;
+}
+
 /**
  * Server-side reading cache. The same image bytes + hint + guide version must
  * produce the same reading for every client; concurrent identical requests
@@ -890,10 +903,13 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     const raw = parsed.value && typeof parsed.value === 'object' && 'observations' in parsed.value
       ? (parsed.value as Record<string, unknown>).observations
       : parsed.value;
-    const checked = ChartObservationsSchema.safeParse(raw);
-    if (!checked.success) continue;
+    const checked = parseChartObservations(raw);
+    if (!checked) {
+      console.info(JSON.stringify({ event: 'chart_observation_rejected', trace: traceId, provider: result.provider, model: result.model, at: new Date().toISOString() }));
+      continue;
+    }
     pass1Answer = { provider: result.provider, model: result.model };
-    observations = checked.data;
+    observations = checked;
     break;
   }
   if (!pass1Answer || !observations) return unavailable(CHART_READ_FAILURE_MESSAGE);

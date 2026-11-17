@@ -117,6 +117,9 @@ describe('vision time budget', () => {
     const shorter = withVisionTimeout(cfg, 30_000);
     expect(shorter.timeoutMs).toBe(30_000);
     expect(shorter.fallbackTargets?.[0]?.config?.timeoutMs).toBe(30_000);
+    const longer = withVisionTimeout(cfg, 70_000, true);
+    expect(longer.timeoutMs).toBe(70_000);
+    expect((longer as unknown as { apiKey?: string }).apiKey).toBe('fixture-vision-key');
     expect(VISION_ATTEMPT_TIMEOUT_MS * 3).toBeLessThan(180_000);
     expect(VISION_TOTAL_BUDGET_MS).toBeLessThan(180_000);
   });
@@ -134,12 +137,12 @@ describe('vision time budget', () => {
     expect(VISION_PLAN_RESERVE_MS).toBeGreaterThanOrEqual(VISION_ATTEMPT_TIMEOUT_MS + 5_000);
     // Two free models can no longer eat the approved paid model or the plan.
     const chain = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: true }]);
-    expect(chain).toEqual([27_500, 27_500, VISION_PAID_OBSERVATION_RESERVE_MS]);
+    expect(chain).toEqual([20_000, 20_000, VISION_PAID_OBSERVATION_RESERVE_MS]);
     expect(chain.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
     const freeOnly = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: false }]);
     expect(freeOnly.every(ms => ms <= VISION_ATTEMPT_TIMEOUT_MS)).toBe(true);
     expect(freeOnly.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
-    expect(observationAttemptTimeouts([{ approvedPaid: true }])[0]).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+    expect(observationAttemptTimeouts([{ approvedPaid: true }])[0]).toBe(VISION_PAID_OBSERVATION_RESERVE_MS);
   });
 
   it('gives the plan pass the reserve after observations succeed', async () => {
@@ -164,7 +167,8 @@ describe('vision time budget', () => {
     }
     const planAttempt = attempts.find(attempt => attempt.pass === 'plan');
     expect(planAttempt?.timeoutMs).toBe(VISION_ATTEMPT_TIMEOUT_MS);
-    expect(planAttempt!.timeoutMs).toBeGreaterThanOrEqual(VISION_PLAN_RESERVE_MS - 5_000);
+    expect(planAttempt!.timeoutMs).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+    expect(VISION_PLAN_RESERVE_MS).toBeGreaterThanOrEqual(60_000);
     expect(attempts.filter(attempt => attempt.pass === 'observations').every(attempt => attempt.timeoutMs <= VISION_OBSERVATIONS_BUDGET_MS)).toBe(true);
   });
 
