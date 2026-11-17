@@ -7,15 +7,24 @@ export type { MarketSnapshotResult, ScanResult } from '../shared/contracts/scann
 /** Real milestones from the job lifecycle; never a simulated percentage. */
 export type ResearchPhase = 'waiting' | 'preparing' | 'running';
 export interface ResearchJobProgress { status: 'queued' | 'running'; stage?: string; queuedBehind?: number; }
-/** Execution deadlines start only when the job leaves the queue. */
-export const RESEARCH_DEADLINE_MS = { backtest: 45_000, scan: 300_000, market: 120_000 } as const;
+/**
+ * Execution deadlines start only when the job leaves the queue. A cold
+ * 50-symbol market snapshot legitimately takes 235-280 s and the server caps a
+ * scan at 600 s, so the client waits the same and then keeps the job.
+ */
+export const RESEARCH_DEADLINE_MS = { backtest: 45_000, scan: 300_000, market: 600_000 } as const;
 /** A queued job may wait behind long work, but never forever. */
 export const RESEARCH_QUEUE_LIMIT_MS = 300_000;
+/**
+ * A client deadline never stops the server job (the id rides on the error), so
+ * the copy says it is still running. A genuine server timeout keeps its own
+ * message from the job payload.
+ */
 const deadlineMessage = (kind: 'backtest' | 'scan' | 'market') => kind === 'backtest'
-  ? 'The backtest took too long and was stopped. Try again.'
+  ? 'The backtest is still running. Check again.'
   : kind === 'scan'
-    ? 'The scan took too long and was stopped. No zero-match conclusion was made.'
-    : 'The market data request took too long and was stopped. Try again.';
+    ? 'The scan is still running. Check again.'
+    : 'The market snapshot is still loading. Check again.';
 const jobLostMessage = (kind: 'backtest' | 'scan' | 'market') => kind === 'backtest'
   ? 'The server restarted and the backtest was lost. Try again.'
   : kind === 'scan'
@@ -66,11 +75,18 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
   const controller = new AbortController(), key = globalThis.crypto?.randomUUID?.();
   const relay = () => controller.abort(signal?.reason ?? new DOMException('Request cancelled', 'AbortError'));
   if (signal?.aborted) relay(); else signal?.addEventListener('abort', relay, { once: true });
-  const overallTimer = setTimeout(() => controller.abort(new ApiError(deadlineMessage(kind), 'CLIENT_DEADLINE')), RESEARCH_QUEUE_LIMIT_MS);
+  /** A deadline never discards the server job: the id rides on the error. */
+  const deadline = (): ApiError => {
+    const error = new ApiError(deadlineMessage(kind), 'CLIENT_DEADLINE') as ApiError & { jobId?: string; keepJob?: boolean };
+    if (jobId) error.jobId = jobId;
+    error.keepJob = true;
+    return error;
+  };
+  const overallTimer = setTimeout(() => controller.abort(deadline()), RESEARCH_QUEUE_LIMIT_MS);
   let executionTimer: ReturnType<typeof setTimeout> | undefined;
   const startExecutionDeadline = () => {
     if (executionTimer) return;
-    executionTimer = setTimeout(() => controller.abort(new ApiError(deadlineMessage(kind), 'CLIENT_DEADLINE')), RESEARCH_DEADLINE_MS[kind]);
+    executionTimer = setTimeout(() => controller.abort(deadline()), RESEARCH_DEADLINE_MS[kind]);
   };
   let jobId: string | undefined, terminal = false;
   const json = async (route: string, init: RequestInit = {}) => {
@@ -143,7 +159,8 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
     clearTimeout(overallTimer);
     if (executionTimer) clearTimeout(executionTimer);
     signal?.removeEventListener('abort', relay); controller.abort();
-    if (jobId && !terminal) await cancelJob(jobId);
+    const deadlineReason = controller.signal.reason as (ApiError & { keepJob?: boolean }) | undefined;
+    if (jobId && !terminal && !deadlineReason?.keepJob) await cancelJob(jobId);
   }
 }
 export async function requestBacktest(strategy: StrategyAST, signal?: AbortSignal, options: RunRequestOptions = {}, onPhase?: (phase: ResearchPhase) => void): Promise<BacktestResponse> {
@@ -155,6 +172,51 @@ export async function requestBacktest(strategy: StrategyAST, signal?: AbortSigna
     return result;
   }, signal, onPhase);
 }
+/** What a re-poll of an existing job found. */
+export type ResumedJob<T> = { state: 'running'; stage?: string; queuedBehind?: number } | { state: 'done'; result: T };
+
+async function readJob(jobId: string, kind: 'backtest' | 'scan', signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const response = await fetch('/api/v2/jobs/' + encodeURIComponent(jobId), { signal });
+  const job = await readJson(response);
+  if (job.id !== jobId || (job.kind && job.kind !== kind)) throw new ApiError('The response belongs to a different research job.', 'RESULT_IDENTITY_MISMATCH');
+  return job;
+}
+
+/** Re-poll a scan the client gave up waiting for. A 404 surfaces as JOB_NOT_FOUND. */
+export async function checkScanJob(jobId: string, signal?: AbortSignal): Promise<ResumedJob<ScanResult>> {
+  const job = await readJob(jobId, 'scan', signal);
+  if (job.status === 'succeeded') return { state: 'done', result: parseScanResult(job.result) };
+  if (job.status === 'failed' || job.status === 'cancelled') {
+    const error = job.error as { message?: string; code?: string } | undefined;
+    throw new ApiError(error?.message ?? 'Research job did not complete.', error?.code ?? 'JOB_FAILED');
+  }
+  return {
+    state: 'running',
+    ...(typeof job.stage === 'string' ? { stage: job.stage } : {}),
+    ...(typeof job.queuedBehind === 'number' ? { queuedBehind: job.queuedBehind } : {}),
+  };
+}
+
+/** Re-poll a backtest the client gave up waiting for. */
+export async function checkBacktestJob(jobId: string, signal?: AbortSignal): Promise<ResumedJob<BacktestResponse>> {
+  const job = await readJob(jobId, 'backtest', signal);
+  if (job.status === 'succeeded') return { state: 'done', result: parseBacktestResult(job.result) };
+  if (job.status === 'failed' || job.status === 'cancelled') {
+    const error = job.error as { message?: string; code?: string } | undefined;
+    throw new ApiError(error?.message ?? 'Research job did not complete.', error?.code ?? 'JOB_FAILED');
+  }
+  return {
+    state: 'running',
+    ...(typeof job.stage === 'string' ? { stage: job.stage } : {}),
+    ...(typeof job.queuedBehind === 'number' ? { queuedBehind: job.queuedBehind } : {}),
+  };
+}
+
+/** Cancel a job the client is no longer waiting for (best effort). */
+export async function cancelResearchJob(jobId: string): Promise<void> {
+  await cancelJob(jobId);
+}
+
 export async function requestMarketSnapshot(input: { universe: string; asOf?: string }, signal?: AbortSignal, onProgress?: (progress: ResearchJobProgress) => void): Promise<MarketSnapshotResult> {
   const body = { universe: input.universe, ...(input.asOf ? { asOf: input.asOf } : {}) };
   return researchJob('market', body, raw => {

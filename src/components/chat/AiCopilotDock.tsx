@@ -5,7 +5,7 @@ import type { BacktestResponse, StrategyAST, SymbolMeta } from '../../shared/str
 import { snapshotStrategy } from '../../client/workspace';
 import { canonicalStrategySignature, exitRuleCompatibility } from '../../shared/strategy/backtestReview';
 import { assertProposalCurrent, parseStrategyProposal, type StrategyProposal } from '../../shared/contracts/ai-proposal';
-import { requestScan, type ResearchPhase, type RunRequestOptions, type ScanResult } from '../../client/api';
+import { cancelResearchJob, checkBacktestJob, checkScanJob, requestScan, type ResearchPhase, type RunRequestOptions, type ScanResult } from '../../client/api';
 import { requestResearchChat } from '../../client/researchChat';
 import { requestFeatureSetup } from '../../client/featureSetup';
 import { FEATURE_PREFILL_EVENT, parseFeaturePrefill, publishFeaturePrefill } from '../../client/featureHandoff';
@@ -80,6 +80,8 @@ const MessageSchema = z.object({
 });
 const MessageListSchema = z.array(MessageSchema).max(40);
 const HISTORY_KEY = 'stragy_copilot_review_history_v2';
+/** The plan of a scan that was in flight when the page went away. */
+export const PENDING_SCAN_KEY = 'stragy_copilot_pending_scan_v1';
 const ARCHIVE_KEY = 'stragy_copilot_previous_conversation_v1';
 
 /** Only explicit rule sentences enter the async feature-setup call path. */
@@ -363,6 +365,9 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [scanWaiting, setScanWaiting] = useState(false);
   /** "scan 42/50" from the job stage, shown while the scan runs. */
   const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
+  /** A client deadline no longer discards the job: it is still running server-side. */
+  const [stalledScan, setStalledScan] = useState<string | null>(null);
+  const [stalledRun, setStalledRun] = useState<string | null>(null);
   const scanPendingRef = useRef(false);
   const [scanError, setScanError] = useState('');
   /** A chart reading must be confirmed/edited before any scan starts. */
@@ -450,6 +455,19 @@ export const AiCopilotDock: React.FC<Props> = ({
     setClipboardStatus('');
     setSaveStatus('');
   }, [snapshot]);
+
+  // A reload during a scan used to leave a promise and nothing to act on.
+  useEffect(() => {
+    let stored: { plan?: ResearchScreenPlan; startedAt?: number } | null = null;
+    try { stored = JSON.parse(localStorage.getItem(PENDING_SCAN_KEY) ?? 'null'); } catch { stored = null; }
+    const plan = stored?.plan;
+    if (!plan || typeof plan !== 'object' || !plan.strategy) return;
+    setScreenPlan(plan);
+    setAwaitingChartConfirm(false);
+    setScanPending(false);
+    setScanResult(null);
+    setScanError('The page reloaded while the scan was running. Run the scan again.');
+  }, []);
 
   useEffect(() => () => {
     generation.current++;
@@ -678,6 +696,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   };
 
   const clearConversation = () => {
+    rememberPendingScan(null);
     generation.current++;
     runGeneration.current++;
     clipboardGeneration.current++;
@@ -714,6 +733,8 @@ export const AiCopilotDock: React.FC<Props> = ({
     setCopiedMessageId(null);
     setWorkingAnchorId(null);
     setResultAnchorId(null);
+    setStalledScan(null);
+    setStalledRun(null);
     revealIntent.current = null;
     followAnswer.current = false;
     setJumpVisible(false);
@@ -721,6 +742,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   };
 
   const restorePreviousConversation = () => {
+    rememberPendingScan(null);
     const current = messages;
     const previous = archivedMessages;
     // Restoring is a conversation switch: any in-flight screen, draft, review or
@@ -770,12 +792,15 @@ export const AiCopilotDock: React.FC<Props> = ({
     setCopiedMessageId(null);
     setWorkingAnchorId(null);
     setResultAnchorId(null);
+    setStalledScan(null);
+    setStalledRun(null);
     revealIntent.current = null;
     followAnswer.current = false;
     setJumpVisible(false);
   };
 
   const cancelPendingRequest = () => {
+    rememberPendingScan(null);
     generation.current++;
     abort.current?.abort();
     setLoading(false);
@@ -952,6 +977,49 @@ export const AiCopilotDock: React.FC<Props> = ({
     return false;
   };
 
+  /** The result card is the record of a finished run; the review is spent. */
+  const completeRun = (outcome: BacktestResponse) => {
+    setValidatedResult(outcome);
+    setReviewStatus('complete');
+    setStalledRun(null);
+    reviewRef.current = null;
+    setReview(null);
+    const completedMessageId = append('assistant', 'Backtest completed. The headline below comes from the validated run response; open details for trades, costs and provenance.');
+    setResultAnchorId(completedMessageId);
+  };
+
+  const checkAgainRun = async () => {
+    if (!stalledRun || !review) return;
+    try {
+      const outcome = await Promise.resolve(checkBacktestJob(stalledRun));
+      if (!outcome || typeof outcome !== 'object') return;
+      if (outcome.state === 'running') return;
+      if (!isCurrentReviewResult(outcome.result, review)) {
+        setStalledRun(null);
+        setReviewError('');
+        append('assistant', 'The backtest returned a result for a different strategy or cutoff. Nothing is presented as complete.', { tone: 'error' });
+        return;
+      }
+      completeRun(outcome.result);
+    } catch (caught) {
+      setStalledRun(null);
+      const code = (caught as { code?: string }).code ?? '';
+      setReviewError('');
+      setWorkingAnchorId(append('assistant', code === 'JOB_NOT_FOUND'
+        ? 'The backtest was lost when the server restarted. Run it again.'
+        : backtestFailureLine(caught), { tone: 'error' }));
+    }
+  };
+
+  const cancelStalledRun = async () => {
+    if (!stalledRun) return;
+    const jobId = stalledRun;
+    setStalledRun(null);
+    await Promise.resolve(cancelResearchJob(jobId)).catch(() => {});
+    setReviewStatus('cancelled');
+    append('assistant', 'Research cancelled. No result was applied or saved.');
+  };
+
   const runReview = async () => {
     if (!review || reviewStatus === 'running' || !onResearchBacktest) return;
     requestReveal('run');
@@ -974,15 +1042,16 @@ export const AiCopilotDock: React.FC<Props> = ({
         append('assistant', 'The backtest did not return a current validated result. No headline was shown and nothing was marked complete.');
         return;
       }
-      setValidatedResult(outcome);
-      setReviewStatus('complete');
-      // The review is spent: the result card is the record of this run.
-      reviewRef.current = null;
-      setReview(null);
-      const completedMessageId = append('assistant', 'Backtest completed. The headline below comes from the validated run response; open details for trades, costs and provenance.');
-      setResultAnchorId(completedMessageId);
+      completeRun(outcome);
     } catch (caught) {
       if (runGeneration.current !== owned) return;
+      const deadline = caught as { code?: string; jobId?: string };
+      if (deadline?.code === 'CLIENT_DEADLINE' && deadline.jobId) {
+        setReviewStatus('idle');
+        setReviewError('');
+        setStalledRun(deadline.jobId);
+        return;
+      }
       const plain = backtestFailureLine(caught);
       setReviewStatus('idle');
       setReviewError(plain);
@@ -1071,7 +1140,15 @@ export const AiCopilotDock: React.FC<Props> = ({
     if (file) void attachChartFile(file);
   };
 
+  const rememberPendingScan = (plan: ResearchScreenPlan | null) => {
+    try {
+      if (!plan) localStorage.removeItem(PENDING_SCAN_KEY);
+      else localStorage.setItem(PENDING_SCAN_KEY, JSON.stringify({ plan, startedAt: Date.now() }));
+    } catch { /* Storage may be unavailable; the scan still runs. */ }
+  };
+
   async function runScreenScan(plan: ResearchScreenPlan, controller: AbortController, owned: number) {
+    rememberPendingScan(plan);
     const scanned = await requestScan({
       universe: plan.universe,
       strategy: plan.strategy,
@@ -1097,15 +1174,66 @@ export const AiCopilotDock: React.FC<Props> = ({
       throw new Error('Real current data is unavailable. Demo results were not presented as stock matches.');
     }
     setScanResult(scanned);
+    rememberPendingScan(null);
     rememberPreference({ universe: 'NIFTY_50' });
   }
+
+  /** One place for scan failures: a deadline keeps the job, anything else is plain. */
+  const handleScanFailure = (caught: unknown) => {
+    const error = caught as { code?: string; jobId?: string };
+    if (error?.code === 'CLIENT_DEADLINE' && error.jobId) {
+      setScanError('');
+      setStalledScan(error.jobId);
+      setScanPending(false);
+      return;
+    }
+    setStalledScan(null);
+    rememberPendingScan(null);
+    setScanError(scanFailureLine(caught));
+  };
+
+  const stageProgress = (stage: string | undefined) => {
+    const match = /(\d+)\s*\/\s*(\d+)/.exec(stage ?? '');
+    const done = match ? Number(match[1]) : NaN;
+    const total = match ? Number(match[2]) : NaN;
+    return Number.isFinite(done) && Number.isFinite(total) && total > 0 ? { done, total } : null;
+  };
+
+  const checkAgainScan = async () => {
+    if (!stalledScan) return;
+    try {
+      const outcome = await Promise.resolve(checkScanJob(stalledScan));
+      if (!outcome || typeof outcome !== 'object') return;
+      if (outcome.state === 'done') {
+        setScanResult(outcome.result);
+        setStalledScan(null);
+        setScanProgress(null);
+        rememberPendingScan(null);
+        return;
+      }
+      setScanProgress(stageProgress(outcome.stage));
+    } catch (caught) {
+      setStalledScan(null);
+      setScanError(scanFailureLine(caught));
+    }
+  };
+
+  const cancelStalledScan = async () => {
+    if (!stalledScan) return;
+    const jobId = stalledScan;
+    rememberPendingScan(null);
+    setStalledScan(null);
+    setScanProgress(null);
+    await Promise.resolve(cancelResearchJob(jobId)).catch(() => {});
+    setScanError('Scan cancelled. Nothing was matched.');
+  };
 
   /** A scan failure in plain language: no transport text, no JSON parser detail. */
   const scanFailureLine = (caught: unknown): string => {
     const error = caught as { code?: string; message?: string; status?: number };
     const code = (error?.code ?? '').toUpperCase();
     const message = error?.message ?? '';
-    if (/JOB_LOST/.test(code)) return 'The server restarted and the scan was lost. Try again.';
+    if (/JOB_LOST|JOB_NOT_FOUND/.test(code)) return 'The server restarted and the scan was lost. Try again.';
     if (/DEADLINE|TIMEOUT/.test(code) || /timed out|deadline/i.test(message)) return "The scan didn't finish in time. Try again.";
     if (/RATE_LIMIT|RATE_LIMITED/.test(code) || error?.status === 429 || /rate limit/i.test(message)) {
       return 'Angel One is busy right now. Try the scan again in a minute.';
@@ -1142,7 +1270,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     try {
       await runScreenScan(plan, controller, owned);
     } catch (caught) {
-      if (generation.current === owned && !controller.signal.aborted) setScanError(scanFailureLine(caught));
+      if (generation.current === owned && !controller.signal.aborted) handleScanFailure(caught);
     } finally {
       if (generation.current === owned) {
         scanPendingRef.current = false;
@@ -1165,7 +1293,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     try {
       await runScreenScan(plan, controller, owned);
     } catch (caught) {
-      if (generation.current === owned && !controller.signal.aborted) setScanError(scanFailureLine(caught));
+      if (generation.current === owned && !controller.signal.aborted) handleScanFailure(caught);
     } finally {
       if (generation.current === owned) {
         scanPendingRef.current = false;
@@ -1399,7 +1527,7 @@ export const AiCopilotDock: React.FC<Props> = ({
           try {
             await runScreenScan(data, controller, owned);
           } catch (caught) {
-            if (generation.current === owned && !controller.signal.aborted) setScanError(scanFailureLine(caught));
+            if (generation.current === owned && !controller.signal.aborted) handleScanFailure(caught);
           } finally {
             if (generation.current === owned) {
               scanPendingRef.current = false;
@@ -1616,6 +1744,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                   pending={scanPending}
                   waiting={scanPending && scanWaiting}
                   progress={scanPending ? scanProgress : null}
+                  stalled={stalledScan ? { onCheckAgain: () => void checkAgainScan(), onCancel: () => void cancelStalledScan() } : null}
                   error={scanError}
                   busy={busy}
                   onPrepareBacktest={(symbolId, matchAsOf) => {
@@ -1660,6 +1789,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                   review={review}
                   running={reviewStatus === 'running'}
                   waiting={reviewStatus === 'running' && runPhase === 'waiting'}
+                  stalled={stalledRun ? { onCheckAgain: () => void checkAgainRun(), onCancel: () => void cancelStalledRun() } : null}
                   error={reviewError}
                   onApprove={() => void runReview()}
                   onCancelReview={dismissReview}

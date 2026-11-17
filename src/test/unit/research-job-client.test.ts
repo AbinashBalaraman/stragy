@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { requestBacktest, requestMarketSnapshot, requestScan, RESEARCH_DEADLINE_MS, RESEARCH_QUEUE_LIMIT_MS } from '../../client/api';
+import { cancelResearchJob, requestBacktest, requestMarketSnapshot, requestScan, RESEARCH_DEADLINE_MS, RESEARCH_QUEUE_LIMIT_MS } from '../../client/api';
 import { strategy } from '../fixtures/research';
 
 const receipt = { schemaVersion: 2, jobId: 'fixture-job', status: 'queued' };
@@ -13,6 +13,23 @@ beforeEach(() => { vi.useFakeTimers(); fetchMock = vi.fn(); vi.stubGlobal('fetch
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('bounded asynchronous research job client', () => {
+  it('waits 600s for a cold market snapshot and then keeps the job', async () => {
+    expect(RESEARCH_DEADLINE_MS.market).toBe(600_000);
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/market-snapshots') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      return response({ id: receipt.jobId, kind: 'market', status: 'running' });
+    });
+    const promise = requestMarketSnapshot({ universe: 'NIFTY_50' });
+    const assertion = expect(promise).rejects.toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The market snapshot is still loading. Check again.' });
+    await vi.advanceTimersByTimeAsync(599_000);
+    let settled = false;
+    void promise.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(settled).toBe(true);
+    await assertion;
+  });
+
   it('keeps a cold scan alive past 120s and aborts at 300s', async () => {
     expect(RESEARCH_DEADLINE_MS.scan).toBe(300_000);
     fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
@@ -21,7 +38,7 @@ describe('bounded asynchronous research job client', () => {
       return response({ id: receipt.jobId, kind: 'scan', status: 'running' });
     });
     const promise = requestScan(input());
-    const assertion = expect(promise).rejects.toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The scan took too long and was stopped. No zero-match conclusion was made.' });
+    const assertion = expect(promise).rejects.toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The scan is still running. Check again.' });
     await vi.advanceTimersByTimeAsync(119_000);
     let settled = false;
     void promise.then(() => { settled = true; }, () => { settled = true; });
@@ -29,7 +46,8 @@ describe('bounded asynchronous research job client', () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(181_000);
     await assertion;
-    expect(fetchMock.mock.calls.some(call => call[1]?.method === 'DELETE')).toBe(true);
+    // A deadline keeps the job: the user can still check again or cancel it.
+    expect(fetchMock.mock.calls.some(call => call[1]?.method === 'DELETE')).toBe(false);
   });
 
   it('keeps a queued backtest alive and starts its execution deadline only when it runs', async () => {
@@ -51,7 +69,7 @@ describe('bounded asynchronous research job client', () => {
     expect(phases).toContain('waiting');
     expect(phases.at(-1)).toBe('running');
     await vi.advanceTimersByTimeAsync(3_000);
-    expect(await outcome).toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The backtest took too long and was stopped. Try again.' });
+    expect(await outcome).toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The backtest is still running. Check again.' });
   });
 
   it('stops a backtest that has waited five minutes in the queue', async () => {
@@ -67,7 +85,7 @@ describe('bounded asynchronous research job client', () => {
     await Promise.resolve();
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(await outcome).toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The backtest took too long and was stopped. Try again.' });
+    expect(await outcome).toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The backtest is still running. Check again.' });
   });
 
   it('retries a 404 poll and recovers when the server comes back', async () => {
@@ -201,12 +219,23 @@ describe('bounded asynchronous research job client', () => {
     expect((await result).name).toBe('AbortError');
     expect(fetchMock).toHaveBeenLastCalledWith('/api/v2/jobs/fixture-job', expect.objectContaining({ method: 'DELETE' }));
   });
-  it('bounds a stalled poll and even stalled cleanup to a finite deadline', async () => {
+  it('bounds a stalled poll to a finite deadline and keeps the job for a re-check', async () => {
     fetchMock.mockImplementation((_url: string, init?: RequestInit) => init?.method === 'POST' ? Promise.resolve(response(receipt, 202)) : new Promise(() => {}));
     const result = requestScan(input()).catch(error => error);
     await vi.advanceTimersByTimeAsync(301501);
     expect(await result).toMatchObject({ code: 'CLIENT_DEADLINE' });
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/v2/jobs/fixture-job', expect.objectContaining({ method: 'DELETE' }));
+    // The job is not cancelled: the card offers Check again and Cancel scan.
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/v2/jobs/fixture-job', expect.objectContaining({ method: 'DELETE' }));
+  });
+  it('cancels a kept job with DELETE, and returns even when DELETE hangs', async () => {
+    fetchMock.mockResolvedValue(response({}));
+    await cancelResearchJob('fixture-job');
+    expect(fetchMock).toHaveBeenCalledWith('/api/v2/jobs/fixture-job', expect.objectContaining({ method: 'DELETE' }));
+
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    const cancelled = cancelResearchJob('hung-job');
+    await vi.advanceTimersByTimeAsync(1600);
+    await expect(cancelled).resolves.toBeUndefined();
   });
   it('bounds a stalled response body rather than waiting forever after HTTP headers', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 202, json: () => new Promise(() => {}) } as Response);

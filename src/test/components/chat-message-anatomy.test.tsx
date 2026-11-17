@@ -360,4 +360,25 @@ describe('chat message anatomy', () => {
     expect(await screen.findByText('Checking prices · 42 of 50')).toBeTruthy();
     expect(screen.getByText('Results are pending, not zero matches.')).toBeTruthy();
   });
+
+  it('says what happens next when the chart does not name a stock', () => {
+    const template = STRATEGY_TEMPLATES.find(item => item.id === 'rsi_trendline_breakout_near_lows');
+    if (!template) throw new Error('Chart template missing');
+    const plan = {
+      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Chart read.',
+      method: 'external_ai', provider: { name: 'vision', model: 'vision', aiGenerated: true }, warnings: [],
+      universe: 'NIFTY_50', strategy: template.strategy, assumptions: [], missingBacktestRules: ['exits'], backtestReady: false,
+    } as unknown as ResearchScreenPlan;
+    render(
+      <ChartReadingCard
+        plan={plan}
+        reading={{
+          source: 'chart_image', observations: {}, confidence: 0.8, summary: 'Oversold with an RSI reclaim.',
+          selfCheck: { status: 'unknown_symbol', line: "Couldn't check against the charted stock" },
+        } as never}
+      />
+    );
+    expect(screen.getByText("The chart doesn't name a stock, so the scan runs on the Nifty 50. Pick a match to backtest.")).toBeTruthy();
+    expect(screen.queryByText("Couldn't check against the charted stock")).toBeNull();
+  });
 });

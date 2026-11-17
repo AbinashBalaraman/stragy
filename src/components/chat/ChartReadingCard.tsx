@@ -6,6 +6,7 @@ import type { IndicatorConfig, RuleNode, StrategyAST } from '../../shared/strate
 import { renderRuleInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
 import { describeBacktestAssumptions } from '../../shared/strategy/backtestReview';
 import { CardShell } from '../common/CardShell';
+import { displayCardTitle } from './displayTitle';
 import { Disclosure } from '../common/Disclosure';
 
 interface Props {
@@ -54,6 +55,18 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
     rules: { ...plan.strategy.rules, entry: entryRules },
   };
   const lowConfidence = reading.confidence < 0.6;
+  /**
+   * The server says whether it could check the reading against the charted
+   * stock. When it could not, the card says what actually happens next instead
+   * of repeating that bare sentence.
+   */
+  const selfCheckNote = !reading.selfCheck
+    ? ''
+    : reading.selfCheck.status === 'checked'
+      ? reading.selfCheck.line
+      : reading.selfCheck.status === 'unavailable'
+        ? "The charted stock's data is unavailable, so the scan runs on the Nifty 50. Pick a match to backtest."
+        : "The chart doesn't name a stock, so the scan runs on the Nifty 50. Pick a match to backtest.";
   const editable = !!onConfirmScan;
   const edited = JSON.stringify(entryRules) !== JSON.stringify(plan.strategy.rules.entry)
     || JSON.stringify(indicators) !== JSON.stringify(plan.strategy.indicators);
@@ -106,7 +119,7 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
     <article aria-label="Chart reading">
       <CardShell
         tone="review"
-        title={plan.strategy.name}
+        title={displayCardTitle(plan.strategy.name)}
         meta="Read from your chart image · confirm the conditions"
         state={lowConfidence ? 'partial' : 'idle'}
         status={'Confidence ' + confidenceLabel(reading.confidence)}
@@ -154,12 +167,6 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
           </p>
         )}
 
-        {reading.selfCheck && (
-          <p className="rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[13px] leading-5 text-[var(--text-2)]">
-            {reading.selfCheck.line}
-          </p>
-        )}
-
         <section aria-label="Chart conditions" className="space-y-2">
           <div className="flex items-baseline justify-between gap-2">
             <SectionLabel>Conditions to test</SectionLabel>
@@ -169,6 +176,9 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
               </button>
             )}
           </div>
+          {reading.selfCheck && (
+            <p className="st-meta text-[var(--text-3)]">{selfCheckNote}</p>
+          )}
           {entryRules.length > 0 ? (
             <ol className="divide-y divide-[var(--line)]">
               {entryRules.map((rule, index) => {

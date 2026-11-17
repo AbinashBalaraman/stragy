@@ -4,6 +4,7 @@ import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import { formatDate, formatINR } from '../../shared/format';
 import { describeUnmatchedRule, formatIndicatorValue, getIndicatorLabel, humanObservationFreshness, humanSourceLabel } from '../../shared/strategy/renderPlainLanguage';
 import { CardShell, type CardState } from '../common/CardShell';
+import { displayCardTitle } from './displayTitle';
 import { DataTable, type DataColumn } from '../common/DataTable';
 import { Disclosure } from '../common/Disclosure';
 import { summarizeProviderFailures } from './researchFollowUp';
@@ -16,6 +17,8 @@ interface Props {
   waiting?: boolean;
   /** Jobs that report "scan 42/50" show it while they run. */
   progress?: { done: number; total: number } | null;
+  /** The client stopped waiting but the job is still running server-side. */
+  stalled?: { onCheckAgain: () => void; onCancel: () => void } | null;
   error: string;
   busy?: boolean;
   onPrepareBacktest: (symbolId: number, asOf?: string) => void;
@@ -89,7 +92,7 @@ const scoreLabel = (match: ScanMatch, total: number) => {
  * A read-only screen: one headline, one table of matches, a quiet close-matches
  * section, and provenance behind a disclosure. No nested boxes, one status chip.
  */
-export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiting = false, progress = null, error, busy, onPrepareBacktest, onCancelScan, onRetryScan }) => {
+export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiting = false, progress = null, stalled = null, error, busy, onPrepareBacktest, onCancelScan, onRetryScan }) => {
   const observedInMatches = result
     ? result.matches.reduce((latest, match) => match.lastDate > latest ? match.lastDate : latest, '')
     : '';
@@ -129,7 +132,9 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiti
   const metaLine = universeLabel(plan.universe) + ' · ' + (observedLabel ? observedLabel + ' close · ' : '') + methodShort(plan);
 
   const state: CardState = pending ? 'pending' : error && !result ? 'error' : partial ? 'partial' : 'idle';
-  const status = pending
+  const status = stalled
+    ? 'Still running'
+    : pending
     ? (waiting ? 'Waiting' : 'Scanning')
     : error && !result
       ? 'Could not complete'
@@ -212,13 +217,35 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiti
   return (
     <article aria-label="Research screen">
       <CardShell
-        title={plan.strategy.name}
+        title={displayCardTitle(plan.strategy.name)}
         meta={metaLine}
         state={state}
         status={status}
         footer={footer}
       >
-        {pending && (waiting ? (
+        {stalled && (
+          <div className="space-y-2">
+            <p className="text-[15px] leading-6 text-[var(--text-1)]">The scan is still running on the server. Check again.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={stalled.onCheckAgain}
+                className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-1)] transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
+              >
+                Check again
+              </button>
+              <button
+                type="button"
+                onClick={stalled.onCancel}
+                className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] px-2.5 text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] sm:min-h-8"
+              >
+                Cancel scan
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!stalled && pending && (waiting ? (
           <p className="text-[15px] leading-6 text-[var(--text-2)]">Waiting for the current scan to finish…</p>
         ) : (
           <div className="space-y-2">

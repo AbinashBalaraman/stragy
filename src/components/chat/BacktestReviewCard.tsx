@@ -9,6 +9,8 @@ interface Props {
   running: boolean;
   /** The job is queued behind another one. */
   waiting?: boolean;
+  /** The client stopped waiting but the run is still going server-side. */
+  stalled?: { onCheckAgain: () => void; onCancel: () => void } | null;
   error: string;
   onApprove: () => void;
   onCancelReview: () => void;
@@ -29,7 +31,7 @@ const ReviewRow: React.FC<{ label: string; children: React.ReactNode }> = ({ lab
 const secondaryClass = 'st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8';
 
 /** The last gate before execution: frozen assumptions, plain English, explicit consent. */
-export const BacktestReviewCard: React.FC<Props> = ({ review, running, waiting = false, error, onApprove, onCancelReview, onCancelRun }) => {
+export const BacktestReviewCard: React.FC<Props> = ({ review, running, waiting = false, stalled = null, error, onApprove, onCancelReview, onCancelRun }) => {
   const assumptions = describeBacktestAssumptions(review.strategy, {
     asOf: review.asOf,
     sourceLabel: review.sourceLabel,
@@ -68,7 +70,7 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, waiting =
         title={'Backtest ' + review.symbol.ticker + ' with “' + review.strategy.name + '”'}
         meta={review.sourceLabel + ' · nothing has been run or applied.'}
         state={running ? 'pending' : error ? 'error' : 'idle'}
-        status={waiting ? 'Waiting' : running ? 'Running' : error ? 'Could not complete' : 'Not run yet'}
+        status={stalled ? 'Still running' : waiting ? 'Waiting' : running ? 'Running' : error ? 'Could not complete' : 'Not run yet'}
         footer={footer}
       >
         <p className="text-[13px] leading-5 text-[var(--text-2)]">
@@ -94,6 +96,28 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, waiting =
 
         {waiting && (
           <p className="st-meta text-[var(--text-2)]">Waiting for the current scan to finish…</p>
+        )}
+
+        {stalled && (
+          <div className="space-y-2">
+            <p className="text-[15px] leading-6 text-[var(--text-1)]">The backtest is still running. Check again.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={stalled.onCheckAgain}
+                className={secondaryClass}
+              >
+                Check again
+              </button>
+              <button
+                type="button"
+                onClick={stalled.onCancel}
+                className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] px-2.5 text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] sm:min-h-8"
+              >
+                Cancel research
+              </button>
+            </div>
+          </div>
         )}
 
         <Disclosure summary="Show all assumptions">
