@@ -118,6 +118,19 @@ function saveMessages(key: string, messages: ChatMessage[]): boolean {
 
 type Proposal = StrategyProposal & { sourceSnapshot: string; validatedCandidate: StrategyAST };
 
+/** A completed screen/chart card, kept at the message that produced it. */
+interface PastCard {
+  id: string;
+  messageId: string | null;
+  plan: ResearchScreenPlan;
+  result: ScanResult | null;
+  chartReading: ChartImageReading | null;
+  imageUrl?: string;
+  imageName?: string;
+}
+
+type BaseContext = { strategy: StrategyAST; asOf?: string; sourceLabel: string; assumptions: string[] };
+
 const STARTERS = [
   { label: 'RSI oversold after overbought', text: 'Find Nifty 50 RSI oversold stocks after recently overbought' },
   { label: 'Set my stop loss to 3%', text: 'Set my stop loss to 3%' },
@@ -342,6 +355,11 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [prompt, setPrompt] = useState('');
   const [chartImage, setChartImage] = useState<ChartImageAttachment | null>(null);
   const [chartReading, setChartReading] = useState<ChartImageReading | null>(null);
+  /**
+   * Completed cards from earlier in this conversation. A later request clears
+   * the live card state, but the answer that produced a table stays readable.
+   */
+  const [pastCards, setPastCards] = useState<PastCard[]>([]);
   const [preparingImage, setPreparingImage] = useState(false);
   const [imageError, setImageError] = useState('');
   const [dragActive, setDragActive] = useState(false);
@@ -735,6 +753,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     setPendingDraftBacktest(null);
     setCardMessageId(null);
     setCopiedMessageId(null);
+    setPastCards([]);
     setWorkingAnchorId(null);
     setResultAnchorId(null);
     setStalledScan(null);
@@ -794,6 +813,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     setPendingDraftBacktest(null);
     setCardMessageId(null);
     setCopiedMessageId(null);
+    setPastCards([]);
     setWorkingAnchorId(null);
     setResultAnchorId(null);
     setStalledScan(null);
@@ -813,7 +833,33 @@ export const AiCopilotDock: React.FC<Props> = ({
     setScanError('Cancelled. No results were confirmed.');
   };
 
-  function selectBaseContext(sourceType: 'screen' | 'draft' | 'workspace'): { strategy: StrategyAST; asOf?: string; sourceLabel: string; assumptions: string[] } | null {
+  /**
+   * A completed card is the record of the answer that produced it. Before a new
+   * request clears or replaces the live card, keep the finished one (last five).
+   */
+  const archiveCompletedCard = () => {
+    if (!screenPlan || (!scanResult && !chartReading)) return;
+    const anchor = workingAnchorId ?? cardMessageId;
+    const image = chartImage ?? sentChartImage;
+    const card: PastCard = {
+      id: anchor ?? 'card-' + Date.now(),
+      messageId: anchor,
+      plan: screenPlan,
+      result: scanResult,
+      chartReading,
+      ...(image ? { imageUrl: image.dataUrl, imageName: image.name } : {}),
+    };
+    setPastCards(previous => previous.some(item => item.id === card.id) ? previous : [...previous, card].slice(-5));
+  };
+
+  const pastBase = (card: PastCard): BaseContext => ({
+    strategy: card.plan.strategy,
+    asOf: card.result?.observationDates?.latest ?? card.result?.asOf ?? card.plan.asOf,
+    sourceLabel: 'Read-only screen “' + card.plan.strategy.name + '” plus your current workspace exits, sizing, execution and costs',
+    assumptions: card.plan.assumptions,
+  });
+
+  function selectBaseContext(sourceType: 'screen' | 'draft' | 'workspace'): BaseContext | null {
     if (sourceType === 'screen' && screenPlan) {
       return {
         strategy: screenPlan.strategy,
@@ -861,9 +907,9 @@ export const AiCopilotDock: React.FC<Props> = ({
     append('assistant', 'I set aside the backtest review that was waiting for approval.');
   };
 
-  const prepareReview = (sourceType: 'screen' | 'draft' | 'workspace', symbol: SymbolMeta, asOfOverride?: string) => {
+  const prepareReview = (sourceType: 'screen' | 'draft' | 'workspace', symbol: SymbolMeta, asOfOverride?: string, baseOverride?: BaseContext) => {
     supersedeReview();
-    const base = selectBaseContext(sourceType);
+    const base = baseOverride ?? selectBaseContext(sourceType);
     if (!base) {
       append('assistant', sourceType === 'workspace' ? 'The workspace strategy is not available to review.' : 'There is no reviewed screen or draft to test. Describe a screen first, then ask to backtest it on a stock.');
       return;
@@ -1401,6 +1447,7 @@ export const AiCopilotDock: React.FC<Props> = ({
 
     if (attachedImage) {
       // A new image is a new screen, not a continuation of the previous one.
+      archiveCompletedCard();
       setChartReading(null);
       setScreenPlan(null);
       setAwaitingChartConfirm(false);
@@ -1491,6 +1538,7 @@ export const AiCopilotDock: React.FC<Props> = ({
         setCardMessageId(messageId);
         setWorkingAnchorId(messageId);
         assertProposalCurrent(parsed, originatingRevision, sourceSnapshot, JSON.stringify(strategy));
+        archiveCompletedCard();
         setProposal({ ...parsed, sourceSnapshot, validatedCandidate: parsed.candidate });
         setScreenPlan(null);
         setScanResult(null);
@@ -1508,6 +1556,7 @@ export const AiCopilotDock: React.FC<Props> = ({
         // that label stays under the message where it is still true.
         setCardMessageId(chartCacheUsed ? null : messageId);
         setWorkingAnchorId(messageId);
+        archiveCompletedCard();
         setScreenPlan(data);
         setChartReading(receivedChartReading);
         setApplied(null);
@@ -1891,6 +1940,42 @@ export const AiCopilotDock: React.FC<Props> = ({
   const resultCard = validatedResult
     ? <BacktestResultCard result={validatedResult} onOpenDetails={() => onOpenDetails?.(validatedResult)} />
     : null;
+  /**
+   * Earlier cards render read-only: the chart reading cannot start another
+   * scan, and a completed table keeps only the actions that still make sense
+   * (Backtest per row). Retry / check-again belong to the live card.
+   */
+  const pastCardView = (card: PastCard) => (
+    <>
+      {card.chartReading && (
+        <ChartReadingCard
+          plan={card.plan}
+          reading={card.chartReading}
+          past
+          applied={false}
+          canApply={false}
+          busy={false}
+          scanning={false}
+          imageUrl={card.imageUrl}
+          imageName={card.imageName}
+        />
+      )}
+      {card.result && (
+        <ScreenResultCard
+          plan={card.plan}
+          result={card.result}
+          pending={false}
+          error=""
+          busy={false}
+          onPrepareBacktest={(symbolId, matchAsOf) => {
+            const symbol = symbols.find(candidate => candidate.id === symbolId);
+            if (symbol) prepareReview('screen', symbol, matchAsOf, pastBase(card));
+            else append('assistant', 'The symbol list is unavailable, so I cannot prepare a backtest for that match.');
+          }}
+        />
+      )}
+    </>
+  );
   const workingAnchored = workingAnchorId !== null && messages.some(message => message.id === workingAnchorId);
   const lastAssistantIndex = messages.reduce((last, message, index) => message.sender === 'assistant' ? index : last, -1);
   const resultAnchored = resultAnchorId !== null && messages.some(message => message.id === resultAnchorId);
@@ -2021,12 +2106,18 @@ export const AiCopilotDock: React.FC<Props> = ({
                 )}
                 {workingAnchorId === message.id && <div className="space-y-6">{workingCards}</div>}
                 {resultAnchorId === message.id && <div className="space-y-6">{resultCard}</div>}
+                {pastCards.filter(card => card.messageId === message.id).map(card => (
+                  <div key={card.id} className="space-y-6">{pastCardView(card)}</div>
+                ))}
                 </React.Fragment>
               ))}
 
               {showPending && !scanPending && <AssistantPending />}
               {!workingAnchored && workingCards}
               {!resultAnchored && resultCard}
+              {pastCards
+                .filter(card => !card.messageId || !messages.some(message => message.id === card.messageId))
+                .map(card => <div key={card.id} className="space-y-6">{pastCardView(card)}</div>)}
 
               <div ref={endRef} />
             </div>
