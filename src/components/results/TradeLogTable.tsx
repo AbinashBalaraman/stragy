@@ -39,11 +39,13 @@ export const TradeLogTable: React.FC<TradeLogTableProps> = ({ trades }) => {
     {
       key: 'id',
       header: 'Trade',
+      className: 'max-sm:px-1.5',
       render: trade => <span className="font-medium text-[var(--text-1)]">{trade.id}</span>,
     },
     {
       key: 'entry',
       header: 'Entry',
+      className: 'max-sm:px-1.5',
       render: trade => (
         <>
           <span className="st-tnum">{formatINR(trade.entryPrice)}</span>
@@ -54,20 +56,23 @@ export const TradeLogTable: React.FC<TradeLogTableProps> = ({ trades }) => {
     {
       key: 'exit',
       header: 'Exit',
+      className: 'max-sm:px-1.5',
       render: trade => (
         <>
           <span className="st-tnum">{formatINR(trade.exitPrice)}</span>
-          <span className="st-meta block text-[var(--text-3)]">{formatDate(trade.exitDate)}</span>
+          <span className="st-meta block text-[var(--text-3)] max-sm:hidden">{formatDate(trade.exitDate)}</span>
+          <span className="st-meta block text-[var(--text-3)] sm:hidden">{exitReasonLabel(trade.exitReason)}</span>
         </>
       ),
     },
-    { key: 'quantity', header: 'Qty', align: 'right', render: trade => trade.quantity },
-    { key: 'holding', header: 'Held', align: 'right', render: trade => `${trade.holdingDays}d` },
-    { key: 'reason', header: 'Exit reason', render: trade => <span className="text-[var(--text-2)]">{exitReasonLabel(trade.exitReason)}</span> },
+    { key: 'quantity', header: 'Qty', align: 'right', hideOnMobile: true, render: trade => trade.quantity },
+    { key: 'holding', header: 'Held', align: 'right', hideOnMobile: true, render: trade => `${trade.holdingDays}d` },
+    { key: 'reason', header: 'Exit reason', hideOnMobile: true, render: trade => <span className="text-[var(--text-2)]">{exitReasonLabel(trade.exitReason)}</span> },
     {
       key: 'net',
       header: 'Net P&L',
       align: 'right',
+      className: 'max-sm:px-1.5',
       render: trade => {
         const win = trade.netPnl > 0;
         return (
@@ -118,6 +123,7 @@ export const TradeLogTable: React.FC<TradeLogTableProps> = ({ trades }) => {
         rows={filteredTrades}
         rowKey={trade => trade.id}
         initialLimit={10}
+        fitMobile
         empty="No trades match the selected filter."
       />
     </section>

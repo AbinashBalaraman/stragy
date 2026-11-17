@@ -266,7 +266,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [moreTabsOpen, setMoreTabsOpen] = useState(false);
   const [scanLimit, setScanLimit] = useState(35);
   const [scanSlow, setScanSlow] = useState(false);
-  const [marketSlow, setMarketSlow] = useState(false);
   const [prefill, setPrefill] = useState<ScannerPrefill | null>(null);
   const appliedPrefill = useRef<ScannerPrefill | null>(null);
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
@@ -394,12 +393,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   }, [isScanning]);
 
   // The market snapshot can also take longer than ten seconds on a cold cache.
-  useEffect(() => {
-    if (!isLoadingTrends) { setMarketSlow(false); return; }
-    const timer = setTimeout(() => setMarketSlow(true), 10_000);
-    return () => clearTimeout(timer);
-  }, [isLoadingTrends]);
-
   // A chat hand-off fills the universe, cutoff and scan size, then opens the matches.
   useEffect(() => {
     if (!incomingPrefill || appliedPrefill.current === incomingPrefill) return;
@@ -561,8 +554,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
               <span className="text-neutral-200">{currentUniverseConfig.shortLabel}</span>
               <span aria-hidden="true">·</span>
-              <span>{initialLoading ? 'end-of-day loading…' : 'end-of-day ' + (movers?.formattedDate || fullDay(movers?.asOfDate || dataCutoff))}</span>
-              {hasLiveOverlay && (
+              <span>{initialLoading
+                ? (selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0]?.date
+                  ? fullDay(selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0].date)
+                  : 'latest close')
+                : 'end-of-day ' + (movers?.formattedDate || fullDay(movers?.asOfDate || dataCutoff))}</span>
+              {hasLiveOverlay && !initialLoading && (
                 <>
                   <span aria-hidden="true">·</span>
                   {liveQuotes.connected ? (
@@ -608,19 +605,20 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               </details>
             )}
           </div>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              retryActiveView();
-            }}
-            disabled={activePending}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04] disabled:opacity-50"
-          >
-            <RefreshCw className={'h-3.5 w-3.5 ' + (activePending ? 'animate-spin' : '')} aria-hidden="true" />
-            {activePending ? 'Refreshing…' : 'Refresh'}
-          </button>
+          {!activePending && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                retryActiveView();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              Refresh
+            </button>
+          )}
         </div>
 
         {/* One universe picker and one session picker. */}
@@ -767,9 +765,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </div>
       </section>
 
-      {((isScanning && scanSlow) || (isLoadingTrends && marketSlow)) && (
+      {isScanning && scanSlow && (
         <p role="status" className="st-meta rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-3)]">
-          {isScanning && scanSlow ? 'Still scanning · Angel One allows 2 requests a second' : 'Still loading market data · this can take up to a minute'}
+          Still scanning · Angel One allows 2 requests a second
         </p>
       )}
 

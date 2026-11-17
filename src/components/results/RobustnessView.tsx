@@ -198,12 +198,12 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-center text-xs">
+            <table className="w-full table-fixed border-collapse text-center text-[10px] sm:text-xs">
               <thead>
                 <tr>
-                  <th className="p-2 text-left text-[10px] text-[var(--text-3)]">{sensitivityHeatmap.param1Name} ↓ · {sensitivityHeatmap.param2Name} →</th>
+                  <th className="w-[34%] whitespace-normal break-words p-1.5 text-left text-[10px] text-[var(--text-3)] sm:p-2">{sensitivityHeatmap.param1Name.replace(/\s*\(percent\)/i, '')} ↓ · {sensitivityHeatmap.param2Name.replace(/\s*\(percent\)/i, '')} →</th>
                   {sensitivityHeatmap.param2Values.map(tp => (
-                    <th key={tp} className="p-2 font-mono font-semibold text-[rgba(236,236,237,0.7)]">{tp}%</th>
+                    <th key={tp} className="truncate p-1.5 st-tnum font-semibold text-[rgba(236,236,237,0.7)] sm:p-2">{formatPercent(tp, { decimals: 1 })}</th>
                   ))}
                 </tr>
               </thead>
@@ -212,7 +212,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                   const stopLoss = sensitivityHeatmap.param1Values[rowIndex];
                   return (
                     <tr key={stopLoss} className="border-t border-[rgba(236,236,237,0.06)]">
-                      <td className="st-tnum p-2 text-left font-semibold text-[var(--text-3)]">{stopLoss}%</td>
+                      <td className="st-tnum whitespace-nowrap p-1.5 text-left font-semibold text-[var(--text-3)] sm:p-2">{formatPercent(stopLoss, { decimals: 1 })}</td>
                       {row.map((cell, columnIndex) => {
                         const value = cell.metricValue;
                         const background =
@@ -226,7 +226,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
                                   ? 'bg-[#1e1e21] text-[rgba(236,236,237,0.7)]'
                                   : 'bg-rose-500/15 text-rose-300';
                         return (
-                          <td key={columnIndex} className={`m-0.5 rounded p-2.5 st-tnum font-semibold ${background}`}>
+                          <td key={columnIndex} className={`m-0.5 rounded p-1.5 st-tnum font-semibold sm:p-2.5 ${background}`}>
                             {formatPercent(value, { decimals: 2 })}
                           </td>
                         );

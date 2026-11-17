@@ -8,7 +8,7 @@ describe('market scanner loading copy', () => {
   });
 
   it('shows the first-load expectation before any job status arrives', () => {
-    expect(marketLoadingMessage(null, 'Nifty 50')).toBe('Loading Nifty 50 prices. The first load takes up to 3 minutes; later loads are instant.');
+    expect(marketLoadingMessage(null, 'Nifty 50')).toBe('Loading Nifty 50 prices. The first load takes up to 4 minutes; later loads are instant.');
   });
 
   it('shows real counts when the server reports them', () => {
@@ -17,7 +17,7 @@ describe('market scanner loading copy', () => {
   });
 
   it('falls back to the honest first-load expectation without inventing progress', () => {
-    const fallback = 'Loading Nifty 50 prices. The first load takes up to 3 minutes; later loads are instant.';
+    const fallback = 'Loading Nifty 50 prices. The first load takes up to 4 minutes; later loads are instant.';
     expect(marketLoadingMessage({ status: 'running', stage: 'market' }, 'Nifty 50')).toBe(fallback);
     expect(marketLoadingMessage({ status: 'running' }, 'Nifty 50')).toBe(fallback);
     expect(marketLoadingMessage({ status: 'running', stage: 'loading constituents' }, 'Nifty 50')).toBe('Loading constituents');

@@ -127,24 +127,28 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.queryByText(/Loading Nifty 50 prices/)).toBeNull();
   });
 
-  it('says market data is still loading after ten seconds', () => {
+  it('keeps one loading line after ten seconds, without a second header status', () => {
     vi.useFakeTimers();
     try {
       market.mockImplementationOnce(() => new Promise(() => {}));
       renderScanner();
-      expect(screen.queryByText(/Still loading market data/)).toBeNull();
+      expect(screen.getByText(/Loading Nifty 50 prices\. The first load takes up to 4 minutes/)).toBeTruthy();
       act(() => { vi.advanceTimersByTime(10_000); });
-      expect(screen.getByText('Still loading market data · this can take up to a minute')).toBeTruthy();
+      expect(screen.getByText(/Loading Nifty 50 prices\. The first load takes up to 4 minutes/)).toBeTruthy();
+      expect(screen.queryByText(/Still loading market data/)).toBeNull();
+      expect(screen.queryByText(/end-of-day loading|checking live prices|Refreshing…/)).toBeNull();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('says it is checking live prices while the first load is still in flight', () => {
+  it('keeps the header to the universe and date while the first load is in flight', () => {
     market.mockImplementationOnce(() => new Promise(() => {}));
     renderScanner();
-    expect(screen.getByText('checking live prices…')).toBeTruthy();
-    expect(screen.queryByText('live prices unavailable')).toBeNull();
+    expect(screen.getByText(/Loading Nifty 50 prices/)).toBeTruthy();
+    expect(screen.queryByText('checking live prices…')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+    expect(screen.queryByText('Refreshing…')).toBeNull();
   });
 
   it('names a partially unpriced symbol quietly instead of raising an alarm', async () => {

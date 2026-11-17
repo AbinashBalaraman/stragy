@@ -14,5 +14,5 @@ export function marketLoadingMessage(progress: ResearchJobProgress | null, label
   if (stage && !UNINFORMATIVE_STAGES.has(stage.toLowerCase())) {
     return stage.charAt(0).toUpperCase() + stage.slice(1);
   }
-  return `Loading ${label} prices. The first load takes up to 3 minutes; later loads are instant.`;
+  return `Loading ${label} prices. The first load takes up to 4 minutes; later loads are instant.`;
 }

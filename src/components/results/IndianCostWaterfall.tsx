@@ -49,9 +49,19 @@ export const IndianCostWaterfall: React.FC<IndianCostWaterfallProps> = ({
   ];
 
   const columns: DataColumn<CostRow>[] = [
-    { key: 'name', header: 'Fee', render: row => <span className="text-[var(--text-1)]" title={row.hint}>{row.name}</span> },
-    { key: 'basis', header: 'Basis', render: row => <span className="text-[var(--text-3)]">{row.basis}</span> },
-    { key: 'amount', header: 'Amount', align: 'right', render: row => <span className="st-tnum whitespace-nowrap">{formatINR(row.amount)}</span> },
+    {
+      key: 'name',
+      header: 'Fee',
+      className: 'max-sm:px-2',
+      render: row => (
+        <>
+          <span className="text-[var(--text-1)]" title={row.hint}>{row.name}</span>
+          <span className="st-meta block text-[var(--text-3)] sm:hidden">{row.basis}</span>
+        </>
+      ),
+    },
+    { key: 'basis', header: 'Basis', hideOnMobile: true, render: row => <span className="text-[var(--text-3)]">{row.basis}</span> },
+    { key: 'amount', header: 'Amount', align: 'right', className: 'max-sm:px-2', render: row => <span className="st-tnum whitespace-nowrap">{formatINR(row.amount)}</span> },
   ];
 
   return (
@@ -71,7 +81,7 @@ export const IndianCostWaterfall: React.FC<IndianCostWaterfallProps> = ({
           { label: 'Total charges', value: formatINR(effectiveCosts.totalCharges), hint: 'Sum of the rows below.' },
         ]}
       />
-      <DataTable caption="Cost breakdown by fee" columns={columns} rows={rows} rowKey={row => row.name} initialLimit={8} />
+      <DataTable caption="Cost breakdown by fee" columns={columns} rows={rows} rowKey={row => row.name} initialLimit={8} fitMobile />
     </CardShell>
   );
 };
