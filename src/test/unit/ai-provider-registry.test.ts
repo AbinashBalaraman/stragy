@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleAIChat } from '../../server/ai/copilot';
+import { createProposal } from '../../server/ai/proposals';
 import { createRequestBudget } from '../../server/ai/provider';
 import { decryptSecret, encryptSecret, resetSecretsCache } from '../../server/ai/providerSecrets';
 import {
   deleteProvider, getProvidersResponse, initializeProviderRegistry, resetProviderRegistryCache, resetProviderRegistryForTests,
   resolveActiveConfig, setChain, setDnsLookupForTests, upsertProvider, validateBaseUrl,
 } from '../../server/ai/providerRegistry';
-import { fakeResponse, openAIBody, recordingFetch } from '../../server/ai/testFixtures';
+import { fakeResponse, openAIBody, recordingFetch, validStrategy } from '../../server/ai/testFixtures';
 
 const KEY = Buffer.alloc(32, 7).toString('base64');
 let dir = '';
@@ -93,6 +94,47 @@ describe('provider registry', () => {
     const approved = await setChain({ entries: [{ ...paid, paidApproved: true }] }, env());
     expect(approved.chain[0].paidApproved).toBe(true);
     expect(resolveActiveConfig(env()).model).toBe('deepseek-v4.1-flash');
+  });
+
+  it('says a disabled primary is turned off in Settings, not missing its key', async () => {
+    await setChain({ entries: [{ providerId: 'opencode-go', model: 'hy4-flash-free', vision: true, paidApproved: false }] }, env());
+    await upsertProvider({ id: 'opencode-go', label: 'OpenCode Go', baseUrl: 'https://opencode.ai/inference/go/openai/v1', enabled: false }, env());
+    const cfg = resolveActiveConfig(env());
+    expect(cfg.state).toBe('disabled');
+    expect(cfg.providerLabel).toBe('OpenCode Go');
+    expect(cfg.keyPresent).toBe(true);
+    const out = await handleAIChat({ message: 'Hello there' }, { env: env(), fetch: vi.fn(), budget: createRequestBudget() });
+    expect(out.aiConnected).toBe(false);
+    expect(out.reply).toContain('OpenCode Go is turned off in Settings → AI providers.');
+    expect(out.reply).toContain('No answer was invented.');
+    expect(out.reply).not.toContain('no API key');
+  });
+
+  it('still says a genuinely keyless provider has no API key', async () => {
+    await setChain({ entries: [{ providerId: 'openrouter', model: 'openrouter/free', vision: true, paidApproved: false }] }, env());
+    const keyless = { ...env(), OPENROUTER_API_KEY: undefined };
+    const cfg = resolveActiveConfig(keyless);
+    expect(cfg.state).toBe('missing_key');
+    expect(cfg.providerLabel).toBe('OpenRouter');
+    expect(cfg.keyPresent).toBe(false);
+    const out = await handleAIChat({ message: 'Hello there' }, { env: keyless, fetch: vi.fn(), budget: createRequestBudget() });
+    expect(out.reply).toContain('no API key set for provider "OpenRouter"');
+  });
+
+  it('skips a disabled fallback with a warning instead of crashing', async () => {
+    await setChain({ entries: [
+      { providerId: 'opencode-go', model: 'hy4-flash-free', vision: true, paidApproved: false },
+      { providerId: 'openrouter', model: 'openrouter/free', vision: true, paidApproved: false },
+    ] }, env());
+    await upsertProvider({ id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', enabled: false }, env());
+    const cfg = resolveActiveConfig(env());
+    expect(cfg.fallbackTargets?.[0]).toMatchObject({ failure: 'disabled', providerLabel: 'OpenRouter', status: 'not_configured' });
+    const f = recordingFetch(() => fakeResponse({ body: openAIBody(JSON.stringify({ rationale: 'draft', warnings: [], strategy: validStrategy() })) }));
+    const r = await createProposal({ prompt: 'Add an RSI entry rule', currentStrategy: validStrategy() }, { config: cfg, env: env(), fetch: f, budget: createRequestBudget() });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.proposal.warnings.join(' ')).toMatch(/OpenRouter is turned off in Settings → AI providers and was skipped/);
+    expect(f.calls.every(call => !call.url.includes('openrouter'))).toBe(true);
   });
 
   it('applies a saved chain without a restart and labels the OpenRouter routed model', async () => {

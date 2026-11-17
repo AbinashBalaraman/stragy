@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, VISION_OBSERVATIONS_BUDGET_MS, VISION_PAID_OBSERVATION_RESERVE_MS, VISION_PLAN_RESERVE_MS, VISION_TOTAL_BUDGET_MS, analyzeChart, chartObservationSummary, legendBand, observationAttemptTimeouts, parseChartImageDataUrl, visionAttemptTimeout, withVisionTimeout,
+  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, VISION_OBSERVATION_ALLOCATION_MS, VISION_OBSERVATIONS_BUDGET_MS, VISION_PLAN_RESERVE_MS, VISION_TOTAL_BUDGET_MS, analyzeChart, chartObservationSummary, legendBand, observationAttemptTimeouts, parseChartImageDataUrl, visionAttemptTimeout, withVisionTimeout,
 } from '../../server/ai/chartVision';
 import { callProvider, createRequestBudget, resolveAIConfig, resolveVisionConfig } from '../../server/ai/provider';
 import { getAIStatus } from '../../server/ai/copilot';
@@ -135,14 +135,18 @@ describe('vision time budget', () => {
   it('reserves the plan pass and the paid observation fallback', () => {
     expect(VISION_OBSERVATIONS_BUDGET_MS + VISION_PLAN_RESERVE_MS).toBe(VISION_TOTAL_BUDGET_MS);
     expect(VISION_PLAN_RESERVE_MS).toBeGreaterThanOrEqual(VISION_ATTEMPT_TIMEOUT_MS + 5_000);
-    // Two free models can no longer eat the approved paid model or the plan.
+    // The audited default chain: primary free 50 s, short probe 10 s, paid 50 s.
     const chain = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: true }]);
-    expect(chain).toEqual([20_000, 20_000, VISION_PAID_OBSERVATION_RESERVE_MS]);
+    expect(chain).toEqual([50_000, 10_000, 50_000]);
+    expect(chain).toEqual([VISION_OBSERVATION_ALLOCATION_MS.primaryFree, VISION_OBSERVATION_ALLOCATION_MS.secondFree, VISION_OBSERVATION_ALLOCATION_MS.paid]);
     expect(chain.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
+    // A fourth free model is skipped, never at the paid attempt's expense.
+    const withExtraFree = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: false }, { approvedPaid: true }]);
+    expect(withExtraFree).toEqual([50_000, 10_000, 0, 50_000]);
     const freeOnly = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: false }]);
     expect(freeOnly.every(ms => ms <= VISION_ATTEMPT_TIMEOUT_MS)).toBe(true);
     expect(freeOnly.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
-    expect(observationAttemptTimeouts([{ approvedPaid: true }])[0]).toBe(VISION_PAID_OBSERVATION_RESERVE_MS);
+    expect(observationAttemptTimeouts([{ approvedPaid: true }])[0]).toBe(VISION_ATTEMPT_TIMEOUT_MS);
   });
 
   it('gives the plan pass the reserve after observations succeed', async () => {

@@ -32,34 +32,46 @@ const CHART_READ_FAILURE_MESSAGE = "I couldn't read this chart. The AI models di
 export const VISION_ATTEMPT_TIMEOUT_MS = 55_000;
 /** Keep the whole chart request inside the client's 180 s deadline, with margin. */
 export const VISION_TOTAL_BUDGET_MS = 170_000;
-/** The plan pass needs roughly 45–55 s; keep 65 s so a slow first plan call still fits. */
-export const VISION_PLAN_RESERVE_MS = 65_000;
+/** The plan pass needs roughly 45–55 s; keep 60 s so a slow plan call still fits. */
+export const VISION_PLAN_RESERVE_MS = 60_000;
 /** Observations may use at most this much of the total budget. */
 export const VISION_OBSERVATIONS_BUDGET_MS = VISION_TOTAL_BUDGET_MS - VISION_PLAN_RESERVE_MS;
-/** Keep enough of the observations budget for the last approved paid model. */
-export const VISION_PAID_OBSERVATION_RESERVE_MS = 65_000;
 
 /**
- * Split the observations budget across the model chain. Free attempts share
- * what is left after the paid fallback's reserve, so two slow free models can
- * no longer eat the model that actually returns a reading. The sum never
- * exceeds VISION_OBSERVATIONS_BUDGET_MS.
+ * Audited observations split for the default chain [free primary, free probe,
+ * paid fallback]. Logged cold reads show the primary needs ~50 s and the second
+ * free model has never answered within 55 s; the paid fallback needs ~50 s.
+ * Sum = 110 s, exactly the observations budget.
+ */
+export const VISION_OBSERVATION_ALLOCATION_MS = {
+  primaryFree: 50_000,
+  secondFree: 10_000,
+  paid: 50_000,
+} as const;
+
+/**
+ * Split the observations budget by chain role. The primary free model gets a
+ * real attempt, the second free model is a short probe, and the approved paid
+ * fallback keeps 50 s. Extra free models get no time so they cannot starve the
+ * paid attempt. A chain without a paid entry falls back to an equal split.
  */
 export function observationAttemptTimeouts(
   attempts: { approvedPaid: boolean }[],
   budgetMs = VISION_OBSERVATIONS_BUDGET_MS,
 ): number[] {
   const paidIndex = attempts.map(attempt => attempt.approvedPaid).lastIndexOf(true);
-  const freeCount = attempts.length - (paidIndex >= 0 ? 1 : 0);
-  if (freeCount === 0) {
-    const share = Math.floor(budgetMs / Math.max(1, attempts.length));
-    return attempts.map(() => Math.min(VISION_PAID_OBSERVATION_RESERVE_MS, share));
+  const free = attempts.map((attempt, index) => ({ attempt, index })).filter(item => !item.attempt.approvedPaid);
+  if (paidIndex >= 0 && free.length > 0) {
+    return attempts.map((_, index) => {
+      if (index === paidIndex) return Math.min(VISION_OBSERVATION_ALLOCATION_MS.paid, budgetMs);
+      const rank = free.findIndex(item => item.index === index);
+      if (rank === 0) return Math.min(VISION_OBSERVATION_ALLOCATION_MS.primaryFree, budgetMs);
+      if (rank === 1) return Math.min(VISION_OBSERVATION_ALLOCATION_MS.secondFree, budgetMs);
+      return 0;
+    });
   }
-  const freePool = Math.max(0, budgetMs - (paidIndex >= 0 ? VISION_PAID_OBSERVATION_RESERVE_MS : 0));
-  const freeShare = freeCount > 0 ? Math.floor(freePool / freeCount) : 0;
-  return attempts.map((_, index) => index === paidIndex
-    ? Math.min(VISION_PAID_OBSERVATION_RESERVE_MS, budgetMs)
-    : Math.min(VISION_ATTEMPT_TIMEOUT_MS, freeShare));
+  const share = Math.floor(budgetMs / Math.max(1, attempts.length));
+  return attempts.map(() => Math.min(VISION_ATTEMPT_TIMEOUT_MS, share));
 }
 
 /** Split what is left of the chart budget across the models still to try. */

@@ -145,16 +145,20 @@ const PROVIDER_SPECS: Record<Exclude<AIProviderName, 'none'>, ProviderSpec> = {
 
 export type AIProviderTarget = Exclude<AIProviderName, 'none'>;
 export type AIFallbackStatus = 'ready' | 'not_configured' | 'blocked_paid';
+/** Why an entry in the saved chain cannot run. */
+export type AIEntryFailure = 'disabled' | 'missing_key' | 'invalid';
 
 /** One cross-provider fallback entry. Its key is never serialised. */
 export interface AIFallbackTarget {
   provider: AIProviderTarget;
   model: string;
   label: string;
+  providerLabel?: string;
   configured: boolean;
   approvedPaid: boolean;
   supportsImages: boolean;
   status: AIFallbackStatus;
+  failure?: AIEntryFailure;
   config?: AIRuntimeConfig;
 }
 

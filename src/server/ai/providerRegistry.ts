@@ -9,7 +9,7 @@ import { promises as dns } from 'node:dns';
 import { z } from 'zod';
 import {
   OPENCODE_GO_MODELS, getLastProviderCall, isOpenCodeGoFreeModel, resolveAIConfig,
-  type AIFallbackTarget, type AIProviderName, type AIRuntimeConfig,
+  type AIEntryFailure, type AIFallbackTarget, type AIProviderName, type AIRuntimeConfig,
 } from './provider';
 import { VERIFIED_FREE_MODEL } from './freeModel';
 import { decryptSecret, encryptSecret, getSecretsStorage, redactSecret, secretHint } from './providerSecrets';
@@ -437,20 +437,22 @@ export async function testProvider(id: string, raw: unknown, env: Record<string,
   }
 }
 
-function buildEntryConfig(entry: AIChainEntryInput, env: Record<string, string | undefined>, defaults: AIRuntimeConfig): { config?: AIRuntimeConfig; target?: AIFallbackTarget } {
+function buildEntryConfig(entry: AIChainEntryInput, env: Record<string, string | undefined>, defaults: AIRuntimeConfig): { config?: AIRuntimeConfig; target?: AIFallbackTarget; failure?: AIEntryFailure } {
   const record = mergedProviders(env).find(item => item.id === entry.providerId);
-  if (!record) return {};
+  if (!record) return { failure: 'invalid' };
   const key = providerKey(record, env);
   const free = freeState(entry.providerId, entry.model);
   const blockedPaid = env.AI_COST_POLICY !== 'operator-approved' && free !== true && !entry.paidApproved;
   const configured = Boolean(key) && record.enabled;
-  const status = !configured ? 'not_configured' : blockedPaid ? 'blocked_paid' : 'ready';
+  const status: AIFallbackTarget['status'] = !configured ? 'not_configured' : blockedPaid ? 'blocked_paid' : 'ready';
+  const failure: AIEntryFailure | undefined = !record.enabled ? 'disabled' : !key ? 'missing_key' : blockedPaid ? 'invalid' : undefined;
   const target: AIFallbackTarget = {
     provider: record.adapter as AIFallbackTarget['provider'], model: entry.model,
-    label: `${entry.providerId}:${entry.model}`, configured, approvedPaid: entry.paidApproved,
-    supportsImages: entry.vision, status,
+    label: `${entry.providerId}:${entry.model}`, providerLabel: record.label,
+    configured, approvedPaid: entry.paidApproved,
+    supportsImages: entry.vision, status, ...(failure ? { failure } : {}),
   };
-  if (status !== 'ready' || !key) return { target };
+  if (status !== 'ready' || !key) return { target, ...(failure ? { failure } : {}) };
   const config: AIRuntimeConfig = {
     provider: record.adapter, model: entry.model, state: 'ready', ready: true, keyPresent: true,
     endpointHost: new URL(record.baseUrl).host, timeoutMs: defaults.timeoutMs,
@@ -472,10 +474,16 @@ export function resolveActiveConfig(env: Record<string, string | undefined> = pr
   const primary = buildEntryConfig(chain[0], env, defaults);
   const fallbackTargets = chain.slice(1).map(entry => buildEntryConfig(entry, env, defaults).target).filter(Boolean) as AIFallbackTarget[];
   if (!primary.config) {
-    const fallbackProvider = mergedProviders(env).find(item => item.id === chain[0].providerId);
+    const record = mergedProviders(env).find(item => item.id === chain[0].providerId);
+    const failure = primary.failure ?? 'invalid';
+    // A disabled record must say "turned off", not "no key": the key may be
+    // present, the user only has to enable the provider in Settings.
+    const configState = failure === 'disabled' ? 'disabled' : failure === 'missing_key' ? 'missing_key' : 'invalid_provider';
     return {
-      ...defaults, provider: fallbackProvider?.adapter ?? 'none', model: chain[0].model, state: 'missing_key', ready: false,
-      keyPresent: false, providerLabel: chain[0].providerId, fallbackTargets, fallbackModels: fallbackTargets.map(target => target.label),
+      ...defaults, provider: record?.adapter ?? 'none', model: chain[0].model, state: configState, ready: false,
+      keyPresent: Boolean(record && providerKey(record, env)),
+      providerLabel: record?.label ?? chain[0].providerId,
+      fallbackTargets, fallbackModels: fallbackTargets.map(target => target.label),
     };
   }
   const config = primary.config;

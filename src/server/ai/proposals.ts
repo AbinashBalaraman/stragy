@@ -74,12 +74,19 @@ const PROVIDER_CODE_MAP: Record<string, ProposalErrorCode> = {
 };
 
 export function describeConfigState(cfg: AIRuntimeConfig): string {
+  const label = cfg.providerLabel ?? cfg.provider;
   switch (cfg.state) {
-    case 'disabled': return 'External AI is disabled (AI_PROVIDER=none).';
-    case 'missing_key': return `External AI is disabled: no API key set for provider "${cfg.provider}".`;
-    case 'missing_model': return `External AI is disabled: provider "${cfg.provider}" requires AI_MODEL.`;
+    case 'disabled':
+      return cfg.providerLabel
+        ? `${cfg.providerLabel} is turned off in Settings → AI providers. Enable it there, or move another model up the fallback chain. No answer was invented.`
+        : 'External AI is disabled (AI_PROVIDER=none).';
+    case 'missing_key': return `External AI is disabled: no API key set for provider "${label}".`;
+    case 'missing_model': return `External AI is disabled: provider "${label}" requires AI_MODEL.`;
     case 'invalid_model': return 'External AI is disabled: AI_MODEL is not a valid model name for the provider.';
-    case 'invalid_provider': return 'External AI is disabled: AI_PROVIDER is not one of none|gemini|openai|openrouter|deepseek|tokenrouter|opencode-go.';
+    case 'invalid_provider':
+      return cfg.providerLabel
+        ? `${cfg.providerLabel} is configured but cannot be used. Check its model and paid approval in Settings → AI providers. No answer was invented.`
+        : 'External AI is disabled: AI_PROVIDER is not one of none|gemini|openai|openrouter|deepseek|tokenrouter|opencode-go.';
     default: return 'External AI is ready (connection not verified).';
   }
 }
@@ -108,6 +115,10 @@ export async function createProposal(input: CreateProposalInput, deps: AIService
   if (bounded.truncated) warnings.push('Conversation history was truncated or filtered to the allowed size.');
 
   const cfg = deps.config ?? resolveAIConfig(deps.env ?? process.env);
+  for (const target of cfg.fallbackTargets ?? []) {
+    if (target.failure === 'disabled') warnings.push(`${target.providerLabel ?? target.label} is turned off in Settings → AI providers and was skipped.`);
+    else if (target.failure === 'missing_key') warnings.push(`${target.providerLabel ?? target.label} has no API key and was skipped.`);
+  }
   const mk = (p: Omit<StrategyProposalV2, 'schemaVersion' | 'id' | 'status' | 'createdAt' | 'originatingRevision' | 'applied' | 'executes' | 'changes' | 'changeDetails'>): StrategyProposalV2 => {
     const changeSet = current ? describeStrategyChanges(current, p.candidate) : { changes: [], details: [] };
     return {
