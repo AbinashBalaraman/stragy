@@ -312,6 +312,7 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
   if(!isInformationalQuestion(message)&&/\b(strategy|setup|backtest|stop[ -]?loss|take[ -]?profit|trailing|set|change|build|create)\b/i.test(message)){
     const result=await createProposal({prompt:message,history:input.history,currentStrategy:input.currentStrategy,originatingRevision:rev,allowLocalFallback:input.allowLocalFallback},d);
     if(!result.ok){const fieldWarnings=result.error.code==='ai_invalid_schema'&&result.error.details?.length?['The model draft failed schema validation: '+result.error.details.slice(0,3).map(d=>sanitizeText(d,500)).join('; ')]:[];return unavailable(result.error.message,rev,[...result.warnings,...fieldWarnings]);}
+    if(input.currentStrategy&&result.proposal.changes.length===0)return plainReply("I didn't find a change to make — ask for a specific edit, or ask a question and I'll answer it.",rev);
     return parseResearchChatResponse({...base,kind:'proposal',message:result.proposal.rationale,method:result.proposal.method,provider:result.proposal.provider,warnings:result.proposal.warnings,proposal:result.proposal});
   }
   const chat=await handleAIChat({...input,message},d);

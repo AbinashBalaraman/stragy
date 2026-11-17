@@ -108,11 +108,11 @@ export function localEditStrategy(current: StrategyAST, instruction: string): Lo
   };
   const valueRe = (label: string) => new RegExp(`(?:^|[^a-z])(?:${label})(?:\\s|to|at|by|of|=|:|-)*?(\\d+(?:\\.\\d+)?)\\s*(%|percent|points?|pts|atr)?`);
 
-  const sl = num(valueRe('stop[\\s-]*loss|stoploss|sl'));
+  const sl = num(valueRe('(?<!trailing\\s)stop(?:[\\s-]*loss)?|stoploss|sl'));
   if (sl) next.risk.stopLoss = { type: unitToType(sl.unit, current.risk.stopLoss.type), value: sl.value };
   const tp = num(valueRe('take[\\s-]*profit|target|tp'));
   if (tp) next.risk.takeProfit = { type: unitToType(tp.unit === 'atr' ? '' : tp.unit, current.risk.takeProfit?.type), value: tp.value } as any;
-  const tr = num(valueRe('trailing(?:[\\s-]*stop)?'));
+  const tr = num(valueRe('trailing(?:[\\s-]*stop)?')) ?? num(/(\d+(?:\.\d+)?)\s*(%|percent|points?|pts|atr)?\s*trailing(?:\s*stop)?/i);
   if (tr) next.risk.trailingStop = { ...(current.risk.trailingStop ?? {}), type: unitToType(tr.unit, current.risk.trailingStop?.type), value: tr.value } as any;
 
   if (/\b(timeframe|time frame|switch|change|use|on)\b/.test(lower) || tr === null) {

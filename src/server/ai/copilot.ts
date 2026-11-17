@@ -324,6 +324,11 @@ export async function handleAIChat(
     );
     if (!r.ok) return { ...base, reply: failureMessage(r), warnings: [...r.warnings, r.error.code] };
     const p = r.proposal;
+    // A conceptual follow-up such as "what about a trailing stop?" must not
+    // become an empty draft. If an edit produced no field changes, say so.
+    if (wantsEdit && p.changes.length === 0) {
+      return { ...base, reply: "I didn't find a change to make — ask for a specific edit, or ask a question and I'll answer it.", warnings: [...p.warnings, 'no_field_changes'] };
+    }
     const external = p.method === 'external_ai';
     return {
       reply: external ? `${p.rationale}\n\n(AI-generated draft from ${externalName(cfg)}; unverified and not applied.)` : `${p.rationale}\n\n(${LOCAL_LABEL}: not an AI model. Nothing was applied.)`,

@@ -328,3 +328,25 @@ it('never returns the reasoning text when the retry is still deliberation',async
  expect(out.method).toBe('unavailable');
  expect(fetch).toHaveBeenCalledTimes(2);
 });
+
+it('answers conceptual follow-ups instead of drafting an empty proposal',async()=>{
+ for(const message of ['And what about a trailing stop? One sentence.','Why use a stop loss?','What is RSI? Set nothing.']){
+  const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
+  expect(out.kind,message).toBe('conversation');
+  expect('proposal' in out,message).toBe(false);
+  expect(out.message,message).not.toContain('No field changes');
+ }
+});
+
+it('keeps explicit trailing-stop edits as proposals with a change',async()=>{
+ const set=await researchChat({message:'Set a 2% trailing stop',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
+ expect(set.kind).toBe('proposal');
+ if(set.kind!=='proposal')throw Error('Trailing-stop proposal absent');
+ expect(set.proposal.changes.length).toBeGreaterThan(0);
+ expect(set.proposal.candidate.risk.trailingStop).toMatchObject({value:2});
+ const change=await researchChat({message:'And change my stop to 4%',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
+ expect(change.kind).toBe('proposal');
+ if(change.kind!=='proposal')throw Error('Stop change proposal absent');
+ expect(change.proposal.changes.length).toBeGreaterThan(0);
+ expect(change.proposal.candidate.risk.stopLoss.value).toBe(4);
+});
