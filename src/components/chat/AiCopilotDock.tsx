@@ -369,7 +369,10 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [pinned, setPinned] = useState(true);
   /** "Jump to latest" appears only for a screenful (or new content) out of view. */
   const [jumpVisible, setJumpVisible] = useState(false);
-  const [pendingDraftBacktest, setPendingDraftBacktest] = useState<string | null>(null);
+  /** Apply-and-backtest: the draft id plus the exact strategy the workspace must hold. */
+  const [pendingDraftBacktest, setPendingDraftBacktest] = useState<{ id: string; snapshot: string } | null>(null);
+  /** Last request text, so a failed apply-to-review can offer its retry. */
+  const lastPromptRef = useRef('');
   /** A send asks for the answer: follow it until the reader scrolls by hand. */
   const followAnswer = useRef(false);
   /** Cards render right after the message that produced them, not at the end. */
@@ -1606,6 +1609,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   const submitComposer = () => {
     if (!canSubmit) return;
     const text = prompt;
+    lastPromptRef.current = text;
     const image = chartImage;
     setPrompt('');
     if (image) {
@@ -1645,10 +1649,14 @@ export const AiCopilotDock: React.FC<Props> = ({
     try {
       const accepted = await applyToWorkspace(candidate);
       if (accepted === false) throw new Error('The workspace rejected this draft. Nothing was confirmed as applied.');
-      if (pendingApply.current === pending && accepted === true) {
-        pendingApply.current = null;
-        setApplied(pending.id);
-        setApplyStatus(successMessage);
+      if (accepted === true) {
+        // The workspace-change effect may have confirmed this apply before the
+        // await resumed; that is the same success, not a failure.
+        if (pendingApply.current === pending) {
+          pendingApply.current = null;
+          setApplied(pending.id);
+          setApplyStatus(successMessage);
+        }
         return true;
       } else if (pendingApply.current === pending && pending.snapshot === JSON.stringify(snapshotStrategy(strategy))) {
         pendingApply.current = null;
@@ -1687,17 +1695,38 @@ export const AiCopilotDock: React.FC<Props> = ({
   const applyAndBacktest = async () => {
     if (!proposal || !onApplyVariation) return;
     const id = proposal.id;
-    setPendingDraftBacktest(id);
+    let snapshot = '';
+    try { snapshot = JSON.stringify(snapshotStrategy(proposal.validatedCandidate)); } catch { snapshot = ''; }
+    setPendingDraftBacktest({ id, snapshot });
     const ok = await apply();
-    if (!ok) setPendingDraftBacktest(null);
+    if (!ok) setPendingDraftBacktest(current => current?.id === id ? null : current);
   };
 
+  /**
+   * Freeze the review only once the workspace actually holds the applied
+   * strategy: the apply may be confirmed by the workspace effect before the
+   * awaited call resumes, and the strategy prop arrives a tick later.
+   * If it never confirms, say so with a retry instead of staying silent.
+   */
   useEffect(() => {
-    if (!pendingDraftBacktest || applied !== pendingDraftBacktest) return;
-    setPendingDraftBacktest(null);
-    const symbol = symbols.find(candidate => candidate.id === strategy.universe.symbolId);
-    if (symbol) prepareReview('workspace', symbol);
-    else append('assistant', 'The draft is applied, but it has no stock yet. Choose a symbol in the tester, then review a backtest.');
+    if (!pendingDraftBacktest) return;
+    const { id, snapshot } = pendingDraftBacktest;
+    let workspaceNow = '';
+    try { workspaceNow = JSON.stringify(snapshotStrategy(strategy)); } catch { workspaceNow = ''; }
+    if (applied === id && workspaceNow === snapshot) {
+      setPendingDraftBacktest(null);
+      const symbol = symbols.find(candidate => candidate.id === strategy.universe.symbolId);
+      if (symbol) prepareReview('workspace', symbol);
+      else append('assistant', 'The draft is applied, but it has no stock yet. Choose a symbol in the tester, then review a backtest.');
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setPendingDraftBacktest(null);
+      append('assistant', 'The draft was applied, but the workspace did not confirm it in time, so no backtest review was prepared. Nothing was run.', {
+        retryPrompt: lastPromptRef.current || undefined,
+      });
+    }, 8000);
+    return () => window.clearTimeout(timer);
   }, [pendingDraftBacktest, applied, strategy, symbols]);
 
   const applyScreenDraft = async (override?: StrategyAST) => {
