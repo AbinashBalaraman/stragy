@@ -9,6 +9,31 @@ import { SMARTAPI_TOKEN_MAP } from './angelSymbols';
 // Verified ticker -> token map lives with the live-data adapter.
 export { SMARTAPI_TOKEN_MAP };
 
+/** Sentence-case labels for the scanner's Technical regimes table. */
+export const TREND_LABELS = {
+  RANGEBOUND: 'Rangebound / consolidating',
+  STRONG_BULLISH: 'Strong uptrend (above 20, 50 and 200-day EMAs)',
+  BULLISH: 'Uptrend (above 50-day SMA)',
+  OVERSOLD_REVERSAL: 'Oversold dip (RSI below 35)',
+  BEARISH: 'Downtrend (below 50-day SMA)',
+} as const;
+
+export const SIGNAL_LABELS = {
+  CONSOLIDATION: 'Consolidation filter',
+  BREAKOUT: 'Breakout with rising momentum',
+  PULLBACK: 'Pullback to 20-day EMA',
+  ACCUMULATION: 'Accumulation zone signal',
+  OVERSOLD: 'Oversold accumulation zone',
+  BEARISH_DIVERGENCE: 'Bearish divergence filter',
+  GOLDEN_CROSS: 'Recent golden cross',
+} as const;
+
+export const MARKET_REGIME_LABELS = {
+  ABOVE_VALUE_AREA: 'Breakout above the value-area high',
+  BELOW_VALUE_AREA: 'Below the value-area low',
+  INSIDE_VALUE_AREA: 'Inside the 70% value area',
+} as const;
+
 export interface StockTrendData {
   id: number;
   ticker: string;
@@ -136,9 +161,9 @@ export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: st
 
   // Determine Quantitative Trend State
   let trend: StockTrendData['trend'] = 'NEUTRAL';
-  let trendLabel = 'Rangebound / Consolidating';
+  let trendLabel: string = TREND_LABELS.RANGEBOUND;
   let signal: StockTrendData['signal'] = 'NEUTRAL';
-  let signalLabel = 'Consolidation Filter';
+  let signalLabel: string = SIGNAL_LABELS.CONSOLIDATION;
 
   const isAboveSma50 = ltp > sma50;
   const isAboveSma200 = ltp > sma200;
@@ -146,29 +171,29 @@ export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: st
 
   if (isAboveSma50 && isAboveSma200 && isAboveEma20 && rsi > 55) {
     trend = 'STRONG_BULLISH';
-    trendLabel = 'Institutional Super-Trend (Above 20/50/200 EMA)';
+    trendLabel = TREND_LABELS.STRONG_BULLISH;
     signal = 'BUY_BREAKOUT';
-    signalLabel = 'Momentum Expansion Breakout';
+    signalLabel = SIGNAL_LABELS.BREAKOUT;
   } else if (isAboveSma50 && isAboveEma20) {
     trend = 'BULLISH';
-    trendLabel = 'Bullish Up-Channel (Above 50 SMA)';
+    trendLabel = TREND_LABELS.BULLISH;
     signal = 'PULLBACK_ENTRY';
-    signalLabel = '20 EMA Pullback Setup';
+    signalLabel = SIGNAL_LABELS.PULLBACK;
   } else if (rsi < 35) {
     trend = 'OVERSOLD_REVERSAL';
-    trendLabel = 'RSI Mean Reversion Dip (RSI < 35)';
+    trendLabel = TREND_LABELS.OVERSOLD_REVERSAL;
     signal = 'OVERSOLD_RSI';
-    signalLabel = 'Accumulation Zone Signal';
+    signalLabel = SIGNAL_LABELS.ACCUMULATION;
   } else if (!isAboveSma50 && !isAboveEma20) {
     trend = 'BEARISH';
-    trendLabel = 'Bearish Momentum (Below 50 SMA)';
+    trendLabel = TREND_LABELS.BEARISH;
     signal = rsi < 40 ? 'OVERSOLD_RSI' : 'NEUTRAL';
-    signalLabel = rsi < 40 ? 'Oversold Accumulation Zone' : 'Bearish Divergence Filter';
+    signalLabel = rsi < 40 ? SIGNAL_LABELS.OVERSOLD : SIGNAL_LABELS.BEARISH_DIVERGENCE;
   }
 
   if (ema20 > sma50 && prevBar.close < ema20) {
     signal = 'GOLDEN_CROSS';
-    signalLabel = 'Golden Cross Velocity Trigger';
+    signalLabel = SIGNAL_LABELS.GOLDEN_CROSS;
   }
 
   // Open Interest & PCR Simulation / Model
@@ -763,10 +788,10 @@ export function getVolumeProfileAndVWAP(symbolId: number | string): VolumeProfil
 
   const buyPressurePct = Number(((totalBuyVol / totalSessionVolume) * 100).toFixed(1));
   const marketRegime = spot > vahPrice
-    ? 'Institutional Value Area Expansion (Bullish Breakout above VAH)'
+    ? MARKET_REGIME_LABELS.ABOVE_VALUE_AREA
     : spot < valPrice
-    ? 'Liquidity Sweep / Discount Zone (Below VAL)'
-    : 'Rotational Balance (Inside 70% Value Area)';
+    ? MARKET_REGIME_LABELS.BELOW_VALUE_AREA
+    : MARKET_REGIME_LABELS.INSIDE_VALUE_AREA;
 
   return {provenance:{mode:'demo',source:'DEMO_MODEL',asOf:'2026-09-30',assumptions:['Latest-only fictional model, not observations','Prices/OI/expiry/buy-sell flow are modeled','No real entitlement verified']},
     symbol: sym.name,

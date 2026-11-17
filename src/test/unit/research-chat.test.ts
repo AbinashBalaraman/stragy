@@ -3,6 +3,7 @@ import { researchChat } from '../../server/ai/researchChat';
 import { validStrategy } from '../../server/ai/testFixtures';
 import { fakeResponse, openAIBody } from '../../server/ai/testFixtures';
 import { createRequestBudget } from '../../server/ai/provider';
+import { filterSymbolsByUniverse } from '../../shared/data/symbols';
 import { validateStrategy } from '../../shared/strategy/schema';
 const prompt='Find Nifty 50 stocks with RSI in the oversold area but recently touched over bought area';
 describe('research chat plans',()=>{
@@ -155,6 +156,28 @@ it('says sector data is unavailable instead of inventing a ranking',async()=>{
  expect(out.kind).toBe('conversation');
  expect(out.message).toMatch(/can't rank Nifty 50 sectors|unavailable/i);
  expect(out.method).toBe('unavailable');
+});
+
+it('normalises sector names and excludes a demerger-style duplicate quote from the ranking',async()=>{
+ const symbols=filterSymbolsByUniverse('NIFTY_50').filter(symbol=>!symbol.ticker.startsWith('^'));
+ const live=async(ids:number[])=>({
+  source:'ANGEL_SMARTAPI' as const,available:true,delay:'unknown' as const,fetchedAt:new Date().toISOString(),cached:false,configured:true,unavailable:[],
+  quotes:ids.map(symbolId=>{
+   const symbol=symbols.find(item=>item.id===symbolId)!;
+   const duplicate=symbol.ticker==='TATAMOTORS'||symbol.ticker==='TMPV';
+   const auto=/auto/i.test(symbol.sector);
+   return {symbolId,ticker:symbol.ticker,ltp:duplicate?262.4:100,open:100,high:101,low:99,close:duplicate?287.4:99,changePercent:duplicate?-8.7:auto?2:0.5,exchangeTimestamp:null,fetchedAt:new Date().toISOString(),source:'ANGEL_SMARTAPI' as const,delay:'unknown' as const};
+  }),
+ });
+ const out=await researchChat({message:'Which Nifty 50 sectors are strongest today? Answer in two lines.',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'},market:{live}});
+ expect(out.kind).toBe('conversation');
+ expect(out.provider).toEqual({name:'Angel One live quotes',model:null,aiGenerated:false});
+ expect(out.message).toContain('Strongest Nifty 50 sectors today');
+ expect(out.message).toContain('Automobile and Auto Components');
+ expect(out.message).not.toMatch(/Automobile -/);
+ expect(out.message).toContain('Excluded TATAMOTORS, TMPV');
+ expect(out.message).not.toContain('-8.70');
+ expect(out.message).toContain('45 of 47');
 });
 
 it('routes only explicit condition sentences to the deterministic screen path',async()=>{

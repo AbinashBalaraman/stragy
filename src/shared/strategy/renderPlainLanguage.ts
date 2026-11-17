@@ -71,9 +71,9 @@ export function getIndicatorLabel(indId: string, indicators: IndicatorConfig[]):
     case 'ATR':
       return `ATR (${ind.params.period || 14})`;
     case 'HIGHEST':
-      return `Highest high of previous ${ind.params.period || 20} bars`;
+      return `${ind.params.period || 20}-day high`;
     case 'LOWEST':
-      return `Lowest low of previous ${ind.params.period || 20} bars`;
+      return `${ind.params.period || 20}-day low`;
     case 'BBANDS':
       return `Bollinger Bands (${ind.params.period || 20}, ${ind.params.stdDev || 2}σ)`;
     case 'MACD':

@@ -15,6 +15,7 @@ const indicators: IndicatorConfig[] = [
   { id: 'ema50', type: 'EMA', params: { period: 50 } },
   { id: 'vol_sma_20', type: 'VOLUME_SMA', params: { period: 20 } },
   { id: 'high20', type: 'HIGHEST', params: { period: 20 } },
+  { id: 'low20', type: 'LOWEST', params: { period: 20 } },
 ];
 
 describe('screen evidence presentation', () => {
@@ -31,7 +32,8 @@ describe('screen evidence presentation', () => {
     expect(formatIndicatorValue('Volume avg 20d', 9_789_303.8)).toBe('97.9 L');
     expect(formatIndicatorValue('Volume avg 20d', 12_500_000)).toBe('1.3 Cr');
     expect(getIndicatorLabel('vol_sma_20', indicators)).toBe('Volume avg 20d');
-    expect(getIndicatorLabel('high20', indicators)).toBe('Highest high of previous 20 bars');
+    expect(getIndicatorLabel('high20', indicators)).toBe('20-day high');
+    expect(getIndicatorLabel('low20', indicators)).toBe('20-day low');
     expect(getIndicatorLabel('low250', indicators)).toBe('% above its 52-week low');
     expect(getIndicatorLabel('rsi_sma', indicators)).toBe("RSI's 14-day average");
     expect(renderRuleInPlainLanguage({ leftIndicator: 'close', operator: 'gt', rightIndicator: 'ema50' }, indicators)).toBe('Close above 50-day EMA');

@@ -79,26 +79,57 @@ async function sectorAnswer(message: string, deps: AIServiceDeps): Promise<{ tex
   if (!quotes.length) {
     return { text: 'I can\'t rank Nifty 50 sectors right now: Angel One live quotes are unavailable. No ranking was invented.', warnings: unavailable.slice(0, 2), available: false };
   }
+  const pairCounts = new Map<string, number>();
+  for (const quote of quotes) {
+    const key = `${quote.ltp.toFixed(2)}|${quote.close.toFixed(2)}`;
+    pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+  }
+  const excluded: string[] = [];
+  const usable = quotes.filter(quote => {
+    const key = `${quote.ltp.toFixed(2)}|${quote.close.toFixed(2)}`;
+    if ((pairCounts.get(key) ?? 0) > 1 && Math.abs(quote.changePercent) > 5) {
+      excluded.push(quote.ticker);
+      return false;
+    }
+    return true;
+  });
+  const normalizeSector = (sector: string): string => {
+    const key = sector.toLowerCase();
+    if (/auto/.test(key)) return 'Automobile and Auto Components';
+    if (/financial|banking|nbfc/.test(key)) return 'Financial Services';
+    if (/energy|oil marketing|power generation|power transmission/.test(key)) return 'Energy';
+    if (/capital goods|wires & cables|defence/.test(key)) return 'Capital Goods & Infrastructure';
+    if (/retail|consumer discretionary/.test(key)) return 'Consumer Discretionary';
+    if (/paints|chemical/.test(key)) return 'Chemicals';
+    if (/infrastructure|railways/.test(key)) return 'Infrastructure';
+    return sector;
+  };
   const groups = new Map<string, { total: number; count: number }>();
   const byId = new Map(symbols.map(symbol => [symbol.id, symbol]));
-  for (const quote of quotes) {
+  for (const quote of usable) {
     const symbol = byId.get(quote.symbolId);
     if (!symbol) continue;
-    const group = groups.get(symbol.sector) ?? { total: 0, count: 0 };
+    const sector = normalizeSector(symbol.sector);
+    const group = groups.get(sector) ?? { total: 0, count: 0 };
     group.total += quote.changePercent;
     group.count++;
-    groups.set(symbol.sector, group);
+    groups.set(sector, group);
   }
+  if (!groups.size) {
+    return { text: 'I can\'t rank Nifty 50 sectors right now: no usable live quotes remain. No ranking was invented.', warnings: unavailable.slice(0, 2), available: false };
+  }
+  if (excluded.length) unavailable.push('Excluded ' + excluded.join(', ') + ': identical price and previous close suggests a demerger or unadjusted quote.');
   const ranked = [...groups.entries()]
     .map(([sector, group]) => ({ sector, average: group.total / group.count, count: group.count }))
     .sort((a, b) => b.average - a.average);
   const strongest = ranked.slice(0, 3);
   const weakest = [...ranked].reverse().slice(0, 3);
   const line = (item: typeof ranked[number]) => `${item.sector} ${formatPercent(item.average, { signed: true, decimals: 2 })} (${item.count})`;
+  const note = unavailable.join(' ').replace(/[.\s]+$/g, '');
   return {
     text: 'Strongest Nifty 50 sectors today, average change (stocks):\n' + strongest.map(line).join(' · ')
       + '\nWeakest: ' + weakest.map(line).join(' · ')
-      + `\nBased on ${quotes.length} of ${symbols.length} Angel One live quotes${unavailable.length ? '; some quotes were unavailable' : ''}.`,
+      + `\nBased on ${usable.length} of ${symbols.length} Angel One live quotes${note ? '; ' + note : ''}.`,
     warnings: unavailable.slice(0, 2),
     available: true,
   };
@@ -205,7 +236,7 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
     return parseResearchChatResponse({
       ...base,kind:'conversation',message:answer.text,
       method:answer.available?'rule_parser':'unavailable',
-      provider:answer.available?{name:'rule_parser',model:null,aiGenerated:false}:{name:'none',model:null,aiGenerated:false},
+      provider:answer.available?{name:'Angel One live quotes',model:null,aiGenerated:false}:{name:'none',model:null,aiGenerated:false},
       warnings:answer.warnings,
     });
   }
