@@ -78,6 +78,44 @@ describe('screen near matches', () => {
     expect(onPrepare).toHaveBeenCalledWith(8, '2026-10-15');
   });
 
+  it('drops the conditions column when the screen has a single rule', () => {
+    const base = plan();
+    const single: ResearchScreenPlan = {
+      ...base,
+      strategy: {
+        ...base.strategy,
+        rules: { ...base.strategy.rules, entry: base.strategy.rules.entry.slice(0, 1) },
+      } as unknown as ResearchScreenPlan['strategy'],
+    };
+    const one = { ...result(), matched: 1, matches: [{ ...match(7, 'RELIANCE', 'Reliance Industries'), indicatorValues: {} }], nearMatches: [] };
+    render(<ScreenResultCard plan={single} result={one as unknown as ScanResult} pending={false} error="" onPrepareBacktest={() => {}} />);
+    expect(screen.queryByRole('columnheader', { name: 'Conditions' })).toBeNull();
+    // The mobile summary keeps the indicator line but drops a meaningless "· 1/1".
+    expect(screen.queryByText(/· 1\/1/)).toBeNull();
+  });
+
+  it('states the count once, in rupees, and keeps coverage behind one warn line', () => {
+    const heavy = {
+      ...result(),
+      matched: 12,
+      requested: 50,
+      succeeded: 47,
+      failed: 3,
+      unavailable: 0,
+      matches: Array.from({ length: 12 }, (_, index) => match(100 + index, 'TCS' + index, 'Tata Consultancy ' + index)),
+      nearMatches: [],
+      errors: [{ symbolId: 9, ticker: 'BAJAJ-AUTO', code: 'NO_DATA', message: 'No daily bars returned' }],
+    };
+    render(<ScreenResultCard plan={plan()} result={heavy as unknown as ScanResult} pending={false} error="" onPrepareBacktest={() => {}} />);
+    expect(screen.getByText('12 matches')).toBeTruthy();
+    expect(screen.getByText('· 47 of 50 checked')).toBeTruthy();
+    expect(screen.getByText('3 stocks could not be checked')).toBeTruthy();
+    expect(screen.getByText('Which stocks, and why (1)')).toBeTruthy();
+    expect(screen.getAllByText('₹2,900.00').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Every condition held/)).toBeNull();
+    expect(screen.queryByText(/Partial coverage/)).toBeNull();
+  });
+
   it('renders one table row per match with each indicator value shown once', () => {
     const strategy = fiveRuleStrategy() as unknown as Record<string, unknown>;
     const dedupePlan: ResearchScreenPlan = {

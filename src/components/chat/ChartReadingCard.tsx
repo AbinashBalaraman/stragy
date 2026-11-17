@@ -41,6 +41,7 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
   const [entryRules, setEntryRules] = useState<RuleNode[]>(() => clone(plan.strategy.rules.entry));
   const [indicators, setIndicators] = useState<IndicatorConfig[]>(() => clone(plan.strategy.indicators));
   const [expanded, setExpanded] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   useEffect(() => {
     setEntryRules(clone(plan.strategy.rules.entry));
@@ -133,7 +134,19 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
           </figure>
         )}
 
-        <p className="st-prose text-[var(--text-1)]">{reading.summary}</p>
+        <div className="space-y-1">
+          <p className={'st-prose text-[var(--text-1)]' + (summaryOpen ? '' : ' line-clamp-2')}>{reading.summary}</p>
+          {reading.summary.trim().length > 110 && (
+            <button
+              type="button"
+              aria-expanded={summaryOpen}
+              onClick={() => setSummaryOpen(value => !value)}
+              className="st-meta inline-flex min-h-11 items-center text-[var(--text-3)] underline decoration-[var(--line-strong)] underline-offset-2 transition-colors hover:text-[var(--text-1)] sm:min-h-8"
+            >
+              {summaryOpen ? 'Less' : 'More'}
+            </button>
+          )}
+        </div>
 
         {lowConfidence && (
           <p className="rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[13px] leading-5 text-[#f5d383]">

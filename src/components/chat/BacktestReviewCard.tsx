@@ -47,7 +47,7 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
           disabled={running}
           className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] bg-[var(--accent)] px-3.5 font-semibold text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
         >
-          {running ? 'Running backtest…' : 'Use these assumptions and run'}
+          {running ? 'Running backtest…' : error ? 'Retry' : 'Use these assumptions and run'}
         </button>
         {running && onCancelRun ? (
           <button type="button" onClick={onCancelRun} className={secondaryClass}>Cancel research</button>
@@ -130,7 +130,8 @@ export const BacktestReviewCard: React.FC<Props> = ({ review, running, error, on
           </div>
         </Disclosure>
 
-        {error && <p role="alert" className="text-[13px] leading-5 text-[var(--down)]">Backtest did not complete: {error}</p>}
+        {/* The failure sentence lives in the conversation, once; this card keeps
+            the error state and the Retry action next to the assumptions. */}
       </CardShell>
     </article>
   );

@@ -5,6 +5,8 @@ export interface DataColumn<T> {
   header: string;
   /** First column is sticky by default; set false for a deliberate exception. */
   sticky?: boolean;
+  /** Hide this column below 640px; repeat its value in the first cell for touch. */
+  hideOnMobile?: boolean;
   align?: 'left' | 'right';
   render: (row: T) => React.ReactNode;
   className?: string;
@@ -22,6 +24,8 @@ interface Props<T> {
    * reachable while the wide data columns scroll under it.
    */
   stickyLastColumn?: boolean;
+  /** Below 640px, let the table shrink to the card width instead of scrolling at 560px. */
+  fitMobile?: boolean;
   empty?: string;
   className?: string;
 }
@@ -31,7 +35,7 @@ interface Props<T> {
  * horizontal scroll region and a sticky first column. Wide data scrolls inside
  * this region, never the page.
  */
-export function DataTable<T>({ caption, columns, rows, rowKey, initialLimit = 8, empty = 'No rows.', stickyLastColumn = false, className = '' }: Props<T>) {
+export function DataTable<T>({ caption, columns, rows, rowKey, initialLimit = 8, empty = 'No rows.', stickyLastColumn = false, fitMobile = false, className = '' }: Props<T>) {
   const [showAll, setShowAll] = useState(false);
   const captionId = useId();
   const visible = showAll ? rows : rows.slice(0, initialLimit);
@@ -49,7 +53,7 @@ export function DataTable<T>({ caption, columns, rows, rowKey, initialLimit = 8,
         tabIndex={0}
         className={'st-scroll-x overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' + (stickyLastColumn ? '' : 'st-fade-right')}
       >
-        <table className="st-tnum w-full min-w-[560px] border-collapse text-left">
+        <table className={'st-tnum w-full border-collapse text-left ' + (fitMobile ? 'min-w-0 sm:min-w-[560px]' : 'min-w-[560px]')}>
           <caption id={captionId} className="sr-only">{caption}</caption>
           <thead>
             <tr className="bg-[var(--surface-2)]">
@@ -64,6 +68,7 @@ export function DataTable<T>({ caption, columns, rows, rowKey, initialLimit = 8,
                       'text-[11px] whitespace-nowrap px-3 py-2 font-medium text-[var(--text-3)] ' +
                       (column.align === 'right' ? 'text-right ' : 'text-left ') +
                       (sticky ? 'sticky left-0 z-10 border-r border-[var(--line)] bg-[var(--surface-2)] ' : '') +
+                      (column.hideOnMobile ? 'max-sm:hidden ' : '') +
                       (stickyLast ? 'max-sm:sticky max-sm:right-0 max-sm:z-20 max-sm:border-l max-sm:border-[var(--line)] max-sm:bg-[var(--surface-2)] max-sm:shadow-[-8px_0_12px_-8px_rgba(0,0,0,0.55)] ' : '') +
                       (column.className ?? '')
                     }
@@ -85,6 +90,7 @@ export function DataTable<T>({ caption, columns, rows, rowKey, initialLimit = 8,
                     'st-table-text px-3 py-2 align-middle ' +
                     (column.align === 'right' ? 'text-right st-tnum ' : 'text-left ') +
                     (sticky ? 'sticky left-0 z-[1] border-r border-[var(--line)] bg-[var(--surface-1)] ' : '') +
+                    (column.hideOnMobile ? 'max-sm:hidden ' : '') +
                     (stickyLast ? 'max-sm:sticky max-sm:right-0 max-sm:z-[1] max-sm:border-l max-sm:border-[var(--line)] max-sm:bg-[var(--surface-1)] max-sm:shadow-[-8px_0_12px_-8px_rgba(0,0,0,0.55)] ' : '') +
                     (column.className ?? '');
                   return index === 0 ? (

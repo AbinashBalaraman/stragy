@@ -114,7 +114,8 @@ describe('inline backtest headline honesty', () => {
     const table = screen.getByRole('table', { name: 'Executed trades, 8 rows' });
     expect(table).toBeTruthy();
     expect(table.querySelectorAll('tbody tr')).toHaveLength(5);
-    expect(screen.getAllByText('Rule exit').length).toBe(5);
+    // Once in the exit-reason column and once in the mobile line under the entry date.
+    expect(screen.getAllByText('Rule exit').length).toBe(10);
     expect(screen.getByRole('button', { name: 'Show all 8' })).toBeTruthy();
   });
 });

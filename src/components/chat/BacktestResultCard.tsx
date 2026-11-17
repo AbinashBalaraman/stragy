@@ -89,10 +89,21 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
 
   const trades = hasTrades(result.trades) ? result.trades : [];
   const columns: DataColumn<TradeRecord>[] = [
-    { key: 'entry', header: 'Entry', sticky: true, render: trade => formatDate(trade.entryDate) },
+    {
+      key: 'entry',
+      header: 'Entry',
+      sticky: true,
+      render: trade => (
+        <span className="flex min-w-0 flex-col">
+          <span>{formatDate(trade.entryDate)}</span>
+          {/* Below 640px the reason column collapses into this quiet line. */}
+          <span className="st-meta block text-[var(--text-3)] sm:hidden">{exitLabel(trade.exitReason)}</span>
+        </span>
+      ),
+    },
     { key: 'exit', header: 'Exit', render: trade => formatDate(trade.exitDate) },
-    { key: 'reason', header: 'Exit reason', render: trade => exitLabel(trade.exitReason) },
-    { key: 'held', header: 'Bars', align: 'right', render: trade => (typeof trade.holdingBars === 'number' ? String(trade.holdingBars) : typeof trade.holdingDays === 'number' ? String(trade.holdingDays) : '—') },
+    { key: 'reason', header: 'Exit reason', hideOnMobile: true, render: trade => exitLabel(trade.exitReason) },
+    { key: 'held', header: 'Bars', align: 'right', hideOnMobile: true, render: trade => (typeof trade.holdingBars === 'number' ? String(trade.holdingBars) : typeof trade.holdingDays === 'number' ? String(trade.holdingDays) : '—') },
     {
       key: 'net',
       header: 'Net P&L',
@@ -157,6 +168,7 @@ export const BacktestResultCard: React.FC<Props> = ({ result, onOpenDetails }) =
             rows={trades}
             rowKey={(trade, index) => trade.id || 'trade-' + index}
             initialLimit={5}
+            fitMobile
           />
         )}
 

@@ -1,8 +1,7 @@
 import React from 'react';
 import type { ScanResult } from '../../client/api';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
-import { formatNumber } from '../../client/format';
-import { formatDate } from '../../shared/format';
+import { formatDate, formatINR } from '../../shared/format';
 import { describeUnmatchedRule, formatIndicatorValue, getIndicatorLabel, humanObservationFreshness, humanSourceLabel } from '../../shared/strategy/renderPlainLanguage';
 import { CardShell, type CardState } from '../common/CardShell';
 import { DataTable, type DataColumn } from '../common/DataTable';
@@ -28,10 +27,16 @@ const universeLabel = (universe: string) => universe === 'NIFTY_50'
   : universe.replace(/_/g, ' ').toLowerCase().replace(/^./, character => character.toUpperCase());
 
 const methodShort = (plan: ResearchScreenPlan) => plan.provider.aiGenerated
-  ? 'AI-assisted plan · ' + plan.provider.name
-  : plan.method === 'rule_parser'
-    ? 'Built-in rule parser · not AI'
-    : 'Local planning · not AI';
+  ? 'AI-assisted plan'
+  : 'rules, not AI';
+
+/** Close in rupees; a numeric string is formatted the same way as a number. */
+const closeText = (value: unknown): string => {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric)
+    ? '₹' + numeric.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '—';
+};
 
 /** One entry per indicator id *and* label (P1-10: the old rows repeated RSI twice). */
 function indicatorEntries(plan: ResearchScreenPlan, match: ScanMatch): IndicatorEntry[] {
@@ -58,8 +63,13 @@ function indicatorEntries(plan: ResearchScreenPlan, match: ScanMatch): Indicator
   return entries;
 }
 
+/** Price evidence ("200-day high") reads in rupees; an oscillator stays a number. */
+const indicatorValueText = (label: string, value: number) => /\b(high|low|close|open|price)\b/i.test(label)
+  ? formatINR(value)
+  : formatIndicatorValue(label, value);
+
 const indicatorLine = (entries: IndicatorEntry[]) => entries.length
-  ? entries.map(entry => entry.label + ' ' + formatIndicatorValue(entry.label, entry.value)).join(' · ')
+  ? entries.map(entry => entry.label + ' ' + indicatorValueText(entry.label, entry.value)).join(' · ')
   : 'Not reported';
 
 /** Close matches are a lead, never a match: one sentence says so, once. */
@@ -91,19 +101,28 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
   const nearMatches = result ? (result.nearMatches ?? []).filter(near => !result.matches.some(match => match.symbolId === near.symbolId)) : [];
   const totalConditions = plan.strategy.rules.entry.length;
 
-  /** One sentence under the headline. No second count sentence repeats the headline. */
-  const summaryLine = !result
+  /** One short line: the count and how much of the universe was checked. */
+  const matchesText = !result
     ? ''
     : result.succeeded === 0
-      ? 'No successful data coverage. Matches are unknown, not zero.'
-      : result.matched === 0
-        ? 'No stock meets all conditions today.'
-        : (() => {
-          const parts: string[] = [];
-          if (result.matched > result.matches.length) parts.push('Showing the first ' + result.matches.length + ' of ' + result.matched + ' matches');
-          if (nearMatches.length) parts.push(nearMatches.length + ' close ' + (nearMatches.length === 1 ? 'match' : 'matches') + ' below');
-          return (parts.length ? parts.join('. ') + '.' : 'Every condition held on the latest session.');
-        })();
+      ? 'Matches unknown'
+      : result.matched + (result.matched === 1 ? ' match' : ' matches');
+  const checkedText = result ? result.succeeded + ' of ' + result.requested + ' checked' : '';
+  const unevaluated = result ? Math.max(0, result.requested - result.succeeded) : 0;
+  const unevaluatedRows = result
+    ? result.errors.map(item => ({
+      key: (item.ticker ?? 'symbol ' + item.symbolId) + '-' + item.code,
+      label: item.ticker ?? 'Symbol ' + item.symbolId,
+      detail: item.message,
+    }))
+    : [];
+  /** Why a stock could not be checked: one warn line, the names behind a disclosure. */
+  const partialLine = unevaluated > 0
+    ? unevaluated + (unevaluated === 1 ? ' stock could not be checked' : ' stocks could not be checked')
+    : '';
+
+  const observedLabel = result && /^\d{4}-\d{2}-\d{2}$/.test(observationDate) ? formatDate(observationDate) : '';
+  const metaLine = universeLabel(plan.universe) + ' · ' + (observedLabel ? observedLabel + ' close · ' : '') + methodShort(plan);
 
   const state: CardState = pending ? 'pending' : error && !result ? 'error' : partial ? 'partial' : 'idle';
   const status = pending
@@ -120,6 +139,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
               ? humanSourceLabel(result.dataSource ?? '') || 'Observed public data'
               : 'Read-only';
 
+  const showConditions = totalConditions > 1;
   const columns: DataColumn<ScanMatch>[] = [
     {
       key: 'symbol',
@@ -128,20 +148,31 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
       render: match => (
         <span className="flex min-w-0 flex-col">
           <span className="font-semibold text-[var(--text-1)]">{match.ticker}</span>
-          <span className="st-meta block max-w-[9rem] truncate text-[var(--text-3)]">{match.name}</span>
+          <span className="st-meta block max-w-[9rem] truncate text-[var(--text-3)] max-sm:max-w-[7rem]">{match.name}</span>
+          {/* Below 640px the indicator and condition columns collapse into this line. */}
+          <span className="st-meta mt-0.5 block text-[var(--text-2)] sm:hidden">
+            {indicatorLine(indicatorEntries(plan, match))}
+            {showConditions && (
+              <>
+                {' · '}
+                {result?.matches.includes(match) ? totalConditions + '/' + totalConditions : scoreLabel(match, totalConditions)}
+              </>
+            )}
+          </span>
         </span>
       ),
     },
-    { key: 'close', header: 'Close', align: 'right', render: match => formatNumber(match.lastClose) },
-    { key: 'indicators', header: 'Indicators', render: match => <span className="st-meta text-[var(--text-2)]">{indicatorLine(indicatorEntries(plan, match))}</span> },
-    {
+    { key: 'close', header: 'Close', align: 'right', render: match => closeText(match.lastClose) },
+    { key: 'indicators', header: 'Indicators', hideOnMobile: true, render: match => <span className="st-meta text-[var(--text-2)]">{indicatorLine(indicatorEntries(plan, match))}</span> },
+    ...(showConditions ? [{
       key: 'conditions',
       header: 'Conditions',
-      align: 'right',
-      render: match => (result?.matches.includes(match)
-        ? totalConditions > 0 ? totalConditions + '/' + totalConditions : '—'
+      align: 'right' as const,
+      hideOnMobile: true,
+      render: (match: ScanMatch) => (result?.matches.includes(match)
+        ? totalConditions + '/' + totalConditions
         : scoreLabel(match, totalConditions)),
-    },
+    }] : []),
     {
       key: 'action',
       header: 'Action',
@@ -178,7 +209,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
     <article aria-label="Research screen">
       <CardShell
         title={plan.strategy.name}
-        meta={'Read-only screen · ' + universeLabel(plan.universe) + ' · ' + methodShort(plan)}
+        meta={metaLine}
         state={state}
         status={status}
         footer={footer}
@@ -213,20 +244,38 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
 
         {result && (
           <div aria-label="Screen results" role="group" className="space-y-5">
-            <div className="space-y-1">
-              <p className="st-stat font-semibold text-[var(--text-1)]">
-                {result.succeeded > 0 ? (result.matched + (result.matched === 1 ? ' match' : ' matches')) : 'Matches unknown'}
+            <div className="space-y-1.5">
+              <p className="flex flex-wrap items-baseline gap-x-2">
+                <span className="st-stat font-semibold text-[var(--text-1)]">{matchesText}</span>
+                {checkedText && <span className="st-meta text-[var(--text-3)]">· {checkedText}</span>}
               </p>
-              <p className="text-[15px] leading-6 text-[var(--text-2)]">{summaryLine}</p>
-              <p className="st-meta text-[var(--text-3)]">
-                {result.succeeded} of {result.requested} evaluated · {result.unavailable} unavailable · {result.failed} failed · {source} · observed through {/^\d{4}-\d{2}-\d{2}$/.test(observationDate) ? formatDate(observationDate) : observationDate}
-              </p>
-              {partial && (
-                <p className="st-meta text-[#f5d383]">
-                  Partial coverage: matches among the {result.requested - result.succeeded} unevaluated stocks are unknown.
-                </p>
+              {result.succeeded === 0 && (
+                <p className="text-[15px] leading-6 text-[var(--text-2)]">No successful data coverage. Matches are unknown, not zero.</p>
               )}
-              {failures && <p className="st-meta text-[var(--text-3)]">Provider failures: {failures}</p>}
+              {result.succeeded > 0 && result.matched === 0 && (
+                <p className="text-[15px] leading-6 text-[var(--text-2)]">No stock meets all conditions today.</p>
+              )}
+              {result.succeeded > 0 && result.matched > result.matches.length && (
+                <p className="st-meta text-[var(--text-3)]">Showing the first {result.matches.length} of {result.matched} matches.</p>
+              )}
+              {partialLine && (
+                <div className="space-y-0.5 pt-0.5">
+                  <p className="st-meta text-[#f5d383]">{partialLine}</p>
+                  <Disclosure summary={'Which stocks, and why (' + (unevaluatedRows.length || unevaluated) + ')'}>
+                    <div className="space-y-1.5">
+                      {unevaluatedRows.length > 0 && (
+                        <ul className="space-y-1">
+                          {unevaluatedRows.map(row => (
+                            <li key={row.key}><span className="text-[var(--text-2)]">{row.label}</span> — {row.detail}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {failures && <p>Provider failures: {failures}</p>}
+                      <p>The {source} data did not return a usable observation for {unevaluated === 1 ? 'this stock' : 'these stocks'}; matches among them are unknown.</p>
+                    </div>
+                  </Disclosure>
+                </div>
+              )}
             </div>
 
             {result.matches.length > 0 && (
@@ -236,6 +285,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
                 rows={result.matches}
                 rowKey={rowKey}
                 stickyLastColumn
+                fitMobile
               />
             )}
 
@@ -252,6 +302,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, error
                   rowKey={rowKey}
                   initialLimit={5}
                   stickyLastColumn
+                  fitMobile
                 />
                 {nearMatches.some(near => near.unmatchedRules?.length) && (
                   <ul className="space-y-1">

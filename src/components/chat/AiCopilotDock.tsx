@@ -24,6 +24,7 @@ import { MessageText } from './MessageText';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
 import { ActionRow } from '../common/ActionRow';
+import { Sources, type SourceItem } from '../common/Sources';
 import { CardShell } from '../common/CardShell';
 import { Disclosure } from '../common/Disclosure';
 import {
@@ -139,9 +140,31 @@ const methodLabel = (method: string, provider: { name: string; model: string | n
     return 'AI · ' + modelDisplayName(used.providerName, used.model);
   }
   if (method === 'local_heuristic') return 'Local keyword rules · not AI';
+  // Sector and market answers are parsed from the live quote feed, not the rule parser.
+  if (/angel one live quotes/i.test(provider.name)) return 'Angel One live quotes · not AI';
   if (method === 'rule_parser') return 'Built-in rule parser · not AI';
   return 'Unavailable · no result was invented';
 };
+
+/**
+ * A run failure in plain language. The raw provider text never reaches the
+ * transcript; the code (when the server sends one) picks the sentence.
+ */
+function backtestFailureLine(caught: unknown): string {
+  const error = caught as { code?: string; message?: string; status?: number };
+  const code = (error?.code ?? '').toUpperCase();
+  const message = error?.message ?? '';
+  if (/RATE_LIMIT|RATE_LIMITED/.test(code) || error?.status === 429 || /rate limit/i.test(message)) {
+    return "The backtest didn't finish: Angel One is busy. Try again in a minute.";
+  }
+  if (/DEADLINE|TIMEOUT|JOB_TIMEOUT/.test(code) || /timed out|deadline/i.test(message)) {
+    return "The backtest didn't finish in time. Try again in a minute.";
+  }
+  if (/UNAVAILABLE|PROVIDER|NETWORK|FETCH/.test(code) || /unavailable|network|failed to fetch/i.test(message)) {
+    return "The backtest didn't finish: the market data source is unavailable. Try again in a minute.";
+  }
+  return "The backtest didn't finish. Try again in a minute.";
+}
 
 /** Turn a provider failure into one actionable bubble message; the raw detail stays under Warnings. */
 function providerFailureFor(message: string): { text: string; detail: string } | null {
@@ -229,6 +252,27 @@ const withPercentSuffix = (change: DraftChange, strategy: StrategyAST): DraftCha
   return { ...change, value: change.value.replace(/%/g, '') };
 };
 
+/**
+ * Citation chips come from the URLs the answer actually contains: a markdown
+ * link keeps its label, a bare URL shows its host. No URL, no chip row.
+ */
+const SOURCE_URL = /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|https?:\/\/[^\s<>()[\]]+/g;
+
+function sourcesFor(text: string): SourceItem[] {
+  const seen = new Set<string>();
+  const items: SourceItem[] = [];
+  for (const match of text.matchAll(SOURCE_URL)) {
+    const href = (match[2] ?? match[0]).replace(/[.,;:!?]+$/, '').replace(/\)+$/, '');
+    if (!/^https?:\/\//i.test(href) || seen.has(href)) continue;
+    seen.add(href);
+    let host = href;
+    try { host = new URL(href).hostname.replace(/^www\./, ''); } catch { /* keep the href as its own label */ }
+    items.push({ label: match[1] ?? host, href, title: href });
+    if (items.length >= 6) break;
+  }
+  return items;
+}
+
 const DRAFT_MENU_ITEM = 'st-meta flex w-full items-center gap-2 rounded-[var(--r-btn)] px-2.5 py-2 text-left text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:text-[var(--text-disabled)]';
 
 /** A screen response can carry the contract-validated chart fields directly. */
@@ -281,9 +325,16 @@ export const AiCopilotDock: React.FC<Props> = ({
   /** Auto-scroll only while the reader is at the bottom (P0-6). */
   const [pinned, setPinned] = useState(true);
   const [pendingDraftBacktest, setPendingDraftBacktest] = useState<string | null>(null);
+  /** A send asks for the answer: follow it until the reader scrolls by hand. */
+  const followAnswer = useRef(false);
+  /** Cards render right after the message that produced them, not at the end. */
+  const [workingAnchorId, setWorkingAnchorId] = useState<string | null>(null);
+  const [resultAnchorId, setResultAnchorId] = useState<string | null>(null);
   /** The assistant message whose provenance the visible card already states. */
   const [cardMessageId, setCardMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  /** A reply that lands in under 300 ms never shows a skeleton (cache hits). */
+  const [showPending, setShowPending] = useState(false);
   const [screenPlan, setScreenPlan] = useState<ResearchScreenPlan | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanPending, setScanPending] = useState(false);
@@ -446,10 +497,25 @@ export const AiCopilotDock: React.FC<Props> = ({
     scrollToLatest('auto');
   };
 
+  /**
+   * Bring a message into view. Its start goes near the top of the log so a
+   * long answer is read from the beginning, whatever sits below it (cards
+   * render after the message list, so the log's end is not the answer's end).
+   */
+  const revealMessage = (element: HTMLElement, log: HTMLDivElement) => {
+    const logBox = log.getBoundingClientRect();
+    const box = element.getBoundingClientRect();
+    if (box.top >= logBox.top && box.bottom <= logBox.bottom) return;
+    log.scrollTop += box.top - logBox.top - 12;
+  };
+
   /** The next card is one the user asked for: its start must come into view. */
   const requestReveal = (reason: 'send' | 'scan' | 'run') => {
     revealIntent.current = reason;
   };
+
+  /** A wheel, touch or key scroll means the reader is steering; stop following. */
+  const onLogIntent = () => { followAnswer.current = false; };
 
   const onLogScroll = () => {
     const log = logRef.current;
@@ -474,7 +540,10 @@ export const AiCopilotDock: React.FC<Props> = ({
       setPinned(true);
       return;
     }
-    if (pinnedRef.current) scrollToLatest('auto');
+    // The answer to a question the reader just asked is always followed, even
+    // when placing that question left the log short of the bottom. Cards render
+    // after the message list, so scroll the answer itself into view, not the end.
+    if (followAnswer.current || pinnedRef.current) revealMessage(element, log);
   }, [messages]);
 
   // Reveal the newest card once per state change. A user-triggered card is
@@ -500,6 +569,16 @@ export const AiCopilotDock: React.FC<Props> = ({
     }, 80);
     return () => window.clearTimeout(timer);
   }, [messages, scanResult, review, validatedResult, chartReading, proposal, scanPending, awaitingChartConfirm, screenPlan, reviewStatus]);
+
+  // Hold the placeholder back briefly: a cached answer must not flash a skeleton.
+  useEffect(() => {
+    if (!loading) {
+      setShowPending(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowPending(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   // The composer grows with the prompt up to five rows (P2-1) and never moves the log.
   useEffect(() => {
@@ -593,7 +672,10 @@ export const AiCopilotDock: React.FC<Props> = ({
     setPendingDraftBacktest(null);
     setCardMessageId(null);
     setCopiedMessageId(null);
+    setWorkingAnchorId(null);
+    setResultAnchorId(null);
     revealIntent.current = null;
+    followAnswer.current = false;
     pendingApply.current = null;
   };
 
@@ -645,7 +727,10 @@ export const AiCopilotDock: React.FC<Props> = ({
     setPendingDraftBacktest(null);
     setCardMessageId(null);
     setCopiedMessageId(null);
+    setWorkingAnchorId(null);
+    setResultAnchorId(null);
     revealIntent.current = null;
+    followAnswer.current = false;
   };
 
   const cancelPendingRequest = () => {
@@ -688,14 +773,21 @@ export const AiCopilotDock: React.FC<Props> = ({
   };
 
   /** A new strategy, screen, change or backtest request supersedes an unapproved review. */
+  /**
+   * Only a review that is still waiting for approval is set aside. A run that
+   * finished, failed or is in flight is already its own record; superseding it
+   * would claim nothing was run when the result is on screen.
+   */
   const supersedeReview = () => {
-    if (!reviewRef.current) return;
+    // Only a review that has not been run is set aside. A run that failed,
+    // completed or was cancelled is the record of what happened; it stays.
+    if (!reviewRef.current || reviewStatus !== 'idle' || reviewError) return;
     runGeneration.current++;
     reviewRef.current = null;
     setReview(null);
     setReviewStatus('idle');
     setReviewError('');
-    append('assistant', 'The previous backtest review was set aside because you started a new research request. Nothing was run.');
+    append('assistant', 'I set aside the backtest review that was waiting for approval.');
   };
 
   const prepareReview = (sourceType: 'screen' | 'draft' | 'workspace', symbol: SymbolMeta, asOfOverride?: string) => {
@@ -743,7 +835,8 @@ export const AiCopilotDock: React.FC<Props> = ({
         ticker: symbol.ticker,
         riskPercent: candidate.risk.stopLoss?.type === 'percent' ? candidate.risk.stopLoss.value : undefined,
       });
-      append('assistant', 'I prepared a backtest review for ' + symbol.ticker + '. Nothing has been applied or run. Review the assumptions, then choose “Use these assumptions and run”.');
+      const reviewMessageId = append('assistant', 'I prepared a backtest review for ' + symbol.ticker + '. Nothing has been applied or run. Review the assumptions, then choose “Use these assumptions and run”.');
+      setWorkingAnchorId(reviewMessageId);
     } catch (caught) {
       setReviewError((caught as Error).message);
       setReviewStatus('idle');
@@ -775,7 +868,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       // An explicit "my strategy" must never be silently replaced by the last screen.
       if (sourceType === 'workspace' && explicitWorkspace && screenPlan) {
         setBacktestChoice({ symbol: resolution.symbol });
-        append('assistant', 'Choose which strategy to backtest on ' + resolution.symbol.ticker + ': the screen or your workspace strategy. Nothing has been run.');
+        setWorkingAnchorId(append('assistant', 'Choose which strategy to backtest on ' + resolution.symbol.ticker + ': the screen or your workspace strategy. Nothing has been run.'));
         return;
       }
       prepareReview(sourceType, resolution.symbol);
@@ -841,12 +934,18 @@ export const AiCopilotDock: React.FC<Props> = ({
       }
       setValidatedResult(outcome);
       setReviewStatus('complete');
-      append('assistant', 'Backtest completed. The headline below comes from the validated run response; open details for trades, costs and provenance.');
+      // The review is spent: the result card is the record of this run.
+      reviewRef.current = null;
+      setReview(null);
+      const completedMessageId = append('assistant', 'Backtest completed. The headline below comes from the validated run response; open details for trades, costs and provenance.');
+      setResultAnchorId(completedMessageId);
     } catch (caught) {
       if (runGeneration.current !== owned) return;
+      const plain = backtestFailureLine(caught);
       setReviewStatus('idle');
-      setReviewError((caught as Error).message);
-      append('assistant', 'The backtest did not complete: ' + (caught as Error).message + ' No results were invented.');
+      setReviewError(plain);
+      // The card moves under the failure line so its Retry sits with the reason.
+      setWorkingAnchorId(append('assistant', plain, { tone: 'error' }));
     }
   };
 
@@ -1185,6 +1284,7 @@ export const AiCopilotDock: React.FC<Props> = ({
       if (data.kind === 'proposal') {
         const parsed = parseStrategyProposal(data.proposal);
         setCardMessageId(messageId);
+        setWorkingAnchorId(messageId);
         assertProposalCurrent(parsed, originatingRevision, sourceSnapshot, JSON.stringify(strategy));
         setProposal({ ...parsed, sourceSnapshot, validatedCandidate: parsed.candidate });
         setScreenPlan(null);
@@ -1202,6 +1302,7 @@ export const AiCopilotDock: React.FC<Props> = ({
         // The card states the plan's method; a cache hit is not in the card, so
         // that label stays under the message where it is still true.
         setCardMessageId(chartCacheUsed ? null : messageId);
+        setWorkingAnchorId(messageId);
         setScreenPlan(data);
         setChartReading(receivedChartReading);
         setApplied(null);
@@ -1260,8 +1361,9 @@ export const AiCopilotDock: React.FC<Props> = ({
     }
     // Focus stays in the composer: sending never drops it to <body> (P0-3).
     promptRef.current?.focus();
-    // The user asked for this: its card must come into view.
+    // The user asked for this: its answer and its card must come into view.
     requestReveal('send');
+    followAnswer.current = true;
     void submitText(text, image);
   };
 
@@ -1414,120 +1516,10 @@ export const AiCopilotDock: React.FC<Props> = ({
 
   const closeDraftMenu = () => { if (draftMenuRef.current) draftMenuRef.current.open = false; };
 
-  return (
-    <section
-      aria-label="Research conversation"
-      className={(full ? 'h-full' : 'h-full border-l border-[var(--line)]') + ' flex min-h-0 flex-col bg-[#111113]'}
-      onKeyDown={event => { if (event.key === 'Escape' && onClose) onClose(); }}
-    >
-      <p role="status" aria-live="polite" className="sr-only">{statusMessage}</p>
-      <div className="relative min-h-0 flex-1">
-        <div
-          ref={logRef}
-          role="log"
-          aria-label="Conversation"
-          aria-busy={busy || undefined}
-          onScroll={onLogScroll}
-          className="absolute inset-0 min-h-0 overflow-y-auto px-4 py-6 [mask-image:linear-gradient(to_bottom,transparent,#000_8px)] sm:px-6"
-        >
-          <div className="mx-auto w-full max-w-[832px]">
-            {archivedMessages.length > 0 && (
-              <div className="st-meta mb-6 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-2)]">
-                <span>A previous conversation is saved in this browser.</span>
-                <button type="button" onClick={restorePreviousConversation} className="inline-flex min-h-11 items-center underline decoration-[var(--line-strong)] underline-offset-2 transition-colors hover:text-[var(--text-1)] sm:min-h-8">
-                  Restore previous conversation ({archivedMessages.length})
-                </button>
-              </div>
-            )}
-
-            {welcome && (
-              <div className="mx-auto max-w-[680px] pt-4 sm:pt-12">
-                <h1 className="max-w-[620px] text-3xl font-medium tracking-[-0.02em] text-[var(--text-1)] sm:text-4xl">Test a trading idea before you trust it.</h1>
-                <p className="st-prose mt-4 text-[var(--text-2)]">
-                  Describe a setup or upload a chart. Stragy screens the Nifty 50 on real daily data, shows every assumption, and runs a backtest only after you approve.
-                </p>
-                <div className="mt-7 grid gap-2 sm:grid-cols-3">
-                  {STARTERS.map(starter => (
-                    <button
-                      key={starter.label}
-                      type="button"
-                      onClick={() => { setPrompt(''); void submitText(starter.text); }}
-                      className="flex min-h-11 items-center rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3.5 py-2.5 text-left st-meta text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-12"
-                    >
-                      {starter.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="st-meta mt-6 text-[var(--text-3)]">
-                  Real NSE daily bars · assumptions shown before anything runs · no broker orders.
-                </p>
-              </div>
-            )}
-
-            <div className="space-y-6">
-              {messages.map((message, index) => message.sender === 'user' ? (
-                <article
-                  key={message.id}
-                  ref={index === messages.length - 1 ? lastMessageRef : undefined}
-                  className="flex justify-end"
-                >
-                  <div className="max-w-[min(560px,80%)] whitespace-pre-wrap break-words rounded-[16px] rounded-br-[6px] bg-[var(--surface-3)] px-3.5 py-2.5 text-[15px] leading-[22px] text-[var(--text-1)]">
-                    {message.text}
-                  </div>
-                </article>
-              ) : (
-                <article
-                  key={message.id}
-                  ref={index === messages.length - 1 ? lastMessageRef : undefined}
-                  className="w-full space-y-2"
-                >
-                  {(!messages[index - 1] || messages[index - 1].sender === 'user') && (
-                    <p className="st-meta text-[var(--text-3)]">Stragy</p>
-                  )}
-                  <div
-                    role={message.tone === 'error' ? 'alert' : undefined}
-                    className={'st-prose break-words ' + (message.tone === 'error' ? 'text-[var(--down)]' : 'text-[var(--text-1)]')}
-                  >
-                    <MessageText text={message.text} />
-                  </div>
-                  {/* The card states the same provenance once (P1-9/Fix 3). */}
-                  {message.methodLabel && message.id !== cardMessageId && (
-                    <p title={message.methodTitle} className="st-meta text-[var(--text-3)]">{message.methodLabel}</p>
-                  )}
-                  {message.warnings && message.warnings.length > 0 && (
-                    <Disclosure summary={'Warnings (' + message.warnings.length + ')'}>
-                      <ul className="list-disc space-y-1 pl-4">{message.warnings.map((warning, warningIndex) => <li key={warningIndex}>{warning}</li>)}</ul>
-                    </Disclosure>
-                  )}
-                  {(() => {
-                    const retryText = promptForMessage(index);
-                    return (
-                      <ActionRow
-                        actions={[
-                          {
-                            id: 'copy',
-                            label: copiedMessageId === message.id ? 'Copied' : 'Copy answer',
-                            icon: copiedMessageId === message.id
-                              ? <Check size={14} aria-hidden="true" />
-                              : <Copy size={14} aria-hidden="true" />,
-                            onClick: () => void copyMessage(message),
-                          },
-                          ...(retryText ? [{
-                            id: 'retry',
-                            label: 'Retry',
-                            icon: <RefreshCw size={14} aria-hidden="true" />,
-                            onClick: () => void submitText(retryText),
-                            disabled: busy,
-                          }] : []),
-                        ]}
-                      />
-                    );
-                  })()}
-                </article>
-              ))}
-
-              {loading && !scanPending && <AssistantPending />}
-
+  // Cards are placed after the message that produced them: a result must never
+  // drift below a question asked later.
+  const workingCards = (
+    <>
               {chartReading && screenPlan && (
                 <ChartReadingCard
                   plan={screenPlan}
@@ -1683,23 +1675,166 @@ export const AiCopilotDock: React.FC<Props> = ({
                 </article>
               )}
 
-              {validatedResult && <BacktestResultCard result={validatedResult} onOpenDetails={() => onOpenDetails?.(validatedResult)} />}
+    </>
+  );
+  const resultCard = validatedResult
+    ? <BacktestResultCard result={validatedResult} onOpenDetails={() => onOpenDetails?.(validatedResult)} />
+    : null;
+  const workingAnchored = workingAnchorId !== null && messages.some(message => message.id === workingAnchorId);
+  const lastAssistantIndex = messages.reduce((last, message, index) => message.sender === 'assistant' ? index : last, -1);
+  const resultAnchored = resultAnchorId !== null && messages.some(message => message.id === resultAnchorId);
+
+  return (
+    <section
+      aria-label="Research conversation"
+      className={(full ? 'h-full' : 'h-full border-l border-[var(--line)]') + ' flex min-h-0 flex-col bg-[#111113]'}
+      onKeyDown={event => { if (event.key === 'Escape' && onClose) onClose(); }}
+    >
+      <p role="status" aria-live="polite" className="sr-only">{statusMessage}</p>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={logRef}
+          role="log"
+          aria-label="Conversation"
+          aria-busy={busy || undefined}
+          onScroll={onLogScroll}
+          onWheel={onLogIntent}
+          onTouchMove={onLogIntent}
+          onKeyDown={event => {
+            if (/^(PageUp|PageDown|Home|End|ArrowUp|ArrowDown)$/.test(event.key)) onLogIntent();
+          }}
+          className="min-h-0 flex-1 overflow-y-auto px-4 py-6 [mask-image:linear-gradient(to_bottom,transparent,#000_8px)] sm:px-6"
+        >
+          <div className="mx-auto w-full max-w-[832px]">
+            {archivedMessages.length > 0 && (
+              <div className="st-meta mb-6 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-2)]">
+                <span>A previous conversation is saved in this browser.</span>
+                <button type="button" onClick={restorePreviousConversation} className="inline-flex min-h-11 items-center underline decoration-[var(--line-strong)] underline-offset-2 transition-colors hover:text-[var(--text-1)] sm:min-h-8">
+                  Restore previous conversation ({archivedMessages.length})
+                </button>
+              </div>
+            )}
+
+            {welcome && (
+              <div className="mx-auto max-w-[680px] pt-4 sm:pt-12">
+                <h1 className="max-w-[620px] text-3xl font-medium tracking-[-0.02em] text-[var(--text-1)] sm:text-4xl">Test a trading idea before you trust it.</h1>
+                <p className="st-prose mt-4 text-[var(--text-2)]">
+                  Describe a setup or upload a chart. Stragy screens the Nifty 50 on real daily data, shows every assumption, and runs a backtest only after you approve.
+                </p>
+                <div className="mt-7 grid gap-2 sm:grid-cols-3">
+                  {STARTERS.map(starter => (
+                    <button
+                      key={starter.label}
+                      type="button"
+                      onClick={() => { setPrompt(''); void submitText(starter.text); }}
+                      className="flex min-h-11 items-center rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3.5 py-2.5 text-left st-meta text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-12"
+                    >
+                      {starter.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="st-meta mt-6 text-[var(--text-3)]">
+                  Real NSE daily bars · assumptions shown before anything runs · no broker orders.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-6">
+              {messages.map((message, index) => (
+                <React.Fragment key={message.id}>
+                {message.sender === 'user' ? (
+                <article
+                  ref={index === messages.length - 1 ? lastMessageRef : undefined}
+                  className="flex justify-end"
+                >
+                  <div className="max-w-[min(560px,80%)] whitespace-pre-wrap break-words rounded-[16px] rounded-br-[6px] bg-[var(--surface-3)] px-3.5 py-2.5 text-[15px] leading-[22px] text-[var(--text-1)]">
+                    {message.text}
+                  </div>
+                </article>
+              ) : (
+                <article
+                  ref={index === messages.length - 1 ? lastMessageRef : undefined}
+                  className="w-full space-y-2"
+                >
+                  {(!messages[index - 1] || messages[index - 1].sender === 'user') && (
+                    <p className="st-meta text-[var(--text-3)]">Stragy</p>
+                  )}
+                  <div role={message.tone === 'error' ? 'alert' : undefined} className="flex gap-2">
+                    {message.tone === 'error' && (
+                      <span aria-hidden="true" className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--warn)]" />
+                    )}
+                    <div className="st-prose min-w-0 break-words text-[var(--text-1)]">
+                      <MessageText text={message.text} />
+                    </div>
+                  </div>
+                  {/* The card states the same provenance once (P1-9/Fix 3). */}
+                  {message.methodLabel && message.id !== cardMessageId && (
+                    <p title={message.methodTitle} className="st-meta text-[var(--text-3)]">{message.methodLabel}</p>
+                  )}
+                  {message.warnings && message.warnings.length > 0 && (
+                    <Disclosure summary={'Warnings (' + message.warnings.length + ')'}>
+                      <ul className="list-disc space-y-1 pl-4">{message.warnings.map((warning, warningIndex) => <li key={warningIndex}>{warning}</li>)}</ul>
+                    </Disclosure>
+                  )}
+                  {(() => {
+                    const sources = sourcesFor(message.text);
+                    return sources.length ? <Sources sources={sources} /> : null;
+                  })()}
+                  {(() => {
+                    // Retry belongs to the latest answer only (older ones keep Copy),
+                    // and an error reply's action is the card's own Retry.
+                    const retryText = index === lastAssistantIndex && message.tone !== 'error' ? promptForMessage(index) : '';
+                    return (
+                      <ActionRow
+                        actions={[
+                          {
+                            id: 'copy',
+                            label: copiedMessageId === message.id ? 'Copied' : 'Copy answer',
+                            icon: copiedMessageId === message.id
+                              ? <Check size={14} aria-hidden="true" />
+                              : <Copy size={14} aria-hidden="true" />,
+                            onClick: () => void copyMessage(message),
+                          },
+                          ...(retryText ? [{
+                            id: 'retry',
+                            label: 'Retry',
+                            icon: <RefreshCw size={14} aria-hidden="true" />,
+                            onClick: () => void submitText(retryText),
+                            disabled: busy,
+                          }] : []),
+                        ]}
+                      />
+                    );
+                  })()}
+                </article>
+                )}
+                {workingAnchorId === message.id && <div className="space-y-6">{workingCards}</div>}
+                {resultAnchorId === message.id && <div className="space-y-6">{resultCard}</div>}
+                </React.Fragment>
+              ))}
+
+              {showPending && !scanPending && <AssistantPending />}
+              {!workingAnchored && workingCards}
+              {!resultAnchored && resultCard}
+
               <div ref={endRef} />
             </div>
           </div>
         </div>
 
-        {!pinned && messages.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 px-4 sm:px-6">
-            <div className="mx-auto flex w-full max-w-[832px] justify-end">
-              <button
-                type="button"
-                data-testid="jump-to-latest"
-                onClick={() => scrollToLatest()}
-                className="pointer-events-auto st-meta inline-flex min-h-11 items-center rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[var(--text-2)] shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-colors hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
-              >
-                Jump to latest
-              </button>
+        {messages.length > 0 && (
+          <div className="h-[52px] shrink-0 sm:h-10">
+            <div className="mx-auto flex h-full w-full max-w-[832px] items-start justify-end px-4 sm:px-6">
+              {!pinned && (
+                <button
+                  type="button"
+                  data-testid="jump-to-latest"
+                  onClick={() => scrollToLatest()}
+                  className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[var(--text-2)] transition-colors hover:text-[var(--text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] sm:min-h-8"
+                >
+                  Jump to latest
+                </button>
+              )}
             </div>
           </div>
         )}
