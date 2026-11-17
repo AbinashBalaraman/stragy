@@ -2064,7 +2064,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                     </div>
                   </div>
                   {/* The card states the same provenance once (P1-9/Fix 3). */}
-                  {message.methodLabel && message.id !== cardMessageId && (
+                  {message.methodLabel && message.id !== cardMessageId && !pastCards.some(card => card.messageId === message.id) && (
                     <p title={message.methodTitle} className="st-meta text-[var(--text-3)]">{message.methodLabel}</p>
                   )}
                   {message.warnings && message.warnings.length > 0 && (
