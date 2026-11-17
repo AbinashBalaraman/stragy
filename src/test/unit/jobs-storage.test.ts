@@ -3,7 +3,7 @@ import { mkdir,mkdtemp,writeFile,readFile,rm } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateStrategy, canonicalStrategyJSON } from '../../shared/strategy/schema';
-import { JobManager,SCAN_HARD_CAP_MS,type ResearchPayload } from '../../server/jobs/manager';
+import { JobError,JobManager,SCAN_HARD_CAP_MS,type ResearchPayload } from '../../server/jobs/manager';
 import { ResearchRepository } from '../../server/storage/repository';
 import { simulate } from '../../server/backtest/engine';
 import { strategy,bars } from '../fixtures/research';
@@ -67,6 +67,17 @@ describe('bounded jobs',()=>{
     releaseScan();
     expect((await terminal(m,first.id)).status).toBe('succeeded');
     expect(runs).toBe(1);
+  });
+  it('J13 maps an internal membership failure to the plain verified-screen line',async()=>{
+    const m=new JobManager({executor:async payload=>{
+      if(payload.kind==='scan')throw new JobError('MEMBERSHIP_UNAVAILABLE','Verified current membership is available only for NIFTY_50; bundled index pools are illustrative');
+      return result();
+    }});pendingManagers.push(m);
+    const job=await terminal(m,m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_IT',mode:'real'}).id);
+    expect(job.status).toBe('failed');
+    expect(job.error?.code).toBe('MEMBERSHIP_UNAVAILABLE');
+    expect(job.error?.message).toBe('I can only screen the Nifty 50 with verified membership. Use the Market scanner for NIFTY IT.');
+    expect(JSON.stringify(job)).not.toMatch(/membership is available only|bundled index pools/i);
   });
   it('J09 cancelling a scan frees the lane for the next scan',async()=>{
     let blockFirst=true;

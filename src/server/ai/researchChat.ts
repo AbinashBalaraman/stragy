@@ -15,6 +15,7 @@ import { filterSymbolsByUniverse } from '../../shared/data/symbols';
 import { getLiveQuotes, type LiveQuotesResult } from '../data/liveQuotes';
 import { buildMarketContext, detectMarketSymbols, renderPerformanceAnswer } from './marketContext';
 import { formatPercent } from '../../shared/format';
+import { VERIFIED_SCREEN_UNIVERSE, verifiedScreenMessage } from '../../shared/contracts/scan-availability';
 
 /** A screen needs a user-stated condition, not just a stock question. */
 function hasExplicitCondition(text: string): boolean {
@@ -58,13 +59,19 @@ const UNSUPPORTED_UNIVERSE_CHOICES: { label: string; pattern: RegExp }[] = [
 ];
 
 /** The message wins over a previous screen context; an unknown request is refused, never substituted. */
-function resolveChatUniverse(message: string, fallback?: ChatUniverse): { id: ChatUniverse; label: string; fromMessage: boolean } | { unsupported: string } {
-  const supported = CHAT_UNIVERSE_CHOICES.find(choice => choice.pattern.test(message));
-  if (supported) return { id: supported.id, label: supported.label, fromMessage: true };
+function resolveChatUniverse(message: string): { id: ChatUniverse; label: string; fromMessage: boolean } | { unsupported: string } {
+  const named = CHAT_UNIVERSE_CHOICES.find(choice => choice.pattern.test(message));
+  if (named) {
+    // Only the Nifty 50 has verified current membership. Naming a sector or
+    // all-NSE pool must refuse here, not mint a card the scanner will reject.
+    if (named.id !== VERIFIED_SCREEN_UNIVERSE) return { unsupported: named.label };
+    return { id: named.id, label: named.label, fromMessage: true };
+  }
   const unsupported = UNSUPPORTED_UNIVERSE_CHOICES.find(choice => choice.pattern.test(message));
   if (unsupported) return { unsupported: unsupported.label };
-  const id = fallback ?? 'NIFTY_50';
-  return { id, label: CHAT_UNIVERSE_CHOICES.find(choice => choice.id === id)?.label ?? 'Nifty 50', fromMessage: false };
+  // A stale screenContext must not make the next plan promise another
+  // universe. Without a named universe the verified default is Nifty 50.
+  return { id: VERIFIED_SCREEN_UNIVERSE, label: 'Nifty 50', fromMessage: false };
 }
 
 function isPerformanceQuestion(text: string): boolean {
@@ -192,6 +199,7 @@ async function sectorAnswer(message: string, deps: AIServiceDeps): Promise<{ tex
 export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Promise<ResearchChatResponse> {
   const parsed=ResearchChatInputSchema.safeParse(raw);
   const unavailable=(message:string, rev:number|string|null=null, warnings:string[]=[]):ResearchChatResponse=>({schemaVersion:1,kind:'conversation',originatingRevision:rev,message,method:'unavailable',provider:{name:'none',model:null,aiGenerated:false},warnings});
+  const plainReply=(message:string, rev:number|string|null=null):ResearchChatResponse=>({schemaVersion:1,kind:'conversation',originatingRevision:rev,message,method:'rule_parser',provider:{name:'rule_parser',model:null,aiGenerated:false},warnings:[]});
   if(!parsed.success)return unavailable('Invalid research request: '+parsed.error.issues.map(i=>i.path.join('.')+': '+i.message).join('; '));
   const input=parsed.data, rev=input.originatingRevision??null, message=sanitizeText(input.message,4000).replace(/over[ -]+bought/gi,'overbought').replace(/over[ -]+sold/gi,'oversold');
   const cfg=deps.config??resolveActiveConfig(deps.env??process.env), d={...deps,config:cfg};
@@ -202,8 +210,8 @@ export async function researchChat(raw: unknown, deps: AIServiceDeps = {}): Prom
   const screenVerb=/\b(?:find|screen|scan|show\s+me|list|which)\b/i.test(message);
   const wantsScreen=!scanForbidden&&screenVerb&&hasExplicitCondition(message);
   if(wantsScreen){
-    const requested=resolveChatUniverse(message,input.screenContext?.universe);
-    if('unsupported' in requested)return unavailable(`I can't screen ${requested.unsupported} in chat. Supported chat universes are Nifty 50, Bank NIFTY, NIFTY IT, NIFTY Auto, NIFTY Pharma, NIFTY Metal, NIFTY FMCG and all NSE stocks. Use the Market scanner for ${requested.unsupported}. No scan was run.`,rev);
+    const requested=resolveChatUniverse(message);
+    if('unsupported' in requested)return plainReply(verifiedScreenMessage(requested.unsupported)+' No scan was run.',rev);
     const universe=requested.id,universeLabel=requested.label;
     const current=input.currentStrategy;
     if(!current)return unavailable('A valid workspace is required to hold unused risk and exit placeholders. No scan or backtest was run.',rev);

@@ -8,6 +8,7 @@
  * a reading when the provider or its output is unusable.
  */
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import type { IndicatorConfig, RuleNode, StrategyAST, SymbolMeta } from '../../shared/strategy/types';
 import { validateStrategy } from '../../shared/strategy/schema';
 import { ALL_SYMBOLS } from '../../shared/data/symbols';
@@ -31,6 +32,35 @@ const CHART_READ_FAILURE_MESSAGE = "I couldn't read this chart. The AI models di
 export const VISION_ATTEMPT_TIMEOUT_MS = 55_000;
 /** Keep the whole chart request inside the client's 180 s deadline, with margin. */
 export const VISION_TOTAL_BUDGET_MS = 170_000;
+/** The plan pass needs roughly 45–55 s; never let observations spend this. */
+export const VISION_PLAN_RESERVE_MS = 60_000;
+/** Observations may use at most this much of the total budget. */
+export const VISION_OBSERVATIONS_BUDGET_MS = VISION_TOTAL_BUDGET_MS - VISION_PLAN_RESERVE_MS;
+/** Keep enough of the observations budget for the last approved paid model. */
+export const VISION_PAID_OBSERVATION_RESERVE_MS = 55_000;
+
+/**
+ * Split the observations budget across the model chain. Free attempts share
+ * what is left after the paid fallback's reserve, so two slow free models can
+ * no longer eat the model that actually returns a reading. The sum never
+ * exceeds VISION_OBSERVATIONS_BUDGET_MS.
+ */
+export function observationAttemptTimeouts(
+  attempts: { approvedPaid: boolean }[],
+  budgetMs = VISION_OBSERVATIONS_BUDGET_MS,
+): number[] {
+  const paidIndex = attempts.map(attempt => attempt.approvedPaid).lastIndexOf(true);
+  const freeCount = attempts.length - (paidIndex >= 0 ? 1 : 0);
+  if (freeCount === 0) {
+    const share = Math.floor(budgetMs / Math.max(1, attempts.length));
+    return attempts.map(() => Math.min(VISION_ATTEMPT_TIMEOUT_MS, share));
+  }
+  const freePool = Math.max(0, budgetMs - (paidIndex >= 0 ? VISION_PAID_OBSERVATION_RESERVE_MS : 0));
+  const freeShare = freeCount > 0 ? Math.floor(freePool / freeCount) : 0;
+  return attempts.map((_, index) => index === paidIndex
+    ? Math.min(VISION_ATTEMPT_TIMEOUT_MS, VISION_PAID_OBSERVATION_RESERVE_MS, budgetMs)
+    : Math.min(VISION_ATTEMPT_TIMEOUT_MS, freeShare));
+}
 
 /** Split what is left of the chart budget across the models still to try. */
 export function visionAttemptTimeout(remainingMs: number, attempts: number, cap = VISION_ATTEMPT_TIMEOUT_MS): number {
@@ -115,12 +145,16 @@ async function callChartModel(
   pass: 'observations' | 'plan' | 'repair',
   attemptNumber: number,
   allowAllRemaining = false,
+  timeoutOverride?: number,
+  traceId = '',
 ): Promise<ProviderCallResult> {
   const remaining = Math.max(0, deadlineAt - Date.now());
   if (remaining <= 0) return { ok: false, code: 'timeout', message: 'Chart analysis budget exhausted.' };
-  const timeoutMs = allowAllRemaining
-    ? Math.min(VISION_ATTEMPT_TIMEOUT_MS, remaining)
-    : visionAttemptTimeout(remaining, attemptsLeft);
+  const timeoutMs = timeoutOverride !== undefined
+    ? Math.min(remaining, Math.max(0, Math.floor(timeoutOverride)))
+    : allowAllRemaining
+      ? Math.min(VISION_ATTEMPT_TIMEOUT_MS, remaining)
+      : visionAttemptTimeout(remaining, attemptsLeft);
   if (timeoutMs <= 0) return { ok: false, code: 'timeout', message: 'Chart analysis budget exhausted.' };
   const cfg = withVisionTimeout(attempt.config, timeoutMs);
   if (attempt.approvedPaid && cfg.costPolicy === 'free-only') {
@@ -130,6 +164,7 @@ async function callChartModel(
   const result = await callProvider(cfg, request, deps);
   console.info(JSON.stringify({
     event: 'chart_model_attempt', pass, attempt: attemptNumber,
+    trace: traceId,
     provider: attempt.provider, model: attempt.model, fallback: attempt.fallback,
     timeoutMs, elapsedMs: Date.now() - started,
     ok: result.ok, code: result.ok ? undefined : result.code,
@@ -746,6 +781,40 @@ function normalizeObservations(observations: ChartObservations): ChartObservatio
   return normalized;
 }
 
+/** A schema-valid observation is not always informative; require real evidence. */
+function observationsAreSane(observations: ChartObservations): boolean {
+  const header = observations.header;
+  const evidence = (header?.symbol ? 1 : 0)
+    + (header?.lastClose !== undefined && header.lastClose !== null ? 1 : 0)
+    + (observations.timeframe ? 1 : 0)
+    + (observations.indicators.length ? 1 : 0)
+    + (observations.drawnLines.length ? 1 : 0)
+    + (observations.events.length ? 1 : 0);
+  const direction = observations.priceTrend !== 'unknown'
+    || observations.nearRange !== 'unknown'
+    || observations.lastCandle !== 'unknown';
+  return evidence >= 2 && direction;
+}
+
+/** Plain-language reading for the budget fallback; never raw model text. */
+export function chartObservationSummary(observations: ChartObservations): string {
+  const parts: string[] = [];
+  const header = observations.header;
+  if (header?.symbol) parts.push(header.symbol);
+  if (header?.lastClose !== undefined && header.lastClose !== null) parts.push('last ' + header.lastClose);
+  if (observations.timeframe) parts.push(observations.timeframe);
+  parts.push(observations.priceTrend + ' trend');
+  parts.push('near the ' + observations.nearRange);
+  parts.push(observations.lastCandle + ' last candle');
+  for (const indicator of observations.indicators.slice(0, 2)) {
+    const params = indicator.params.length ? '(' + indicator.params.join(',') + ')' : '';
+    const values = indicator.legendValues.length ? ' ' + indicator.legendValues.join('/') : '';
+    parts.push(indicator.name + params + values);
+  }
+  if (observations.events.length) parts.push(observations.events.slice(0, 2).join('; '));
+  return parts.filter(Boolean).join(' · ').slice(0, 400);
+}
+
 const safeParseJson = (text: string): { ok: true; value: unknown } | { ok: false; message: string } => parseModelJson(text);
 
 /**
@@ -782,7 +851,11 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
   if (!input.currentStrategy || !currentValidation?.success || !currentValidation.data) return unavailable('A valid executable workspace strategy is required to preserve exits, risk, sizing, execution and costs. No chart reading was fabricated.');
   const current = currentValidation.data;
   const providerDeps = { fetch: deps.fetch, budget: deps.budget };
-  const budgetDeadlineAt = Date.now() + VISION_TOTAL_BUDGET_MS;
+  const startedAt = Date.now();
+  const budgetDeadlineAt = startedAt + VISION_TOTAL_BUDGET_MS;
+  // Observations must stop early enough to leave the plan reserve untouched.
+  const observationsDeadlineAt = budgetDeadlineAt - VISION_PLAN_RESERVE_MS;
+  const traceId = createHash('sha256').update(hint).digest('hex').slice(0, 8);
   const answerBaseCfg = withVisionTimeout(cfg);
   const pass2System = [
     PASS2_SYSTEM,
@@ -806,10 +879,11 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     reasoningEffort: 'low',
   };
   const pass1Attempts = chartModelAttempts(cfg, true);
+  const pass1Timeouts = observationAttemptTimeouts(pass1Attempts);
   let pass1Answer: { provider: string; model: string } | null = null;
   let observations: ChartObservations | null = null;
   for (let index = 0; index < pass1Attempts.length; index++) {
-    const result = await callChartModel(pass1Attempts[index], pass1Request, providerDeps, budgetDeadlineAt, pass1Attempts.length - index, 'observations', index + 1);
+    const result = await callChartModel(pass1Attempts[index], pass1Request, providerDeps, observationsDeadlineAt, pass1Attempts.length - index, 'observations', index + 1, false, pass1Timeouts[index], traceId);
     if (!result.ok) continue;
     const parsed = safeParseJson(result.text);
     if (!parsed.ok) continue;
@@ -829,6 +903,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
   const pass2Attempts = orderWithAnswer(chartModelAttempts(cfg, false), pass1Answer);
   let lastErrors: string[] = [];
   let previousRaw = '';
+  let planTimedOut = false;
   let accepted: { plan: ChartPlan; strategy: StrategyAST; assumptions: string[] } | null = null;
   let answering: { provider: string; model: string } | null = null;
   let repairBaseCfg = answerBaseCfg;
@@ -848,9 +923,9 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
       const result = await callChartModel(
         pass2Attempts[index], request, providerDeps, budgetDeadlineAt,
         pass2Attempts.length - index, 'plan', index + 1,
-        planAttempt === 0 && index === 0,
+        planAttempt === 0 && index === 0, undefined, traceId,
       );
-      if (!result.ok) { lastErrors = [result.message]; continue; }
+      if (!result.ok) { if (result.code === 'timeout') planTimedOut = true; lastErrors = [result.message]; continue; }
       previousRaw = result.text;
       const parsed = safeParseJson(result.text);
       if (!parsed.ok) { lastErrors = [parsed.message]; continue; }
@@ -870,6 +945,19 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     }
   }
   if (!accepted) {
+    // The observations are already a useful reading. If the plan pass ran out
+    // of its reserve, show the reading instead of discarding everything.
+    if (planTimedOut && observationsAreSane(observations)) {
+      return parseResearchChatResponse({
+        schemaVersion: 1,
+        kind: 'conversation',
+        originatingRevision: null,
+        message: `I read the chart but couldn't turn it into rules. Try again.\nChart reading: ${chartObservationSummary(observations)}`,
+        method: 'external_ai',
+        provider: { name: pass1Answer.provider, model: pass1Answer.model, aiGenerated: true },
+        warnings: ['The chart reading is shown, but no screen rules were produced.'],
+      });
+    }
     return unavailable(CHART_READ_FAILURE_MESSAGE);
   }
 
@@ -905,7 +993,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
           maxRequestBodyBytes: AI_LIMITS.maxRequestBodyBytes,
           maxOutputTokens: visionOutputTokens,
           reasoningEffort: 'low',
-        }, providerDeps, budgetDeadlineAt, 1, 'repair', 1, true);
+        }, providerDeps, budgetDeadlineAt, 1, 'repair', 1, true, undefined, traceId);
         if (repair.ok) {
           const parsedRepair = safeParseJson(repair.text);
           const repairedPlan = parsedRepair.ok ? ChartPlanSchema.safeParse(parsedRepair.value) : null;

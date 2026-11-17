@@ -223,36 +223,55 @@ it('surfaces key-free field errors when an AI draft fails schema validation',asy
  expect(JSON.stringify(out)).not.toContain('fixture-warning-key');
 });
 
-it('uses the universe the user named and says it in the message and title',async()=>{
- const cases:[string,string,string,string][]=[
-  ['Screen NIFTY IT for close above the 20-day high','NIFTY_IT','NIFTY IT','20-day high breakout'],
-  ['Screen NIFTY Metal for RSI below 40','NIFTY_METAL','NIFTY Metal','RSI below 40'],
-  ['Screen all NSE stocks for RSI above 70','NSE','all NSE stocks','RSI above 70'],
-  ['Screen Bank NIFTY for RSI above 60','BANK_NIFTY','Bank NIFTY','RSI above 60'],
-  ['Screen NIFTY Auto for RSI above 55','NIFTY_AUTO','NIFTY Auto','RSI above 55'],
-  ['Screen NIFTY Pharma for RSI below 45','NIFTY_PHARMA','NIFTY Pharma','RSI below 45'],
-  ['Screen NIFTY FMCG for RSI above 65','NIFTY_FMCG','NIFTY FMCG','RSI above 65'],
-  ['Screen Nifty 50 for RSI above 60','NIFTY_50','Nifty 50','RSI above 60'],
+it('offers only the verified Nifty 50 and refuses sector and all-NSE screens plainly',async()=>{
+ const cases:[string,string][]=[
+  ['Screen NIFTY IT for close above the 20-day high','NIFTY IT'],
+  ['Screen NIFTY Metal for RSI below 40','NIFTY Metal'],
+  ['Screen all NSE stocks for RSI above 70','all NSE stocks'],
+  ['Screen Bank NIFTY for RSI above 60','Bank NIFTY'],
+  ['Screen NIFTY Auto for RSI above 55','NIFTY Auto'],
+  ['Screen NIFTY Pharma for RSI below 45','NIFTY Pharma'],
+  ['Screen NIFTY FMCG for RSI above 65','NIFTY FMCG'],
  ];
- for(const [message,universe,label,title] of cases){
+ for(const [message,label] of cases){
   const fetch=vi.fn();
   const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'},fetch});
-  expect(out.kind,message).toBe('screen');
-  if(out.kind!=='screen')throw Error('Screen absent: '+message);
-  expect(out.universe,message).toBe(universe);
-  expect(out.message,message).toBe(`Scanning ${label} for ${title}. Nothing is changed or run.`);
-  expect(out.strategy.name,message).toBe(`${title} · ${label}`);
-  expect(out.assumptions.join(' '),message).toContain(`Universe: ${label}`);
+  expect(out.kind,message).toBe('conversation');
+  expect(out.method,message).toBe('rule_parser');
+  expect(out.message,message).toBe(`I can only screen the Nifty 50 with verified membership. Use the Market scanner for ${label}. No scan was run.`);
+  expect(out.message,message).not.toContain('Scanning');
   expect(fetch,message).not.toHaveBeenCalled();
  }
 });
 
-it('refuses an unsupported universe plainly instead of substituting Nifty 50',async()=>{
- for(const message of ['Screen BSE Sensex for RSI above 60','Screen Nifty Midcap for RSI below 40']){
+it('still prepares a Nifty 50 screen when that universe is named',async()=>{
+ const out=await researchChat({message:'Screen Nifty 50 for RSI above 60',currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
+ expect(out.kind).toBe('screen');
+ if(out.kind!=='screen')throw Error('Screen absent');
+ expect(out.universe).toBe('NIFTY_50');
+ expect(out.message).toBe('Scanning Nifty 50 for RSI above 60. Nothing is changed or run.');
+ expect(out.strategy.name).toBe('RSI above 60 · Nifty 50');
+ expect(out.assumptions.join(' ')).toContain('Universe: Nifty 50');
+});
+
+it('does not carry an unverified universe from a previous screen context',async()=>{
+ const out=await researchChat({message:'Screen RSI above 60',currentStrategy:validStrategy(),screenContext:{strategy:validStrategy(),universe:'NIFTY_IT'}},{env:{AI_PROVIDER:'none'}});
+ expect(out.kind).toBe('screen');
+ if(out.kind!=='screen')throw Error('Screen absent');
+ expect(out.universe).toBe('NIFTY_50');
+ expect(out.message).toContain('Scanning Nifty 50');
+});
+
+it('refuses an unsupported universe with the same verified-membership line',async()=>{
+ const cases:[string,string][]=[
+  ['Screen BSE Sensex for RSI above 60','BSE Sensex'],
+  ['Screen Nifty Midcap for RSI below 40','that NIFTY index'],
+ ];
+ for(const [message,label] of cases){
   const out=await researchChat({message,currentStrategy:validStrategy()},{env:{AI_PROVIDER:'none'}});
   expect(out.kind,message).toBe('conversation');
-  expect(out.message,message).toMatch(/I can't screen .* in chat/);
-  expect(out.message,message).toContain('No scan was run');
+  expect(out.method,message).toBe('rule_parser');
+  expect(out.message,message).toBe(`I can only screen the Nifty 50 with verified membership. Use the Market scanner for ${label}. No scan was run.`);
   expect(out.message,message).not.toContain('Scanning Nifty 50');
  }
 });

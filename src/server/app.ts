@@ -17,6 +17,7 @@ import { PATTERN_LIBRARY } from './ai/patterns';
 import { createProposal, getAIStatus, handleAIChat, parseStrategyPrompt, applyStrategyEdit, optimizeStrategyForProfitability } from './ai/copilot';
 import { ResearchRepository, StorageError } from './storage/repository';
 import { JobError, SCAN_HARD_CAP_MS, type ResearchPayload } from './jobs/manager';
+import { plainScanFailure } from '../shared/contracts/scan-availability';
 import { buildMarketSnapshot, type MarketSnapshot } from './backtest/marketSnapshot';
 import { scanUniverseAsync } from './backtest/scanner';
 import { parseBacktestResult } from '../shared/contracts/research';
@@ -282,7 +283,8 @@ export async function createApp(deps: AppDependencies = {}) {
     const status = err instanceof ApiFailure || err instanceof JobError || err instanceof StorageError ? err.status : err instanceof UnknownSymbolError || err instanceof SimulationInputError ? 422 : err instanceof MarketDataError ? (/^(UNKNOWN|INVALID|OUT_OF_COVERAGE)/.test(err.code) ? 422 : 503) : bodyError.type === 'entity.too.large' ? 413 : bodyError.type === 'entity.parse.failed' ? 400 : 500;
     const code = err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? err.code : status === 413 ? 'BODY_TOO_LARGE' : status === 400 ? 'MALFORMED_JSON' : 'INTERNAL_ERROR';
     const rateLimited = err instanceof MarketDataError && err.code === 'PROVIDER_RATE_LIMITED';
-    const message = rateLimited ? ANGEL_RATE_LIMIT_MESSAGE : err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.';
+    const membershipMessage = plainScanFailure(code, err instanceof Error ? err.message : undefined, (req.body as { universe?: string } | undefined)?.universe);
+    const message = membershipMessage ?? (rateLimited ? ANGEL_RATE_LIMIT_MESSAGE : err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.');
     res.status(status).json({ success: false, error: { code, message, requestId: res.locals.requestId, retryable: [429, 503, 504].includes(status), ...(err instanceof ApiFailure && err.details ? { fieldErrors: err.details } : {}) } });
   });
   app.use((req, res, next) => { if (/\.(?:cjs|map)$|(?:^|\/)\.env|(?:^|\/)server(?:\/|\.)/i.test(req.path)) return res.status(404).end(); next(); });

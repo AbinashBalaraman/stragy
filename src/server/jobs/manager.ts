@@ -5,6 +5,7 @@ import type { BacktestResponse, OHLCVBar, StrategyAST } from '../../shared/strat
 import type { BacktestOptions } from '../backtest/engine';
 import type { UniverseScanResponse } from '../backtest/scanner';
 import type { MarketSnapshot } from '../backtest/marketSnapshot';
+import { plainScanFailure } from '../../shared/contracts/scan-availability';
 export interface BacktestPayload { kind?: 'backtest'; strategy: StrategyAST; bars: OHLCVBar[]; provenance?: unknown; options?: BacktestOptions; }
 export interface ScanPayload { kind: 'scan'; strategy: StrategyAST; universe: string; asOf?: string; mode: 'demo' | 'real'; limit?: number; offset?: number; }
 export interface MarketPayload { kind: 'market'; universe: string; asOf?: string; mode: 'demo' | 'real'; }
@@ -86,6 +87,12 @@ export class JobManager {
   private finish(record: JobRecord, status: 'succeeded' | 'failed' | 'cancelled', result?: ResearchResult, error?: ResearchJob['error']) {
     if (!['queued', 'running'].includes(record.job.status)) return;
     if (record.timer) clearTimeout(record.timer);
+    // Membership and other scan-start rejections must reach the chat as the
+    // same plain line the plan promised, never as internal provider text.
+    if (error && (record.job.kind === 'scan' || record.job.kind === 'market')) {
+      const plain = plainScanFailure(error.code, error.message, 'universe' in record.payload ? record.payload.universe : undefined);
+      if (plain) error = { ...error, message: plain };
+    }
     Object.assign(record.job, { status, stage: status, finishedAt: new Date().toISOString(), ...(result ? { result: clone(result) } : {}), ...(error ? { error } : {}) });
     if (record.job.kind === 'market' && status === 'succeeded' && result) {
       this.snapshotCache.set(record.hash, { at: Date.now(), job: clone(record.job) });

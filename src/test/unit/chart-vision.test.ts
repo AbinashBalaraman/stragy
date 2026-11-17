@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, VISION_TOTAL_BUDGET_MS, analyzeChart, legendBand, parseChartImageDataUrl, visionAttemptTimeout, withVisionTimeout,
+  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, VISION_OBSERVATIONS_BUDGET_MS, VISION_PAID_OBSERVATION_RESERVE_MS, VISION_PLAN_RESERVE_MS, VISION_TOTAL_BUDGET_MS, analyzeChart, chartObservationSummary, legendBand, observationAttemptTimeouts, parseChartImageDataUrl, visionAttemptTimeout, withVisionTimeout,
 } from '../../server/ai/chartVision';
 import { callProvider, createRequestBudget, resolveAIConfig, resolveVisionConfig } from '../../server/ai/provider';
 import { getAIStatus } from '../../server/ai/copilot';
@@ -127,6 +127,51 @@ describe('vision time budget', () => {
     expect(visionAttemptTimeout(30_000, 3)).toBe(10_000);
     expect(visionAttemptTimeout(10_000, 1)).toBe(10_000);
     expect(visionAttemptTimeout(0, 3)).toBe(0);
+  });
+
+  it('reserves the plan pass and the paid observation fallback', () => {
+    expect(VISION_OBSERVATIONS_BUDGET_MS + VISION_PLAN_RESERVE_MS).toBe(VISION_TOTAL_BUDGET_MS);
+    expect(VISION_PLAN_RESERVE_MS).toBeGreaterThanOrEqual(VISION_ATTEMPT_TIMEOUT_MS + 5_000);
+    // Two free models can no longer eat the approved paid model or the plan.
+    const chain = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: true }]);
+    expect(chain).toEqual([27_500, 27_500, VISION_PAID_OBSERVATION_RESERVE_MS]);
+    expect(chain.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
+    const freeOnly = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: false }]);
+    expect(freeOnly.every(ms => ms <= VISION_ATTEMPT_TIMEOUT_MS)).toBe(true);
+    expect(freeOnly.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
+    expect(observationAttemptTimeouts([{ approvedPaid: true }])[0]).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+  });
+
+  it('gives the plan pass the reserve after observations succeed', async () => {
+    const attempts: { pass: string; timeoutMs: number }[] = [];
+    const spy = vi.spyOn(console, 'info').mockImplementation(line => {
+      try {
+        const event = JSON.parse(String(line));
+        if (event.event === 'chart_model_attempt') attempts.push({ pass: event.pass, timeoutMs: event.timeoutMs });
+      } catch { /* unrelated log line */ }
+    });
+    try {
+      const env = { ...visionEnv, AI_MODEL: 'gpt-primary', AI_FALLBACK_MODELS: 'openai:gpt-fallback', AI_COST_POLICY: 'operator-approved' };
+      const f = recordingFetch((_url, init) => {
+        const body = JSON.parse(init.body);
+        const content = Array.isArray(body.messages[1].content) ? observations : plan;
+        return fakeResponse({ body: openAIBody(JSON.stringify(content)) });
+      });
+      const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env, fetch: f, budget: createRequestBudget() });
+      expect(result.kind).toBe('screen');
+    } finally {
+      spy.mockRestore();
+    }
+    const planAttempt = attempts.find(attempt => attempt.pass === 'plan');
+    expect(planAttempt?.timeoutMs).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+    expect(planAttempt!.timeoutMs).toBeGreaterThanOrEqual(VISION_PLAN_RESERVE_MS - 5_000);
+    expect(attempts.filter(attempt => attempt.pass === 'observations').every(attempt => attempt.timeoutMs <= VISION_OBSERVATIONS_BUDGET_MS)).toBe(true);
+  });
+
+  it('renders sane observations plainly when the plan budget cannot fit', () => {
+    const view = observations as unknown as Parameters<typeof chartObservationSummary>[0];
+    expect(chartObservationSummary(view)).toContain('downtrend trend');
+    expect(chartObservationSummary(view)).toContain('RSI(14) 45.76/31.9');
   });
 });
 
