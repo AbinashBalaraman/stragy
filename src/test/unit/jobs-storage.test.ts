@@ -17,6 +17,53 @@ describe('bounded jobs',()=>{
   it('J02 enforces queue capacity and cancels queued work before execution',async()=>{let executions=0;const m=new JobManager({maxQueue:1,executor:async(_p,{signal})=>{executions++;return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}));}});pendingManagers.push(m);const a=m.enqueue(input),b=m.enqueue(input);expect(()=>m.enqueue(input)).toThrow('queue is full');expect(m.cancel(b.id)?.status).toBe('cancelled');m.cancel(a.id);await new Promise(r=>setTimeout(r,0));expect(executions).toBe(0);});
   it('J03 deadline/failure is explicit and shutdown refuses new work',async()=>{const m=new JobManager({maxMs:20,executor:async()=>new Promise(()=>{})});pendingManagers.push(m);const j=m.enqueue(input);expect((await terminal(m,j.id)).error?.code).toBe('JOB_TIMEOUT');await m.shutdown();expect(()=>m.enqueue(input)).toThrow('shutdown');});
   it('J04 executor crashes do not poison subsequent jobs',async()=>{let n=0;const m=new JobManager({executor:async()=>{if(n++===0)throw Error('private failure');return result();}});pendingManagers.push(m);const a=m.enqueue(input),b=m.enqueue(input);expect((await terminal(m,a.id)).error).toEqual({code:'WORKER_FAILED',message:'The computation worker did not complete.'});expect((await terminal(m,b.id)).status).toBe('succeeded');});
+  it('J05 a backtest starts in its own lane while a long scan is running',async()=>{
+    let releaseScan!:()=>void;
+    const scanBlocked=new Promise<void>(resolve=>{releaseScan=resolve;});
+    const m=new JobManager({maxMs:1000,executor:async payload=>{if(payload.kind==='scan'){await scanBlocked;}return result();}});
+    pendingManagers.push(m);
+    const scan=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    const backtest=m.enqueue(input);
+    await new Promise(resolve=>setTimeout(resolve,5));
+    expect(m.get(scan.id)?.status).toBe('running');
+    expect(m.get(backtest.id)?.status).toMatch(/running|succeeded/);
+    expect(m.get(backtest.id)?.startedAt).toBeTruthy();
+    expect((await terminal(m,backtest.id)).status).toBe('succeeded');
+    expect(m.get(scan.id)?.status).toBe('running');
+    releaseScan();
+    expect((await terminal(m,scan.id)).status).toBe('succeeded');
+  });
+  it('J06 a second scan waits behind the first with a visible queue position',async()=>{
+    let releaseScan!:()=>void;
+    const firstScan=new Promise<void>(resolve=>{releaseScan=resolve;});
+    let scanCalls=0;
+    const m=new JobManager({maxMs:1000,executor:async payload=>{if(payload.kind==='scan'&&scanCalls++===0)await firstScan;return result();}});
+    pendingManagers.push(m);
+    const first=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    const second=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    await new Promise(resolve=>setTimeout(resolve,5));
+    expect(m.get(first.id)?.status).toBe('running');
+    expect(m.get(second.id)).toMatchObject({status:'queued',stage:'waiting',queuedBehind:1});
+    expect(m.get(second.id)?.startedAt).toBeUndefined();
+    releaseScan();
+    expect((await terminal(m,first.id)).status).toBe('succeeded');
+    const started=await terminal(m,second.id);
+    expect(started.status).toBe('succeeded');
+    expect(started.queuedBehind).toBeUndefined();
+    expect(started.startedAt).toBeTruthy();
+  });
+  it('J07 the execution deadline starts when the run starts, not while queued',async()=>{
+    let releaseScan!:()=>void;
+    const firstScan=new Promise<void>(resolve=>{releaseScan=resolve;});
+    let scanCalls=0;
+    const m=new JobManager({maxMs:25,executor:async payload=>{if(payload.kind==='scan'&&scanCalls++===0)await firstScan;return result();}});
+    pendingManagers.push(m);
+    m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    const queued=m.enqueue({kind:'scan',strategy:strategy(),universe:'NIFTY_50',mode:'demo'});
+    await new Promise(resolve=>setTimeout(resolve,60));
+    releaseScan();
+    expect((await terminal(m,queued.id)).status).toBe('succeeded');
+  });
 });
 describe('immutable atomic storage',()=>{
   it('D06 rejects malformed run fields before committing',async()=>{const repo=await ResearchRepository.open(),bad=JSON.parse(JSON.stringify(result()));bad.equityCurve[0].equity='invalid';await expect(repo.putRun(bad)).rejects.toThrow('storage contract');expect(repo.getRun(bad.backtestId)).toBeUndefined();});

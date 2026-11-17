@@ -35,7 +35,7 @@ const IdSchema = z.coerce.number().int().positive();
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 const BacktestRequest = z.object({ strategy: z.unknown(), initialCapital: z.number().finite().min(100).max(1e9).optional(), start: DateSchema, end: DateSchema, asOf: DateSchema, seed: z.number().int().min(0).max(0xffffffff).optional(), robustness: z.boolean().optional() });
 const ScanRequest = z.object({ universe: z.string().max(40).default('NIFTY_50'), strategyJson: z.unknown().optional(), strategy: z.unknown().optional(), limit: z.number().int().min(1).max(100).default(35), date: DateSchema, asOf: DateSchema });
-export interface JobView { id: string; status: string; kind?: string; result?: unknown; error?: unknown; }
+export interface JobView { id: string; status: string; kind?: string; stage?: string; queuedBehind?: number; createdAt?: string; startedAt?: string; finishedAt?: string; result?: unknown; error?: unknown; }
 export interface AppJobService { enqueue: (payload: ResearchPayload, key?: string) => JobView; get: (id: string) => JobView | undefined; cancel: (id: string) => unknown; shutdown?: () => Promise<void>; }
 export interface AppDependencies { config?: RuntimeConfig; enableVite?: boolean; jobs?: AppJobService; repository?: ResearchRepository; }
 function parse<T>(schema: z.ZodType<T>, input: unknown): T { const r = schema.safeParse(input); if (!r.success) throw new ApiFailure(422, 'VALIDATION_FAILED', 'Input validation failed', r.error.issues.map(i => ({ path: i.path.join('.'), message: i.message }))); return r.data; }
