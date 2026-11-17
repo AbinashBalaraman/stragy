@@ -5,6 +5,7 @@ import { formatDate, formatINR } from '../../shared/format';
 import { describeUnmatchedRule, formatIndicatorValue, getIndicatorLabel, humanObservationFreshness, humanSourceLabel } from '../../shared/strategy/renderPlainLanguage';
 import { CardShell, type CardState } from '../common/CardShell';
 import { displayCardTitle } from './displayTitle';
+import { universeLabel } from './universeLabel';
 import { DataTable, type DataColumn } from '../common/DataTable';
 import { Disclosure } from '../common/Disclosure';
 import { summarizeProviderFailures } from './researchFollowUp';
@@ -28,10 +29,6 @@ interface Props {
 
 type ScanMatch = ScanResult['matches'][number];
 type IndicatorEntry = { id: string; label: string; value: number };
-
-const universeLabel = (universe: string) => universe === 'NIFTY_50'
-  ? 'Nifty 50'
-  : universe.replace(/_/g, ' ').toLowerCase().replace(/^./, character => character.toUpperCase());
 
 const methodShort = (plan: ResearchScreenPlan) => plan.provider.aiGenerated
   ? 'AI-assisted plan'
