@@ -15,10 +15,9 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Not observations or a live feed. Assumes 7-day maturity, 6.5% rate, fixed base IV and modeled OI/volume; expiry and IV rank are fictional.</p>
-      {isLoading && <p role="status">Loading demo/model…</p>}
+      <p className="text-xs text-[var(--text-3)]">Sample model data, not observed derivatives or a live feed. Latest session only.</p>
+      {isLoading && <p role="status">Loading sample model…</p>}
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-      {data && <p className="text-xs text-neutral-400">{data.provenance.source} · Model as-of {data.provenance.asOf}. {data.provenance.assumptions.join('; ')}</p>}
       {/* Selector & Key Metrics Header */}
       <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -28,10 +27,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Demo Option Chain & Black-Scholes Greeks</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono">
-                  Fictional demo model
-                </span>
+                <span>Option chain & Greeks</span>
               </h3>
               <p className="text-xs text-neutral-400">
                 Modeled Delta (Δ), Gamma (Γ), Theta (Θ), Vega (ν), IV Skews, Put-Call Ratio (PCR), and Max Pain Strike
@@ -69,42 +65,42 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 border-t border-[rgba(236,236,237,0.08)]">
             <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Demo Underlying Price</span>
-              <div className="text-base font-extrabold text-white font-mono mt-0.5">
+              <span className="text-[10px] text-neutral-400 font-semibold">Underlying price</span>
+              <div className="text-base font-extrabold text-white st-tnum mt-0.5">
                 ₹{data.spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">ATM Strike</span>
-              <div className="text-base font-extrabold text-cyan-400 font-mono mt-0.5">
+              <span className="text-[10px] text-neutral-400 font-semibold">ATM Strike</span>
+              <div className="text-base font-extrabold text-cyan-400 st-tnum mt-0.5">
                 {data.atmStrike}
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">PCR (Put-Call Ratio)</span>
-              <div className={`text-base font-extrabold font-mono mt-0.5 ${data.pcr >= 1.0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className="text-[10px] text-neutral-400 font-semibold">PCR (Put-Call Ratio)</span>
+              <div className={`text-base font-extrabold st-tnum mt-0.5 ${data.pcr >= 1.0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {data.pcr} <span className="text-[10px] font-normal text-neutral-400">({data.pcr >= 1 ? 'Bullish Bias' : 'Bearish / Neutral'})</span>
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Max Pain Strike</span>
-              <div className="text-base font-extrabold text-amber-400 font-mono mt-0.5">
+              <span className="text-[10px] text-neutral-400 font-semibold">Max Pain Strike</span>
+              <div className="text-base font-extrabold text-amber-400 st-tnum mt-0.5">
                 {data.maxPainStrike}
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">ATM Implied Vol (IV)</span>
-              <div className="text-base font-extrabold text-purple-400 font-mono mt-0.5">
+              <span className="text-[10px] text-neutral-400 font-semibold">ATM Implied Vol (IV)</span>
+              <div className="text-base font-extrabold text-purple-400 st-tnum mt-0.5">
                 {data.atmIV}%
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Fictional Expiry</span>
+              <span className="text-[10px] text-neutral-400 font-semibold">Model expiry</span>
               <div className="text-xs font-bold text-neutral-200 mt-1">
                 {data.expiry}
               </div>
@@ -119,13 +115,13 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
           <div className="p-3.5 border-b border-[rgba(236,236,237,0.08)] flex flex-wrap items-center justify-between gap-2 bg-[#151517]">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wider">CALLS (CE)</span>
+              <span className="text-xs font-bold text-white">Calls (CE)</span>
             </div>
-            <div className="text-xs font-mono font-bold text-amber-400">
+            <div className="text-xs st-tnum font-bold text-amber-400">
               STRIKE PRICE LADDER
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-white uppercase tracking-wider">PUTS (PE)</span>
+              <span className="text-xs font-bold text-white">Puts (PE)</span>
               <span className="w-2.5 h-2.5 rounded-full bg-purple-400" />
             </div>
           </div>
@@ -154,7 +150,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
                   <th className="py-2.5 px-2 text-left">Put OI</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1e1e21]/60 font-mono">
+              <tbody className="divide-y divide-[#1e1e21]/60 st-tnum">
                 {data.strikes.map(s => {
                   const isAtm = s.isAtm;
                   const isCallItm = s.strikePrice < data.spotPrice;
@@ -183,7 +179,7 @@ export const OptionChainScanner: React.FC<OptionChainScannerProps> = () => {
 
                       {/* STRIKE */}
                       <td className={`py-2 px-3 text-center font-extrabold ${isAtm ? 'bg-amber-500 text-[#101012]' : 'bg-[#171719] text-white'}`}>
-                        {s.strikePrice} {isAtm && <span className="text-[9px] block font-mono">ATM</span>}
+                        {s.strikePrice} {isAtm && <span className="text-[9px] block st-tnum">ATM</span>}
                       </td>
 
                       {/* PUT DATA */}

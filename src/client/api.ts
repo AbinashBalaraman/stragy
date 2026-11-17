@@ -16,12 +16,18 @@ const deadlineMessage = (kind: 'backtest' | 'scan' | 'market') => kind === 'back
   : kind === 'scan'
     ? 'The scan took too long and was stopped. No zero-match conclusion was made.'
     : 'The market data request took too long and was stopped. Try again.';
+const jobLostMessage = (kind: 'backtest' | 'scan' | 'market') => kind === 'backtest'
+  ? 'The server restarted and the backtest was lost. Try again.'
+  : kind === 'scan'
+    ? 'The server restarted and the scan was lost. Try again.'
+    : 'The server restarted and the market load was lost. Try again.';
+const POLL_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
 export interface RunRequestOptions { initialCapital?: number; start?: string; end?: string; asOf?: string; seed?: number; robustness?: boolean; }
 export class ApiError extends Error { constructor(message: string, public code = 'API_FAILED', public status = 0) { super(message); } }
 export async function readJson(response: Response): Promise<Record<string, unknown>> {
   let raw: unknown;
-  try { raw = await response.json(); } catch { throw new ApiError('The server did not return JSON.', 'INVALID_RESPONSE', response.status); }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ApiError('Malformed API response.', 'INVALID_RESPONSE', response.status);
+  try { raw = await response.json(); } catch { throw new ApiError('The server is temporarily unavailable. Try again.', 'SERVER_UNAVAILABLE', response.status); }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ApiError('The server returned an unexpected response. Try again.', 'INVALID_RESPONSE', response.status);
   const data = raw as Record<string, unknown>;
   if (!response.ok) {
     const error = data.error;
@@ -72,6 +78,27 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
     const response = await bounded(fetch(route, { ...init, signal: controller.signal }), controller.signal);
     return bounded(readJson(response), controller.signal);
   };
+  const pollJob = async (): Promise<Record<string, unknown>> => {
+    let lastStatus = 0;
+    for (let attempt = 0; attempt <= POLL_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const response = await bounded(fetch('/api/v2/jobs/' + encodeURIComponent(jobId!), { signal: controller.signal }), controller.signal);
+        lastStatus = response.status;
+        if (response.ok) {
+          const raw = await bounded(response.json(), controller.signal);
+          if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+        } else if (response.status !== 404 && response.status !== 429 && response.status < 500) {
+          return await bounded(readJson(response), controller.signal);
+        }
+      } catch (error) {
+        if (controller.signal.aborted) throw cancellation(controller.signal);
+      }
+      if (attempt === POLL_RETRY_DELAYS_MS.length) break;
+      await pause(POLL_RETRY_DELAYS_MS[attempt], controller.signal);
+    }
+    if (lastStatus === 404) throw new ApiError(jobLostMessage(kind), 'JOB_LOST');
+    throw new ApiError('The server is temporarily unavailable. Try again.', 'SERVER_UNAVAILABLE');
+  };
   try {
     const accepted = await json(routes[kind], { method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body) });
     if (accepted.schemaVersion !== 2 || typeof accepted.jobId !== 'string' || !/^[A-Za-z0-9-]{1,100}$/.test(accepted.jobId) || !['queued', 'running', 'succeeded'].includes(String(accepted.status))) throw new ApiError('Invalid job receipt.', 'INVALID_RESPONSE');
@@ -83,7 +110,7 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
       onPhase?.('preparing');
     }
     for (;;) {
-      const job = await json('/api/v2/jobs/' + encodeURIComponent(jobId));
+      const job = await pollJob();
       if (job.id !== jobId || job.kind !== kind) throw new ApiError('The response belongs to a different research job.', 'RESULT_IDENTITY_MISMATCH');
       if (job.status === 'succeeded') {
         terminal = true;
@@ -137,12 +164,12 @@ export async function requestMarketSnapshot(input: { universe: string; asOf?: st
     return result;
   }, signal, undefined, onProgress);
 }
-export async function requestScan(input: { universe: string; strategy: StrategyAST; limit?: number; asOf?: string }, signal?: AbortSignal): Promise<ScanResult> {
+export async function requestScan(input: { universe: string; strategy: StrategyAST; limit?: number; asOf?: string }, signal?: AbortSignal, onPhase?: (phase: ResearchPhase) => void, onProgress?: (progress: ResearchJobProgress) => void): Promise<ScanResult> {
   const body = { universe: input.universe, strategy: snapshotStrategy(input.strategy), limit: input.limit ?? 35, ...(input.asOf ? { asOf: input.asOf } : {}) };
   return researchJob('scan', body, raw => {
     const result = parseScanResult(raw);
     if (result.universe !== body.universe || result.asOf !== body.asOf || result.limit !== body.limit || result.offset !== 0) throw new ApiError('Scan belongs to a different universe, cutoff or page.', 'RESULT_IDENTITY_MISMATCH');
     if (body.asOf && ((result.observationDates?.latest && result.observationDates.latest > body.asOf) || result.matches.some(match => match.lastDate > body.asOf! || match.provenance.asOf > body.asOf!))) throw new ApiError('Scan contains observations after the requested cutoff.', 'RESULT_IDENTITY_MISMATCH');
     return result;
-  }, signal);
+  }, signal, onPhase, onProgress);
 }

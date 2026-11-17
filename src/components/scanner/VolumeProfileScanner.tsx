@@ -14,10 +14,9 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Not observations or a live feed. Uses 20 synthetic price buckets across ±4%, a fictional buy/sell split, VWAP at 99.7% of demo spot and σ at 0.65%; no observed trades or institutional flow.</p>
-      {isLoading && <p role="status">Loading demo/model…</p>}
+      <p className="text-xs text-[var(--text-3)]">Sample model distribution, not observed trades or institutional flow. Latest session only.</p>
+      {isLoading && <p role="status">Loading sample model…</p>}
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-      {data && <p className="text-xs text-neutral-400">{data.provenance.source} · Model as-of {data.provenance.asOf}. {data.provenance.assumptions.join('; ')}</p>}
       {/* Header & Controls */}
       <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -27,10 +26,7 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Modeled Volume Profile & VWAP</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono">
-                  Fictional demo distribution
-                </span>
+                <span>Volume profile & VWAP</span>
               </h3>
               <p className="text-xs text-neutral-400">
                 Point of Control (POC), 70% Value Area (VAH / VAL), Modeled VWAP with ±1σ, ±2σ, ±3σ Standard Deviation Bands
@@ -67,36 +63,36 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-2 border-t border-[rgba(236,236,237,0.08)]">
             <div className="p-3 bg-[#151517] border border-[rgba(236,236,237,0.08)] rounded-xl">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Demo Spot Price</span>
-              <div className="text-base font-extrabold text-white font-mono mt-0.5">
+              <span className="text-[10px] text-neutral-400 font-semibold">Spot price</span>
+              <div className="text-base font-extrabold text-white st-tnum mt-0.5">
                 ₹{data.spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-amber-500/30 rounded-xl bg-amber-500/5">
-              <span className="text-[10px] text-amber-400 uppercase font-semibold">Point of Control (POC)</span>
-              <div className="text-base font-extrabold text-amber-400 font-mono mt-0.5">
+              <span className="text-[10px] text-amber-400 font-semibold">Point of Control (POC)</span>
+              <div className="text-base font-extrabold text-amber-400 st-tnum mt-0.5">
                 ₹{data.pocPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-emerald-500/30 rounded-xl bg-emerald-500/5">
-              <span className="text-[10px] text-emerald-400 uppercase font-semibold">Value Area High (VAH)</span>
-              <div className="text-base font-extrabold text-emerald-400 font-mono mt-0.5">
+              <span className="text-[10px] text-emerald-400 font-semibold">Value Area High (VAH)</span>
+              <div className="text-base font-extrabold text-emerald-400 st-tnum mt-0.5">
                 ₹{data.vahPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-rose-500/30 rounded-xl bg-rose-500/5">
-              <span className="text-[10px] text-rose-400 uppercase font-semibold">Value Area Low (VAL)</span>
-              <div className="text-base font-extrabold text-rose-400 font-mono mt-0.5">
+              <span className="text-[10px] text-rose-400 font-semibold">Value Area Low (VAL)</span>
+              <div className="text-base font-extrabold text-rose-400 st-tnum mt-0.5">
                 ₹{data.valPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] border border-cyan-500/30 rounded-xl bg-cyan-500/5">
-              <span className="text-[10px] text-cyan-400 uppercase font-semibold">Session VWAP</span>
-              <div className="text-base font-extrabold text-cyan-400 font-mono mt-0.5">
+              <span className="text-[10px] text-cyan-400 font-semibold">Session VWAP</span>
+              <div className="text-base font-extrabold text-cyan-400 st-tnum mt-0.5">
                 ₹{data.vwap.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
@@ -112,17 +108,17 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
             <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
               <div className="flex items-center gap-2">
                 <Compass className="w-4 h-4 text-purple-400" />
-                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                <h4 className="text-xs font-bold text-white">
                   Horizontal Volume Node Distribution (70% Value Area)
                 </h4>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 font-mono">
+              <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 st-tnum">
                 {data.marketRegime}
               </span>
             </div>
 
             {/* Price Level Volume Bars */}
-            <div className="space-y-1 font-mono text-[11px]">
+            <div className="space-y-1 st-tnum text-[11px]">
               {[...data.profileLevels].reverse().map(lvl => {
                 const isSpotNearby = Math.abs(lvl.price - data.spotPrice) < (data.spotPrice * 0.003);
                 return (
@@ -172,14 +168,14 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
           {/* VWAP Standard Deviation & Microstructure Sidebar (1 Column) */}
           <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
             <div className="pb-2 border-b border-[rgba(236,236,237,0.08)]">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
                 <Activity className="w-4 h-4 text-cyan-400" />
                 <span>VWAP Standard Deviation Bands</span>
               </h4>
-              <p className="text-[10px] text-neutral-400 mt-0.5">Fictional bands, not observed statistical boundaries</p>
+              <p className="text-[10px] text-neutral-400 mt-0.5">Model bands, not observed statistical boundaries</p>
             </div>
 
-            <div className="space-y-2 font-mono text-xs">
+            <div className="space-y-2 st-tnum text-xs">
               <div className="p-2.5 bg-[#151517] rounded-xl border border-rose-900/40 flex items-center justify-between">
                 <span className="text-rose-400 font-bold">+3σ Band (Extreme Resistance)</span>
                 <span className="text-white font-extrabold">₹{data.stdDev3Upper}</span>
@@ -220,7 +216,7 @@ export const VolumeProfileScanner: React.FC<VolumeProfileScannerProps> = ({ onSe
             </div>
 
             <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)] text-xs space-y-1.5">
-              <span className="text-[10px] text-neutral-400 uppercase font-semibold">Modeled Buy/Sell Split</span>
+              <span className="text-[10px] text-neutral-400 font-semibold">Modeled Buy/Sell Split</span>
               <div className="flex items-center justify-between text-xs font-bold">
                 <span className="text-emerald-400">Buyers {data.buyPressurePct}%</span>
                 <span className="text-rose-400">Sellers {(100 - data.buyPressurePct).toFixed(1)}%</span>

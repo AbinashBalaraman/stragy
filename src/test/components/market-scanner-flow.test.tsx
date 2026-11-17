@@ -122,7 +122,7 @@ describe('bounded lazy market scanner flow', () => {
     market.mockImplementationOnce(() => new Promise(() => {}));
     renderScanner();
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
-    fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Option chain/i }));
     expect(screen.getByText("Option chain isn't available")).toBeTruthy();
     expect(screen.queryByText(/Loading Nifty 50 prices/)).toBeNull();
   });
@@ -147,13 +147,23 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.queryByText('live prices unavailable')).toBeNull();
   });
 
-  it('summarizes partial pricing failures without dumping provider JSON', async () => {
-    market.mockResolvedValueOnce({ ...snapshot(), errors: [{ symbolId: 18, code: 'PROVIDER_RATE_LIMITED' }] } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+  it('names a partially unpriced symbol quietly instead of raising an alarm', async () => {
+    market.mockResolvedValueOnce({ ...snapshot(), coverage: { requested: 50, succeeded: 49, unavailable: 1 }, errors: [{ symbolId: 18, code: 'PROVIDER_RATE_LIMITED', ticker: 'TATAMOTORS' }] } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     renderScanner();
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('1 symbol could not be priced for this context');
-    expect(alert.textContent).not.toContain('symbolId');
-    expect(alert.textContent).not.toContain('PROVIDER_RATE_LIMITED');
+    expect(await screen.findByText('49 of 50 stocks priced · TATAMOTORS unavailable')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.body.textContent).not.toContain('symbolId');
+    expect(document.body.textContent).not.toContain('PROVIDER_RATE_LIMITED');
+  });
+
+  it('keeps more than three unpriced names behind a quiet disclosure', async () => {
+    const errors = ['AAA', 'BBB', 'CCC', 'DDD'].map((ticker, index) => ({ symbolId: 100 + index, code: 'PROVIDER_RATE_LIMITED', ticker }));
+    market.mockResolvedValueOnce({ ...snapshot(), coverage: { requested: 50, succeeded: 46, unavailable: 4 }, errors } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    renderScanner();
+    expect(await screen.findByText('46 of 50 stocks priced · 4 unavailable')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Which symbols')).toBeTruthy();
+    expect(document.body.textContent).toContain('AAA, BBB, CCC, DDD');
   });
 
   it('never turns unavailable market data into no gainers, no losers, or zero breadth', async () => {
@@ -427,9 +437,9 @@ describe('live quotes and readable coverage in the scanner', () => {
     renderScanner();
     expect(await screen.findByText('Market scanner')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
-    fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Option chain/i }));
     expect(screen.queryByText(/do not support the selected historical cutoff/)).toBeNull();
-    expect(screen.getByText(/Latest-only/)).toBeTruthy();
+    expect(screen.getByText(/Latest session only/)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Trading date'), { target: { value: '2025-01-01' } });
     expect(await screen.findByText(/uses the latest model reference/)).toBeTruthy();
@@ -442,7 +452,7 @@ describe('live quotes and readable coverage in the scanner', () => {
     renderScanner();
     await screen.findByText('Market scanner');
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
-    fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Option chain/i }));
     expect(await screen.findByText("Option chain isn't available")).toBeTruthy();
     expect(screen.getByText("Stragy only shows real observed data, and there's no real option-chain feed yet.")).toBeTruthy();
     expect(screen.queryByText(/model-only derivatives are disabled/)).toBeNull();

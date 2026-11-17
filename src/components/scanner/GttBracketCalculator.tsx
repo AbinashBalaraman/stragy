@@ -43,7 +43,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Preview only, never submitted. Not a real GTT order or ready-to-dispatch broker payload. Assumes ₹0.05 tick size; broker fees, entitlement, product support and instrument mapping are unverified. No guaranteed execution, profit or loss cap.</p>
+      <p className="text-xs text-[var(--text-3)]">Sample model preview only, never submitted. Not a real GTT order or broker payload.</p>
       {isLoading && <p role="status">Calculating current input preview…</p>}
       {error && <p role="alert" className="text-rose-300">{error} <button onClick={refresh}>Retry preview</button></p>}
       {copyError && <p role="alert">{copyError}</p>}
@@ -57,10 +57,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Demo Bracket Risk Calculator</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">
-                  Non-executable payload preview
-                </span>
+                <span>GTT bracket calculator</span>
               </h3>
               <p className="text-xs text-neutral-400">
                 Modeled entry, stop, target and trailing-step calculations. This calculator neither places nor manages orders.
@@ -95,7 +92,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
         {/* Input Parameters Controls */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2 border-t border-[rgba(236,236,237,0.08)]">
           <div>
-            <label htmlFor="gtt-symbol" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Target Stock</label>
+            <label htmlFor="gtt-symbol" className="text-[10px] text-neutral-400 font-semibold block mb-1">Target Stock</label>
             <select
               id="gtt-symbol"
               value={selectedSymbolId}
@@ -111,7 +108,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
           </div>
 
           <div>
-            <label htmlFor="gtt-capital" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Capital Allocated (₹)</label>
+            <label htmlFor="gtt-capital" className="text-[10px] text-neutral-400 font-semibold block mb-1">Capital Allocated (₹)</label>
             <input
               type="number"
               min={1}
@@ -120,12 +117,12 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
               value={capitalAllocated}
               onChange={e => { changeInput(); setCapitalAllocated(Number(e.target.value)); }}
               step={10000}
-              className="w-full bg-[#151517] border border-[rgba(236,236,237,0.12)] text-white font-mono text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500"
+              className="w-full bg-[#151517] border border-[rgba(236,236,237,0.12)] text-white st-tnum text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500"
             />
           </div>
 
           <div>
-            <label htmlFor="gtt-risk" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Stop-Loss Risk ({riskPct}%)</label>
+            <label htmlFor="gtt-risk" className="text-[10px] text-neutral-400 font-semibold block mb-1">Stop-Loss Risk ({riskPct}%)</label>
             <input
               type="range"
               min={0.5}
@@ -139,7 +136,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
           </div>
 
           <div>
-            <label htmlFor="gtt-reward" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Risk:Reward (1 : {rewardRatio})</label>
+            <label htmlFor="gtt-reward" className="text-[10px] text-neutral-400 font-semibold block mb-1">Risk:Reward (1 : {rewardRatio})</label>
             <input
               type="range"
               min={1.0}
@@ -153,7 +150,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
           </div>
 
           <div>
-            <label htmlFor="gtt-trail" className="text-[10px] text-neutral-400 uppercase font-semibold block mb-1">Trailing Step Jump ({trailPct}%)</label>
+            <label htmlFor="gtt-trail" className="text-[10px] text-neutral-400 font-semibold block mb-1">Trailing Step Jump ({trailPct}%)</label>
             <input
               type="range"
               min={0.2}
@@ -174,52 +171,52 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
           {/* Order Metrics Card */}
           <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
             <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+              <h4 className="text-xs font-bold text-white flex items-center gap-2">
                 <Calculator className="w-4 h-4 text-amber-400" />
                 <span>Calculated Risk-Reward Matrix</span>
               </h4>
-              <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+              <span className={`text-[10px] px-2 py-0.5 rounded st-tnum font-bold ${action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
                 {action} {orderConfig.qty} SHARES
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 st-tnum">
               <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
-                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Demo Entry Price</span>
+                <span className="text-[10px] text-neutral-400 font-semibold">Entry price</span>
                 <div className="text-sm font-extrabold text-white mt-0.5">₹{orderConfig.entryPrice}</div>
               </div>
 
               <div className="p-3 bg-[#151517] rounded-xl border border-rose-500/30 bg-rose-500/5">
-                <span className="text-[10px] text-rose-400 uppercase font-semibold">Stop-Loss Limit</span>
+                <span className="text-[10px] text-rose-400 font-semibold">Stop-Loss Limit</span>
                 <div className="text-sm font-extrabold text-rose-400 mt-0.5">₹{orderConfig.stopLossPrice}</div>
                 <span className="text-[9px] text-neutral-400">(-{orderConfig.stopLossPct}%)</span>
               </div>
 
               <div className="p-3 bg-[#151517] rounded-xl border border-emerald-500/30 bg-emerald-500/5">
-                <span className="text-[10px] text-emerald-400 uppercase font-semibold">Target Take-Profit</span>
+                <span className="text-[10px] text-emerald-400 font-semibold">Target Take-Profit</span>
                 <div className="text-sm font-extrabold text-emerald-400 mt-0.5">₹{orderConfig.targetPrice}</div>
                 <span className="text-[9px] text-neutral-400">(+{orderConfig.targetPct}%)</span>
               </div>
 
               <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
-                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Modeled Stop Loss (excludes fees/slippage)</span>
+                <span className="text-[10px] text-neutral-400 font-semibold">Modeled Stop Loss (excludes fees/slippage)</span>
                 <div className="text-sm font-extrabold text-rose-400 mt-0.5">₹{orderConfig.stopLossAmountInr.toLocaleString()}</div>
               </div>
 
               <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)]">
-                <span className="text-[10px] text-neutral-400 uppercase font-semibold">Modeled Target Gain</span>
+                <span className="text-[10px] text-neutral-400 font-semibold">Modeled Target Gain</span>
                 <div className="text-sm font-extrabold text-emerald-400 mt-0.5">₹{orderConfig.targetAmountInr.toLocaleString()}</div>
               </div>
 
               <div className="p-3 bg-[#151517] rounded-xl border border-cyan-500/30 bg-cyan-500/5">
-                <span className="text-[10px] text-cyan-400 uppercase font-semibold">Trailing SL Step</span>
+                <span className="text-[10px] text-cyan-400 font-semibold">Trailing SL Step</span>
                 <div className="text-sm font-extrabold text-cyan-400 mt-0.5">₹{orderConfig.trailingStopLossStep}</div>
                 <span className="text-[9px] text-neutral-400">({orderConfig.trailingJumpPct}% increment)</span>
               </div>
             </div>
 
             <div className="p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)] text-xs space-y-1">
-              <span className="text-[10px] text-neutral-400 font-semibold uppercase">Hypothetical Trailing Step</span>
+              <span className="text-[10px] text-neutral-400 font-semibold">Hypothetical Trailing Step</span>
               <p className="text-[11px] text-neutral-300">
                 Hypothetical step for {orderConfig.ticker}: ₹{orderConfig.trailingStopLossStep}. A real broker's support, rounding, stop handling and fill behavior require independent verification. Nothing is submitted or trailed here; losses can exceed this modeled amount.
               </p>
@@ -230,7 +227,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
           <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between pb-2 border-b border-[rgba(236,236,237,0.08)]">
-                <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <h4 className="text-xs font-bold text-white flex items-center gap-2">
                   <Flame className="w-4 h-4 text-cyan-400" />
                   <span>Broker-style JSON Preview</span>
                 </h4>
@@ -244,7 +241,7 @@ export const GttBracketCalculator: React.FC<GttBracketCalculatorProps> = ({ onSe
                 </button>
               </div>
 
-              <div className="mt-2 p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)] font-mono text-[10px] text-cyan-300 max-h-56 overflow-y-auto">
+              <div className="mt-2 p-3 bg-[#151517] rounded-xl border border-[rgba(236,236,237,0.08)] st-tnum text-[10px] text-cyan-300 max-h-56 overflow-y-auto">
                 <pre>{JSON.stringify(orderConfig.smartApiPayload, null, 2)}</pre>
               </div>
             </div>

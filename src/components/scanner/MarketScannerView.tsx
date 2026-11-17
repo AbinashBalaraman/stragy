@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StrategyAST, StockTrendData, MarketMoversData, type RuleNode } from '../../shared/strategy/types';
+import { StrategyAST, StockTrendData, MarketMoversData, type RuleNode, type SymbolMeta } from '../../shared/strategy/types';
 import { plainRule } from '../../client/plainRules';
 import { PrefillNote } from '../common/PrefillNote';
 import { DataTable, type DataColumn } from '../common/DataTable';
@@ -189,6 +189,8 @@ const ScannerLoadingState: React.FC<{ message: string }> = ({ message }) => (
 
 interface MarketScannerViewProps {
   strategy: StrategyAST;
+  /** Local instrument catalog, used to name an unpriced symbol by ticker. */
+  symbols?: SymbolMeta[];
   onSelectStockAndBacktest: (symbolId: number, asOf: string) => void;
   /** A validated setup handed over by chat or another feature. */
   prefill?: ScannerPrefill | null;
@@ -238,6 +240,7 @@ export const UNIVERSE_LIST: UniverseConfig[] = [
 
 export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   strategy,
+  symbols = [],
   onSelectStockAndBacktest,
   prefill: incomingPrefill,
   onPrefillDismiss,
@@ -289,6 +292,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [scannerError, setScannerError] = useState('');
   const [marketError, setMarketError] = useState('');
   const [marketProgress, setMarketProgress] = useState<ResearchJobProgress | null>(null);
+  const [marketCoverage, setMarketCoverage] = useState<{ requested: number; succeeded: number; unavailable: number } | null>(null);
+  const [marketUnavailable, setMarketUnavailable] = useState<Array<{ symbolId: number; ticker?: string }>>([]);
   const [scanError, setScanError] = useState('');
   const [coverageLabel, setCoverageLabel] = useState('Coverage not yet reported');
   const [coverageDetail, setCoverageDetail] = useState('Coverage details not yet reported.');
@@ -336,6 +341,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     setIsLoadingTrends(true);
     setMarketError(''); setScannerError('');
     setMarketProgress(null);
+    setMarketCoverage(null); setMarketUnavailable([]);
     setTrends([]); setMovers(null); setDataCutoff(''); setMarketEvaluated(0);
     setPriceLabel('Price source not yet reported');
     setCoverageLabel('Coverage not yet reported');setCoverageDetail('Coverage details not yet reported.');setDataEvidence(null);
@@ -349,7 +355,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       setPriceLabel(priceDataLabel(data));
       setCoverageLabel(data.coverage ? `Coverage: ${data.coverage.succeeded} of ${data.coverage.requested} symbols` : 'Coverage not reported; current membership, not full exchange coverage');
       setCoverageDetail(data.coverage ? `${data.coverage.succeeded} of ${data.coverage.requested} symbols evaluated; ${data.coverage.unavailable} unavailable.` : 'Coverage was not reported.');
-      if (data.errors.length) setMarketError(`${data.errors.length} symbol${data.errors.length === 1 ? '' : 's'} could not be priced for this context. Rankings use the symbols that were evaluated; the rest are unavailable, not zero.`);
+      setMarketCoverage(data.coverage ?? null);
+      setMarketUnavailable(data.errors.map(error => ({ symbolId: error.symbolId, ...(error.ticker ? { ticker: error.ticker } : {}) })));
       if (data.movers?.availableTradingSessions?.length) setAvailableTradingDates(data.movers.availableTradingSessions);
     } catch (e) {
       if (marketOwner.current.owns(ticket, currentContext.current)) setMarketError(e instanceof Error ? e.message : 'Market data unavailable');
@@ -424,6 +431,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
   const retryActiveView = () => { if (isStrategyView) void runScan(); else void fetchMarketData(); };
   const activeError = isStrategyView ? scanError : marketError;
+  const unavailableNames = marketUnavailable.map(error => error.ticker || symbols.find(item => item.id === error.symbolId)?.ticker || `symbol ${error.symbolId}`);
   const activePending = isStrategyView ? isScanning : isLoadingTrends;
   const initialLoading = !dataEvidence && !activeError;
 
@@ -570,6 +578,19 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 </>
               )}
             </p>
+            {dataEvidence && marketCoverage && marketUnavailable.length > 0 && (
+              <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
+                {marketCoverage.succeeded} of {marketCoverage.requested} stocks priced
+                {' · '}
+                {unavailableNames.length <= 3 ? unavailableNames.join(', ') + ' unavailable' : `${unavailableNames.length} unavailable`}
+              </p>
+            )}
+            {dataEvidence && marketCoverage && marketUnavailable.length > 3 && (
+              <details className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
+                <summary className="w-fit cursor-pointer hover:text-[var(--text-2)]">Which symbols</summary>
+                <p className="mt-1">{unavailableNames.join(', ')}</p>
+              </details>
+            )}
             {dataEvidence && (
               <details className="mt-2 text-[11px] leading-5 text-neutral-500">
                 <summary className="cursor-pointer hover:text-neutral-300">Data details</summary>
@@ -684,10 +705,10 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             <option value="trends">Technical regimes</option>
             <option value="volume_52w">Volume shockers &amp; 52W radar</option>
             <option value="derivatives_oi">Derivatives OI &amp; PCR</option>
-            <option value="option_chain">Option chain &amp; Greeks (demo)</option>
+            <option value="option_chain">Option chain &amp; Greeks</option>
             <option value="volume_profile">Volume profile &amp; VWAP</option>
             <option value="gtt_bracket">GTT bracket &amp; trailing SL</option>
-            <option value="basis_spreads">Basis &amp; calendar spreads (demo)</option>
+            <option value="basis_spreads">Basis &amp; calendar spreads</option>
             <option value="breadth_sectors">Market breadth &amp; heatmap</option>
           </select>
         </label>
@@ -706,7 +727,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 aria-current={activeTab === tab ? 'page' : undefined}
                 className={'whitespace-nowrap rounded-md px-3 py-1.5 text-xs transition-colors ' + (activeTab === tab ? 'bg-white/[0.08] font-medium text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
               >
-                {label}{demo && <span className="ml-1.5 rounded border border-white/10 px-1 text-[10px] text-neutral-500">demo</span>}
+                {label}
               </button>
             ))}
             <div className="relative">
@@ -723,13 +744,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               {moreTabsOpen && (
                 <div id="scanner-more-sections" role="group" aria-label="More scanner sections" className="absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-white/12 bg-[#171719] p-1 shadow-xl shadow-black/50">
                   {([
-                    ['derivatives_oi', 'Derivatives OI & PCR', false],
-                    ['option_chain', 'Option Chain & Greeks', true],
-                    ['volume_profile', 'Volume Profile & VWAP', false],
-                    ['gtt_bracket', 'GTT Bracket & Trailing SL', false],
-                    ['basis_spreads', 'Basis & Calendar Spreads', true],
-                    ['breadth_sectors', 'Market Breadth & Heatmap', false],
-                  ] as const).map(([tab, label, demo]) => (
+                    ['derivatives_oi', 'Derivatives OI & PCR'],
+                    ['option_chain', 'Option chain & Greeks'],
+                    ['volume_profile', 'Volume profile & VWAP'],
+                    ['gtt_bracket', 'GTT bracket & trailing SL'],
+                    ['basis_spreads', 'Basis & calendar spreads'],
+                    ['breadth_sectors', 'Market breadth & heatmap'],
+                  ] as const).map(([tab, label]) => (
                     <button
                       key={tab}
                       type="button"
@@ -737,7 +758,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                       className={'flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ' + (activeTab === tab ? 'bg-white/[0.06] text-neutral-100' : 'text-neutral-300 hover:bg-white/[0.04]')}
                     >
                       <span>{label}</span>
-                      {demo && <span className="rounded border border-white/10 px-1 text-[10px] text-neutral-500">demo</span>}
                     </button>
                   ))}
                 </div>
@@ -936,7 +956,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <div className="rounded-xl border border-white/8 bg-[#171719] p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="text-sm font-medium text-neutral-100">Open interest by price action</h3>
-              <span className="text-[11px] text-neutral-500">Model-only fields; not observed derivatives</span>
+              <span className="text-[11px] text-[var(--text-3)]">Sample model data, not observed derivatives</span>
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {[
@@ -945,7 +965,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 { key: 'short', title: 'Short build-up', reading: 'Price down · OI up', rows: movers?.derivativesBuildup.shortBuildup, positive: false },
                 { key: 'unwind', title: 'Long unwinding', reading: 'Price down · OI down', rows: movers?.derivativesBuildup.longUnwinding, positive: false },
               ].map(group => (
-                <div key={group.key} className="rounded-lg border border-white/8 bg-[#101012]/60 p-3">
+                <div key={group.key} className="min-w-0">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h4 className="text-xs font-medium text-neutral-200">{group.title}</h4>
                     <span className="st-tnum text-[10px] text-[var(--text-3)]">{group.reading}</span>

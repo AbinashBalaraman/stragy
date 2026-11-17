@@ -13,10 +13,9 @@ export const BasisSpreadScanner: React.FC<BasisSpreadScannerProps> = () => {
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-amber-300">Demo/model · Latest-only · Model reference date: 2026-09-30. Not observations or a live feed.</p>
-      {isLoading && <p role="status">Loading demo/model…</p>}
+      <p className="text-xs text-[var(--text-3)]">Sample model data, not observed futures prices or a live feed. Latest session only.</p>
+      {isLoading && <p role="status">Loading sample model…</p>}
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-      {data && data.spreads.map(s => <p key={s.ticker} className="text-xs text-neutral-400">{s.ticker}: {s.provenance.source} · Model as-of {s.provenance.asOf}. {s.provenance.assumptions.join('; ')}</p>)}
       {/* Header */}
       <div className="bg-[#171719] border border-[rgba(236,236,237,0.08)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -26,13 +25,10 @@ export const BasisSpreadScanner: React.FC<BasisSpreadScannerProps> = () => {
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Demo Cash/Futures Basis & Calendar Spread</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                  Modeled carry, not executable arbitrage
-                </span>
+                <span>Cash/futures basis & calendar spread</span>
               </h3>
               <p className="text-xs text-neutral-400">
-                Fictional spot/futures basis. Carry assumes 6.8% annually and 12/40 days to expiry; fees, funding and execution risks are excluded. Yields are not risk-free.
+                Sample spot/futures basis. Carry assumes 6.8% annually and 12/40 days to expiry; fees, funding and execution risks are excluded. Yields are not risk-free.
               </p>
             </div>
           </div>
@@ -65,7 +61,7 @@ export const BasisSpreadScanner: React.FC<BasisSpreadScannerProps> = () => {
                 <th className="py-3 px-3 text-left">Arbitrage Signal</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1e1e21]/60 font-mono text-[11px]">
+            <tbody className="divide-y divide-[#1e1e21]/60 st-tnum text-[11px]">
               {spreads.map(s => {
                 const isContango = s.state === 'CONTANGO';
                 return (

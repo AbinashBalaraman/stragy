@@ -70,6 +70,60 @@ describe('bounded asynchronous research job client', () => {
     expect(await outcome).toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The backtest took too long and was stopped. Try again.' });
   });
 
+  it('retries a 404 poll and recovers when the server comes back', async () => {
+    let polls = 0;
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/scans') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      polls += 1;
+      if (polls < 3) return response({ error: { code: 'NOT_FOUND', message: 'Not found' } }, 404);
+      return response(done('scan', scan()));
+    });
+    const result = requestScan(input());
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect((await result).universe).toBe('NIFTY_50');
+    expect(polls).toBe(3);
+  });
+
+  it('turns a persistent 404 into a plain JOB_LOST message after the retry window', async () => {
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/scans') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      return response({ error: { code: 'NOT_FOUND', message: 'Not found' } }, 404);
+    });
+    const result = requestScan(input()).catch(error => error);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await result).toMatchObject({ code: 'JOB_LOST', message: 'The server restarted and the scan was lost. Try again.' });
+  });
+
+  it('retries 5xx and non-JSON polls, then reports plain copy instead of a JSON parser error', async () => {
+    let polls = 0;
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/scans') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      polls += 1;
+      if (polls === 1) return response({ error: { code: 'UNAVAILABLE' } }, 503);
+      if (polls === 2) return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } } as unknown as Response;
+      return response(done('scan', scan()));
+    });
+    const result = requestScan(input());
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect((await result).universe).toBe('NIFTY_50');
+
+    polls = 0;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/scans') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } } as unknown as Response;
+    });
+    const failed = requestScan(input()).catch(error => error);
+    await vi.advanceTimersByTimeAsync(31_000);
+    const error = await failed;
+    expect(error).toMatchObject({ code: 'SERVER_UNAVAILABLE', message: 'The server is temporarily unavailable. Try again.' });
+    expect((error as Error).message).not.toContain('JSON');
+  });
+
   it('uses v2 submission/polling instead of legacy synchronous scan routes', async () => {
     fetchMock.mockResolvedValueOnce(response(receipt, 202))
       .mockResolvedValueOnce(response({ id: receipt.jobId, kind: 'scan', status: 'queued' }))
