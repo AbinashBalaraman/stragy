@@ -31,7 +31,9 @@ interface Props {
   initialWindow?: RunWindowKey;
   onWindowChange?: (dateRange: UserPreferences['dateRange']) => void;
   /** Real job phase while a run is in flight; no percentages are invented. */
-  runPhase?: 'preparing' | 'running' | null;
+  runPhase?: 'waiting' | 'preparing' | 'running' | null;
+  /** The last run failed or timed out; shown beside the run action with a retry. */
+  runError?: string;
 }
 
 const control = 'w-full rounded-lg border border-white/15 bg-[#101012] p-2 text-sm text-[#ececed]';
@@ -239,7 +241,7 @@ function jsonLocation(text: string, message: string): string {
   return `line ${before.split('\n').length}, column ${index - before.lastIndexOf('\n')}`;
 }
 
-export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBacktest, isLoading, runPhase, symbols, onSymbolChange, showReferencePrices = false, onDescribeInChat, prefill: incomingPrefill, onPrefillDismiss, initialWindow, onWindowChange }) => {
+export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBacktest, isLoading, runPhase, runError, symbols, onSymbolChange, showReferencePrices = false, onDescribeInChat, prefill: incomingPrefill, onPrefillDismiss, initialWindow, onWindowChange }) => {
   const [error, setError] = useState('');
   const [importProblem, setImportProblem] = useState<{ summary: string; details: string[] } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -407,12 +409,27 @@ export const StrategyBuilder: React.FC<Props> = ({ strategy, onChange, onRunBack
           </button>
         </div>
 
+        {runError && !isLoading && (
+          <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-[var(--r-inner)] border border-[var(--warn)]/25 bg-[var(--warn)]/[0.04] px-3 py-2 text-xs leading-5 text-[#f5d383]">
+            <span className="min-w-0 flex-1">{runError}</span>
+            <button
+              type="button"
+              onClick={run}
+              className="rounded-[var(--r-btn)] border border-[var(--warn)]/30 px-2.5 py-1 text-[11px] transition-colors hover:bg-[var(--warn)]/10"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {isLoading && (
           <p role="status" className="mt-3 flex items-center gap-2 text-xs text-[var(--text-3)]">
             <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#a8c7fa]" />
-            {runPhase === 'running'
-              ? 'Simulating…'
-              : `Loading ${runWindow === '3y' ? '3 years' : runWindow === '1y' ? '1 year' : runWindow === '5y' ? '5 years' : 'all available history'} of ${symbols?.find(item => item.id === strategy.universe.symbolId)?.ticker ?? 'the instrument'} daily bars…`}
+            {runPhase === 'waiting'
+              ? 'Waiting for the current scan to finish…'
+              : runPhase === 'running'
+                ? 'Simulating…'
+                : `Loading ${runWindow === '3y' ? '3 years' : runWindow === '1y' ? '1 year' : runWindow === '5y' ? '5 years' : 'all available history'} of ${symbols?.find(item => item.id === strategy.universe.symbolId)?.ticker ?? 'the instrument'} daily bars…`}
           </p>
         )}
 

@@ -158,6 +158,20 @@ describe('strategy tester summary', () => {
     expect(screen.getByText('Simulating…')).toBeTruthy();
   });
 
+  it('says when a backtest is waiting behind the current scan', () => {
+    render(<StrategyBuilder strategy={base()} onChange={vi.fn()} onRunBacktest={vi.fn()} isLoading runPhase="waiting" />);
+    expect(screen.getByText('Waiting for the current scan to finish…')).toBeTruthy();
+    expect(screen.queryByText('Simulating…')).toBeNull();
+  });
+
+  it('keeps a failed run visible next to the action and retries it', () => {
+    const onRunBacktest = vi.fn();
+    render(<StrategyBuilder strategy={base()} onChange={vi.fn()} onRunBacktest={onRunBacktest} isLoading={false} runError="The backtest didn't finish: Angel One is busy with the scanner. Try again in a minute." />);
+    expect(screen.getByRole('alert').textContent).toContain("The backtest didn't finish: Angel One is busy with the scanner. Try again in a minute.");
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRunBacktest).toHaveBeenCalledTimes(1);
+  });
+
   it('hands off to the copilot instead of editing fields', () => {
     const onDescribeInChat = vi.fn();
     render(<Harness onDescribeInChat={onDescribeInChat} />);

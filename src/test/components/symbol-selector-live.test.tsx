@@ -65,7 +65,7 @@ describe('live quotes in the symbol selector', () => {
     expect(within(pill()).getByText('-0.32%')).toBeTruthy();
 
     fireEvent.click(pill());
-    expect(await screen.findByText('Live LTP · Angel One')).toBeTruthy();
+    expect(await screen.findByText('Live · Angel One')).toBeTruthy();
     expect(await screen.findByText('₹2,900.00')).toBeTruthy();
     expect(screen.getByText('₹45.25')).toBeTruthy();
     expect(screen.getByText('Reliance Industries Ltd.')).toBeTruthy();
@@ -79,7 +79,7 @@ describe('live quotes in the symbol selector', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(within(pill()).getByText('₹1,339.7')).toBeTruthy();
     fireEvent.click(pill());
-    expect(screen.queryByText('Live LTP · Angel One')).toBeNull();
+    expect(screen.queryByText('Live · Angel One')).toBeNull();
     expect(screen.getAllByText('₹1,339.7').length).toBeGreaterThan(0);
   });
 });

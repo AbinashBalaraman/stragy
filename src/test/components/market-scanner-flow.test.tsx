@@ -123,8 +123,8 @@ describe('bounded lazy market scanner flow', () => {
     renderScanner();
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
-    expect(screen.getByText(/fictional demo model/)).toBeTruthy();
-    expect(screen.queryByText(/Loading market snapshot/)).toBeNull();
+    expect(screen.getByText("Option chain isn't available")).toBeTruthy();
+    expect(screen.queryByText(/Loading Nifty 50 prices/)).toBeNull();
   });
 
   it('says market data is still loading after ten seconds', () => {
@@ -195,7 +195,7 @@ describe('bounded lazy market scanner flow', () => {
     const pending = deferred<Awaited<ReturnType<typeof requestMarketSnapshot>>>();
     market.mockReturnValueOnce(pending.promise);
     renderScanner();
-    expect(await screen.findByText(/Loading market snapshot/)).toBeTruthy();
+    expect(await screen.findByText(/Loading Nifty 50 prices/)).toBeTruthy();
     expect(screen.queryByText(/Price source not yet reported/)).toBeNull();
     expect(screen.queryByText(/Gainers unavailable/)).toBeNull();
     await act(async () => { pending.resolve(snapshot()); });
@@ -402,7 +402,19 @@ describe('live quotes and readable coverage in the scanner', () => {
     fireEvent.click(screen.getByRole('button', { name: /Technical regimes/i }));
     await waitFor(() => expect(screen.getAllByText('TRENDCO').length).toBeGreaterThan(0));
     await waitFor(() => expect(screen.getAllByText('Live', { exact: true }).length).toBeGreaterThan(0));
-    expect(screen.getByText(/Technical ranks use the 13 Nov 2026 EOD session/)).toBeTruthy();
+    expect(screen.getByText('1 stock · 13 Nov close. Live prices shown separately.')).toBeTruthy();
+  });
+
+  it('shows 20 regime rows first and expands to all 25', async () => {
+    const trends = Array.from({ length: 25 }, (_, index) => liveStock(100 + index, 'TR' + String(index).padStart(2, '0')));
+    market.mockResolvedValueOnce({ ...snapshot(), mode: 'real', trends, provenance: { mode: 'real', actualRange: { end: '2025-01-02' } }, sourceCoverage: { real: 25 } } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    renderScanner();
+    fireEvent.click(screen.getByRole('button', { name: /Technical regimes/i }));
+    expect(await screen.findByText('TR00')).toBeTruthy();
+    expect(screen.getByText('TR19')).toBeTruthy();
+    expect(screen.queryByText('TR20')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all 25' }));
+    expect(screen.getByText('TR24')).toBeTruthy();
   });
 
   it('renders latest-only model tabs at the latest session and offers recovery for a historical cutoff', async () => {
@@ -431,8 +443,9 @@ describe('live quotes and readable coverage in the scanner', () => {
     await screen.findByText('Market scanner');
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.click(screen.getByRole('button', { name: /Option Chain/ }));
-    expect(await screen.findByText(/is a fictional demo model/)).toBeTruthy();
-    expect(screen.getByText(/model-only derivatives are disabled/)).toBeTruthy();
+    expect(await screen.findByText("Option chain isn't available")).toBeTruthy();
+    expect(screen.getByText("Stragy only shows real observed data, and there's no real option-chain feed yet.")).toBeTruthy();
+    expect(screen.queryByText(/model-only derivatives are disabled/)).toBeNull();
     expect(screen.queryByText(/HTTP 422/)).toBeNull();
   });
 

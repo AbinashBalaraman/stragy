@@ -12,6 +12,14 @@ import {
 import { OHLCVBar, TradeRecord, IndicatorConfig, SymbolMeta } from '../../shared/strategy/types';
 import { formatDate, formatINR } from '../../shared/format';
 
+/** "2026-11-16" -> "Nov 26" for the chart's month ticks. */
+export const monthYearTick = (value: unknown): string => {
+  if (typeof value !== 'string' || value.length < 7) return value ? String(value) : '';
+  const date = new Date(value + 'T00:00:00Z');
+  if (!Number.isFinite(date.getTime())) return value;
+  return date.toLocaleDateString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+};
+
 interface PriceChartProps {
   bars?: OHLCVBar[];
   trades?: TradeRecord[];
@@ -106,7 +114,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
               dataKey="date"
               stroke="#6b7280"
               fontSize={10}
-              tickFormatter={val => (typeof val === 'string' && val.length > 5 ? val.slice(5) : val || '')}
+              tickFormatter={monthYearTick}
               minTickGap={30}
             />
             <YAxis
@@ -136,6 +144,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
               stroke="#ececed"
               strokeWidth={1.8}
               dot={false}
+              isAnimationActive={false}
               name="Close Price"
             />
 
@@ -148,6 +157,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
                 strokeWidth={1.5}
                 strokeDasharray="4 2"
                 dot={false}
+                isAnimationActive={false}
                 name="Supertrend"
               />
             )}

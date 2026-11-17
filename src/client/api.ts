@@ -5,9 +5,17 @@ import { canonicalStrategyJSON, validateStrategy } from '../shared/strategy/sche
 import { parseMarketSnapshotResult, parseScanResult, type MarketSnapshotResult, type ScanResult } from '../shared/contracts/scanner-results';
 export type { MarketSnapshotResult, ScanResult } from '../shared/contracts/scanner-results';
 /** Real milestones from the job lifecycle; never a simulated percentage. */
-export type ResearchPhase = 'preparing' | 'running';
-/** A cold 50-symbol Angel scan takes ~157s at 2 requests/second, so scans get 300s. */
+export type ResearchPhase = 'waiting' | 'preparing' | 'running';
+export interface ResearchJobProgress { status: 'queued' | 'running'; stage?: string; queuedBehind?: number; }
+/** Execution deadlines start only when the job leaves the queue. */
 export const RESEARCH_DEADLINE_MS = { backtest: 45_000, scan: 300_000, market: 120_000 } as const;
+/** A queued job may wait behind long work, but never forever. */
+export const RESEARCH_QUEUE_LIMIT_MS = 300_000;
+const deadlineMessage = (kind: 'backtest' | 'scan' | 'market') => kind === 'backtest'
+  ? 'The backtest took too long and was stopped. Try again.'
+  : kind === 'scan'
+    ? 'The scan took too long and was stopped. No zero-match conclusion was made.'
+    : 'The market data request took too long and was stopped. Try again.';
 export interface RunRequestOptions { initialCapital?: number; start?: string; end?: string; asOf?: string; seed?: number; robustness?: boolean; }
 export class ApiError extends Error { constructor(message: string, public code = 'API_FAILED', public status = 0) { super(message); } }
 export async function readJson(response: Response): Promise<Record<string, unknown>> {
@@ -47,12 +55,17 @@ async function cancelJob(id: string): Promise<void> {
   catch { /* Cancellation is best effort, but can never hang the caller. */ }
   finally { clearTimeout(timer); }
 }
-async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknown, parseResult: (input: unknown) => T, signal?: AbortSignal, onPhase?: (phase: ResearchPhase) => void): Promise<T> {
+async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknown, parseResult: (input: unknown) => T, signal?: AbortSignal, onPhase?: (phase: ResearchPhase) => void, onProgress?: (progress: ResearchJobProgress) => void): Promise<T> {
   const routes = { backtest: '/api/v2/backtests', scan: '/api/v2/scans', market: '/api/v2/market-snapshots' };
   const controller = new AbortController(), key = globalThis.crypto?.randomUUID?.();
   const relay = () => controller.abort(signal?.reason ?? new DOMException('Request cancelled', 'AbortError'));
   if (signal?.aborted) relay(); else signal?.addEventListener('abort', relay, { once: true });
-  const timer = setTimeout(() => controller.abort(new ApiError('Research request deadline exceeded. Results are unavailable; no zero-match conclusion was made.', 'CLIENT_DEADLINE')), RESEARCH_DEADLINE_MS[kind]);
+  const overallTimer = setTimeout(() => controller.abort(new ApiError(deadlineMessage(kind), 'CLIENT_DEADLINE')), RESEARCH_QUEUE_LIMIT_MS);
+  let executionTimer: ReturnType<typeof setTimeout> | undefined;
+  const startExecutionDeadline = () => {
+    if (executionTimer) return;
+    executionTimer = setTimeout(() => controller.abort(new ApiError(deadlineMessage(kind), 'CLIENT_DEADLINE')), RESEARCH_DEADLINE_MS[kind]);
+  };
   let jobId: string | undefined, terminal = false;
   const json = async (route: string, init: RequestInit = {}) => {
     if (controller.signal.aborted) throw cancellation(controller.signal);
@@ -63,7 +76,12 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
     const accepted = await json(routes[kind], { method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body) });
     if (accepted.schemaVersion !== 2 || typeof accepted.jobId !== 'string' || !/^[A-Za-z0-9-]{1,100}$/.test(accepted.jobId) || !['queued', 'running', 'succeeded'].includes(String(accepted.status))) throw new ApiError('Invalid job receipt.', 'INVALID_RESPONSE');
     jobId = accepted.jobId;
-    onPhase?.('preparing');
+    if (accepted.status === 'queued' || accepted.status === 'running') onProgress?.({ status: accepted.status });
+    if (accepted.status === 'queued') onPhase?.('waiting');
+    else {
+      if (accepted.status === 'running') startExecutionDeadline();
+      onPhase?.('preparing');
+    }
     for (;;) {
       const job = await json('/api/v2/jobs/' + encodeURIComponent(jobId));
       if (job.id !== jobId || job.kind !== kind) throw new ApiError('The response belongs to a different research job.', 'RESULT_IDENTITY_MISMATCH');
@@ -72,7 +90,19 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
         try { return parseResult(job.result); }
         catch (error) { if (error instanceof ApiError) throw error; throw new ApiError('The computation worker returned an invalid result. Results are unavailable.', 'INVALID_RESPONSE'); }
       }
-      if (job.status === 'running') onPhase?.('running');
+      if (onProgress && (job.status === 'queued' || job.status === 'running')) {
+        onProgress({
+          status: job.status,
+          ...(typeof job.stage === 'string' ? { stage: job.stage } : {}),
+          ...(typeof job.queuedBehind === 'number' ? { queuedBehind: job.queuedBehind } : {}),
+        });
+      }
+      const waiting = job.status === 'queued' || job.stage === 'waiting' || typeof job.queuedBehind === 'number';
+      if (waiting) onPhase?.('waiting');
+      else if (job.status === 'running') {
+        startExecutionDeadline();
+        onPhase?.('running');
+      }
       if (job.status === 'failed' || job.status === 'cancelled') {
         terminal = true;
         const error = job.error as { message?: string; code?: string } | undefined;
@@ -83,7 +113,9 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
       await pause(2000, controller.signal);
     }
   } finally {
-    clearTimeout(timer); signal?.removeEventListener('abort', relay); controller.abort();
+    clearTimeout(overallTimer);
+    if (executionTimer) clearTimeout(executionTimer);
+    signal?.removeEventListener('abort', relay); controller.abort();
     if (jobId && !terminal) await cancelJob(jobId);
   }
 }
@@ -96,14 +128,14 @@ export async function requestBacktest(strategy: StrategyAST, signal?: AbortSigna
     return result;
   }, signal, onPhase);
 }
-export async function requestMarketSnapshot(input: { universe: string; asOf?: string }, signal?: AbortSignal): Promise<MarketSnapshotResult> {
+export async function requestMarketSnapshot(input: { universe: string; asOf?: string }, signal?: AbortSignal, onProgress?: (progress: ResearchJobProgress) => void): Promise<MarketSnapshotResult> {
   const body = { universe: input.universe, ...(input.asOf ? { asOf: input.asOf } : {}) };
   return researchJob('market', body, raw => {
     const result = parseMarketSnapshotResult(raw);
     if (result.universe !== body.universe || result.requestedDate !== body.asOf) throw new ApiError('Market snapshot belongs to a different universe or cutoff.', 'RESULT_IDENTITY_MISMATCH');
     if (body.asOf && ((result.observationDates?.latest && result.observationDates.latest > body.asOf) || result.trends.some(trend => !trend.date || trend.date > body.asOf!))) throw new ApiError('Market snapshot contains observations after the requested cutoff.', 'RESULT_IDENTITY_MISMATCH');
     return result;
-  }, signal);
+  }, signal, undefined, onProgress);
 }
 export async function requestScan(input: { universe: string; strategy: StrategyAST; limit?: number; asOf?: string }, signal?: AbortSignal): Promise<ScanResult> {
   const body = { universe: input.universe, strategy: snapshotStrategy(input.strategy), limit: input.limit ?? 35, ...(input.asOf ? { asOf: input.asOf } : {}) };

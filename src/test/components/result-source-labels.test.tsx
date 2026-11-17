@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { RunProvenance } from '../../components/results/RunProvenance';
 import { EquityCharts } from '../../components/results/EquityCharts';
+import { monthYearTick } from '../../components/results/PriceChart';
 import type { BacktestResponse, EquityPoint } from '../../shared/strategy/types';
 const result = (provenance?: unknown): BacktestResponse => ({ backtestId: 'run-immutable', provenance, bars: [{ date: '2025-01-01' }, { date: '2025-01-02' }], warnings: ['Fees unverified'], manifest: { sourceCommit: 'working-tree', seed: 42 } }) as BacktestResponse;
 describe('result source and benchmark labels', () => {
@@ -27,6 +28,13 @@ describe('result source and benchmark labels', () => {
     expect(html).not.toContain('delayed EOD, not live');
     expect(html).not.toContain('verification not implied');
     expect(html).toContain('Delayed end-of-day bars, not a live feed; verification and entitlement are not implied.');
+  });
+
+  it('labels the price chart by month and year', () => {
+    expect(monthYearTick('2023-11-17')).toBe('Nov 23');
+    expect(monthYearTick('2024-01-17')).toBe('Jan 24');
+    expect(monthYearTick('2026-11-16')).toBe('Nov 26');
+    expect(monthYearTick('not-a-date')).toBe('not-a-date');
   });
 
   it('shows the real capital and instrument benchmark, without double signs or NIFTY substitution', () => {

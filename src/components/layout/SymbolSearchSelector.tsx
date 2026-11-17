@@ -318,51 +318,54 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
       {isOpen && (
         <div className="fixed left-2 right-2 top-16 z-50 mt-2 flex max-h-[85vh] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#171719] shadow-2xl shadow-black/70 sm:absolute sm:left-0 sm:right-auto sm:top-full sm:max-h-[580px] sm:w-[460px] md:w-[500px]">
           {/* Search Header Input */}
-          <div className="p-3 border-b border-[rgba(236,236,237,0.08)] bg-[#151517] flex items-center gap-2.5">
-            <Search className="w-4 h-4 text-[#a8c7fa] shrink-0" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={e => {
-                setSearchQuery(e.target.value);
-                setHighlightedIndex(0);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder="Search instruments (e.g. RELIANCE, TCS)..."
-              className="w-full bg-transparent text-[#ececed] placeholder-neutral-500 text-xs sm:text-sm font-medium focus:outline-none"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="p-1 rounded text-neutral-400 hover:text-white hover:bg-white/[0.05]"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+          <div className="flex items-center gap-2 border-b border-[var(--line)] bg-[var(--surface-1)] px-3 py-2.5">
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--r-btn)] border border-[var(--line)] bg-[#101012] px-2 py-1.5 focus-within:border-[#a8c7fa]/60">
+              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--text-3)]" aria-hidden="true" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={e => {
+                  setSearchQuery(e.target.value);
+                  setHighlightedIndex(0);
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder="Search instruments (e.g. RELIANCE, TCS)..."
+                className="st-symbol-search w-full min-w-0 bg-transparent text-xs font-medium text-[var(--text-1)] placeholder:text-[var(--text-3)] sm:text-sm"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="rounded-[var(--r-btn)] p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              className="p-1 rounded text-neutral-400 hover:text-white hover:bg-white/[0.05] sm:hidden"
+              className="rounded-[var(--r-btn)] p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] sm:hidden"
+              aria-label="Close instrument search"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
 
           {!showReferencePrices && (
-            <div className="px-3 py-1.5 border-b border-[rgba(236,236,237,0.08)] bg-[#101012]/40 flex items-center justify-between gap-2 text-[10px]">
+            <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-1.5 text-[11px]">
               {liveQuotes.connected ? (
-                <span className="flex items-center gap-1 text-emerald-300/90">
+                <span className="flex items-center gap-2 text-[var(--text-3)]">
                   <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Live LTP · Angel One
+                  Live · Angel One
                 </span>
               ) : (
-                <span className="text-neutral-500">
-                  {liveQuotes.loading ? 'Checking live quotes…' : 'Live LTP unavailable · delayed EOD is not substituted'}
+                <span className="text-[var(--text-3)]">
+                  {liveQuotes.loading ? 'Checking live quotes…' : 'Live quotes unavailable · delayed EOD is not substituted'}
                 </span>
               )}
-              <span className="shrink-0 font-mono text-neutral-500">15s refresh</span>
             </div>
           )}
 
@@ -403,7 +406,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
           {/* Quick-Pick Popular Symbols (when no search query) */}
           {!searchQuery.trim() && selectedCategory === 'ALL' && (
             <div className="px-3 py-2 border-b border-[rgba(236,236,237,0.06)] bg-[#101012]/30">
-              <div className="mb-1.5 text-[10px] uppercase tracking-[0.14em] text-neutral-500">Popular</div>
+              <div className="mb-1.5 text-[11px] text-[var(--text-3)]">Popular</div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {POPULAR_TICKERS.map(ticker => {
                   const sym = symbols.find(s => s.ticker === ticker);
@@ -414,7 +417,7 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                       key={`pop_${sym.id}`}
                       type="button"
                       onClick={() => selectSymbol(sym.id)}
-                      className={'flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors ' + (isCurrent ? 'border-[#a8c7fa]/40 bg-white/[0.06] text-neutral-100' : 'border-white/10 text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
+                      className={'flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors ' + (isCurrent ? 'border-[#a8c7fa]/40 bg-white/[0.06] text-neutral-100' : 'border-white/10 text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
                     >
                       <span>{sym.ticker}</span>
                       {showReferencePrices && <span className={'text-[9px] ' + (sym.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300')}>
@@ -463,10 +466,10 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                     {/* Left: Ticker & Name */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-xs font-semibold text-neutral-100 sm:text-sm">
+                        <span className="text-xs font-medium text-[var(--text-1)] sm:text-sm">
                           {sym.ticker}
                         </span>
-                        <span className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] uppercase text-neutral-400">
+                        <span className="rounded border border-[var(--line)] px-1.5 py-0.5 text-[9px] text-[var(--text-3)]">
                           {symIsIndex ? 'INDEX' : sym.exchange}
                         </span>
                         <span className="text-[10px] text-neutral-400 font-medium truncate max-w-[130px] sm:max-w-[180px]">
@@ -481,23 +484,19 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
                     {/* Live Angel LTP in real mode; catalog references are demo-only. */}
                     <div className="text-right shrink-0 flex items-center gap-2.5">
                       {showReferencePrices && <div>
-                        <div className="text-xs sm:text-sm font-bold font-mono text-white">
+                        <div className="st-tnum text-xs font-medium text-[var(--text-1)] sm:text-sm">
                           ₹{sym.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </div>
-                        <div
-                          className={`text-[10px] font-mono font-bold ${
-                            sym.changePercent >= 0 ? 'text-[#a8c7fa]' : 'text-rose-400'
-                          }`}
-                        >
+                        <div className={'st-tnum text-[11px] ' + (sym.changePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]')}>
                           {sym.changePercent >= 0 ? '+' : ''}{sym.changePercent}%
                         </div>
                       </div>}
                       {!showReferencePrices && liveQuotes.connected && (rowQuote ? (
                         <div className="text-right" title={liveQuoteTimeTitle(rowQuote)}>
-                          <div className="text-xs sm:text-sm font-bold font-mono text-white">
+                          <div className="st-tnum text-xs font-medium text-[var(--text-1)] sm:text-sm">
                             {formatLivePrice(rowQuote.ltp)}
                           </div>
-                          <div className={`text-[10px] font-mono font-bold ${rowQuote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                          <div className={'st-tnum text-[11px] ' + (rowQuote.changePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]')}>
                             {formatLiveChange(rowQuote.changePercent)}
                           </div>
                         </div>
@@ -519,21 +518,12 @@ export const SymbolSearchSelector: React.FC<SymbolSearchSelectorProps> = ({
             )}
 
             {filteredSymbols.length > 100 && (
-              <div className="p-2 text-center text-[10px] text-neutral-500 font-mono">
+              <div className="p-2 text-center text-[11px] text-[var(--text-3)]">
                 Showing top 100 of {filteredSymbols.length} results. Type to refine search.
               </div>
             )}
           </div>
 
-          {/* Footer Guide */}
-          <div className="px-3 py-2 border-t border-[rgba(236,236,237,0.08)] bg-[#151517] flex items-center justify-between text-[10px] text-neutral-400">
-            <div className="flex items-center gap-3">
-              <span>Use <kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">↑</kbd> <kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">↓</kbd> to navigate</span>
-              <span><kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Enter</kbd> to select</span>
-              <span><kbd className="px-1 py-0.5 rounded bg-[#1e1e21] border border-[rgba(236,236,237,0.08)] font-mono text-neutral-300">Esc</kbd> to close</span>
-            </div>
-            <span className="font-mono text-neutral-400">{symbols.length.toLocaleString()} instruments available</span>
-          </div>
         </div>
       )}
     </div>

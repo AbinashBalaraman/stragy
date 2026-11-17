@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { requestMarketSnapshot, requestScan, RESEARCH_DEADLINE_MS } from '../../client/api';
+import { requestBacktest, requestMarketSnapshot, requestScan, RESEARCH_DEADLINE_MS, RESEARCH_QUEUE_LIMIT_MS } from '../../client/api';
 import { strategy } from '../fixtures/research';
 
 const receipt = { schemaVersion: 2, jobId: 'fixture-job', status: 'queued' };
@@ -21,7 +21,7 @@ describe('bounded asynchronous research job client', () => {
       return response({ id: receipt.jobId, kind: 'scan', status: 'running' });
     });
     const promise = requestScan(input());
-    const assertion = expect(promise).rejects.toMatchObject({ code: 'CLIENT_DEADLINE' });
+    const assertion = expect(promise).rejects.toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The scan took too long and was stopped. No zero-match conclusion was made.' });
     await vi.advanceTimersByTimeAsync(119_000);
     let settled = false;
     void promise.then(() => { settled = true; }, () => { settled = true; });
@@ -30,6 +30,44 @@ describe('bounded asynchronous research job client', () => {
     await vi.advanceTimersByTimeAsync(181_000);
     await assertion;
     expect(fetchMock.mock.calls.some(call => call[1]?.method === 'DELETE')).toBe(true);
+  });
+
+  it('keeps a queued backtest alive and starts its execution deadline only when it runs', async () => {
+    expect(RESEARCH_QUEUE_LIMIT_MS).toBe(300_000);
+    const phases: string[] = [];
+    const started = Date.now();
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/backtests') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      if (Date.now() - started < 120_000) return response({ id: receipt.jobId, kind: 'backtest', status: 'queued', stage: 'waiting', queuedBehind: 1 });
+      return response({ id: receipt.jobId, kind: 'backtest', status: 'running', stage: 'simulation' });
+    });
+    const outcome = requestBacktest(strategy(), undefined, {}, phase => phases.push(phase)).catch(error => error);
+    await vi.advanceTimersByTimeAsync(163_000);
+    let settled = false;
+    void outcome.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(phases).toContain('waiting');
+    expect(phases.at(-1)).toBe('running');
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await outcome).toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The backtest took too long and was stopped. Try again.' });
+  });
+
+  it('stops a backtest that has waited five minutes in the queue', async () => {
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/backtests') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      return response({ id: receipt.jobId, kind: 'backtest', status: 'queued', stage: 'waiting' });
+    });
+    const outcome = requestBacktest(strategy()).catch(error => error);
+    await vi.advanceTimersByTimeAsync(299_000);
+    let settled = false;
+    void outcome.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(await outcome).toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The backtest took too long and was stopped. Try again.' });
   });
 
   it('uses v2 submission/polling instead of legacy synchronous scan routes', async () => {
@@ -47,6 +85,27 @@ describe('bounded asynchronous research job client', () => {
     expect(fetchMock.mock.calls.slice(1).every(call => call[0] === '/api/v2/jobs/fixture-job')).toBe(true);
     expect(fetchMock.mock.calls.some(call => call[1]?.method === 'DELETE')).toBe(false);
   });
+  it('reports queued and running market progress without inventing counts', async () => {
+    const events: Array<{ status: string; stage?: string; queuedBehind?: number }> = [];
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/market-snapshots') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      if (fetchMock.mock.calls.filter(call => String(call[0]).startsWith('/api/v2/jobs/')).length < 2) {
+        return response({ id: receipt.jobId, kind: 'market', status: 'queued', stage: 'waiting', queuedBehind: 2 });
+      }
+      if (!events.some(event => event.status === 'running')) return response({ id: receipt.jobId, kind: 'market', status: 'running', stage: 'market' });
+      return response(done('market', market()));
+    });
+    const result = requestMarketSnapshot({ universe: 'NIFTY_50' }, undefined, progress => events.push(progress));
+    await vi.advanceTimersByTimeAsync(6000);
+    expect((await result).universe).toBe('NIFTY_50');
+    expect(events).toEqual([
+      { status: 'queued' },
+      { status: 'queued', stage: 'waiting', queuedBehind: 2 },
+      { status: 'running', stage: 'market' },
+    ]);
+  });
+
   it('uses one v2 market snapshot job, not parallel legacy trends and movers waits', async () => {
     fetchMock.mockResolvedValueOnce(response(receipt, 202)).mockResolvedValueOnce(response(done('market', market())));
     expect((await requestMarketSnapshot({ universe: 'NIFTY_50' })).coverage.succeeded).toBe(0);

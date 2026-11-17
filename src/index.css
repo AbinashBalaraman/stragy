@@ -302,6 +302,12 @@ select {
   caret-color: var(--accent);
 }
 
+/* The symbol-search field has one focus border of its own. */
+.st-symbol-search:focus,
+.st-symbol-search:focus-visible {
+  outline: none;
+}
+
 /* P2-4: honour reduced motion globally (research/chat-ui-research.md §2.7). */
 @media (prefers-reduced-motion: reduce) {
   *,

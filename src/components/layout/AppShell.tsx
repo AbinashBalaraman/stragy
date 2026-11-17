@@ -46,7 +46,7 @@ const NavItems: React.FC<{
   const itemClass = (active: boolean) =>
     `flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm ${active ? 'bg-white/[0.08] text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200'}`;
   return (
-    <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1">
+    <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain pb-2 pr-0.5">
       <button
         type="button"
         onClick={onNewChat}
@@ -240,7 +240,7 @@ export const AppShell: React.FC<Props> = ({ activeView, onNavigate, onNewChat, d
               onNavigate={navigate}
               onNewChat={newChat}
             />
-            <div className="mt-auto space-y-2 pt-6 text-[11px] text-[var(--text-3)]">
+            <div className="shrink-0 space-y-2 border-t border-white/8 pt-3 text-[11px] text-[var(--text-3)]">
               {statusFooter}
               <p className="text-[10px] leading-4 text-[var(--text-3)]">Backtests use daily bars</p>
               {footer}

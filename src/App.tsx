@@ -207,7 +207,10 @@ export default function App() {
       return result;
     } catch (error) {
       if (owner.current.owns(id)) {
-        setRunError((error as Error).message);
+        const message = (error as Error).message;
+        setRunError(/rate limit|provider_rate_limited|busy/i.test(message)
+          ? "The backtest didn't finish: Angel One is busy with the scanner. Try again in a minute."
+          : message);
         throw error;
       }
       return null;
@@ -354,8 +357,8 @@ export default function App() {
       liveQuotes={liveQuoteStatus}
       footer={footer}
     >
-      {runError && (
-        <div role="alert" className="shrink-0 border-b border-red-400/20 bg-red-400/5 px-4 py-2 text-xs text-red-200 sm:px-6">
+      {runError && activeView !== 'builder' && (
+        <div role="alert" className="shrink-0 border-b border-[var(--warn)]/20 bg-[var(--warn)]/[0.03] px-4 py-2 text-xs text-[#f5d383] sm:px-6">
           {runError}
         </div>
       )}
@@ -392,6 +395,7 @@ export default function App() {
             onRunBacktest={handleRunBacktest}
             isLoading={isLoading}
             runPhase={runPhase}
+            runError={runError}
             symbols={symbols}
             onSymbolChange={handleSymbolChange}
             showReferencePrices={dataMode === 'demo'}

@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StrategyAST, StockTrendData, MarketMoversData, type RuleNode } from '../../shared/strategy/types';
 import { plainRule } from '../../client/plainRules';
 import { PrefillNote } from '../common/PrefillNote';
+import { DataTable, type DataColumn } from '../common/DataTable';
 import type { ScannerPrefill } from '../../shared/contracts/featureRegistry';
-import { requestMarketSnapshot, requestScan } from '../../client/api';
+import { requestMarketSnapshot, requestScan, type ResearchJobProgress } from '../../client/api';
+import { marketLoadingMessage } from './marketLoading';
 import { useLiveQuotes, formatLivePrice, formatLiveChange, liveQuoteTime, liveQuoteTimeTitle, type LiveQuote } from '../../client/liveQuotes';
 import { actualDataCutoff, scannerContextKey, ScannerRequestOwner } from './scannerRequestContext';
 import { OptionChainScanner } from './OptionChainScanner';
@@ -17,7 +19,6 @@ import {
   CheckCircle2,
   TrendingUp,
   TrendingDown,
-  ArrowRight,
   Zap,
   Activity,
   Flame,
@@ -30,8 +31,6 @@ import {
   Clock,
   Sparkles,
   Info,
-  ChevronLeft,
-  ChevronRight,
   ChevronDown,
   TrendingUpDown,
   Compass,
@@ -119,6 +118,8 @@ function fullDay(iso: string | null | undefined): string {
 /** "2026-11-16" -> "16 Nov"; never an ambiguous MM-DD. */
 function shortDay(iso: string | null | undefined): string {
   if (!iso) return 'the latest session';
+  const formatted = iso.match(/^(\d{1,2}) ([A-Za-z]{3}) (\d{4})$/);
+  if (formatted) return formatted[1].padStart(2, '0') + ' ' + formatted[2];
   const date = new Date(iso + 'T00:00:00Z');
   return Number.isFinite(date.getTime())
     ? date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' })
@@ -179,20 +180,10 @@ const scannerDateTime = (value: string | null | undefined): string => {
   return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST';
 };
 
-const ScannerLoadingSkeleton: React.FC = () => (
-  <div role="status" aria-live="polite" className="rounded-2xl border border-[rgba(236,236,237,0.08)] bg-[#171719] p-4 sm:p-5 space-y-4">
-    <div className="h-3 w-64 max-w-full rounded bg-white/[0.07] animate-pulse" />
-    <div className="h-3 w-96 max-w-full rounded bg-white/[0.04] animate-pulse" />
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
-      {[0, 1].map(column => (
-        <div key={column} className="space-y-2.5">
-          {[0, 1, 2].map(row => (
-            <div key={row} className="h-14 rounded-xl border border-[rgba(236,236,237,0.06)] bg-[#151517] animate-pulse" />
-          ))}
-        </div>
-      ))}
-    </div>
-    <span className="sr-only">Loading market snapshot…</span>
+const ScannerLoadingState: React.FC<{ message: string }> = ({ message }) => (
+  <div role="status" aria-live="polite" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-10 text-center">
+    <p className="text-sm text-[var(--text-1)]">{message}</p>
+    <p className="mt-1 text-xs text-[var(--text-3)]">No partial rankings are shown while prices load.</p>
   </div>
 );
 
@@ -278,8 +269,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
   const [trendFilter, setTrendFilter] = useState<'ALL' | 'BULLISH' | 'OVERSOLD' | 'BREAKOUT' | 'GOLDEN_CROSS'>('ALL');
   const [trendSearchQuery, setTrendSearchQuery] = useState('');
-  const [trendPage, setTrendPage] = useState(1);
-  const TREND_ITEMS_PER_PAGE = 40;
   const [isScanning, setIsScanning] = useState(false);
   const [isLoadingTrends, setIsLoadingTrends] = useState(false);
   const [scanResult, setScanResult] = useState<Awaited<ReturnType<typeof requestScan>> | null>(null);
@@ -299,6 +288,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [latestDataCutoff, setLatestDataCutoff] = useState('');
   const [scannerError, setScannerError] = useState('');
   const [marketError, setMarketError] = useState('');
+  const [marketProgress, setMarketProgress] = useState<ResearchJobProgress | null>(null);
   const [scanError, setScanError] = useState('');
   const [coverageLabel, setCoverageLabel] = useState('Coverage not yet reported');
   const [coverageDetail, setCoverageDetail] = useState('Coverage details not yet reported.');
@@ -345,11 +335,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     const ticket = marketOwner.current.begin(contextKey);
     setIsLoadingTrends(true);
     setMarketError(''); setScannerError('');
+    setMarketProgress(null);
     setTrends([]); setMovers(null); setDataCutoff(''); setMarketEvaluated(0);
     setPriceLabel('Price source not yet reported');
     setCoverageLabel('Coverage not yet reported');setCoverageDetail('Coverage details not yet reported.');setDataEvidence(null);
     try {
-      const data = await requestMarketSnapshot({ universe: selectedUniverse, asOf: selectedDate || undefined }, ticket.signal);
+      const data = await requestMarketSnapshot({ universe: selectedUniverse, asOf: selectedDate || undefined }, ticket.signal, setMarketProgress);
       if (!marketOwner.current.owns(ticket, currentContext.current)) return;
       if (data.coverage.succeeded > 0) recordCutoff(data);
       setTrends(data.trends);setDataEvidence(data);
@@ -440,7 +431,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     if (newUniv === selectedUniverse) return;
     marketOwner.current.cancel(); scanOwner.current.cancel();
     setSelectedUniverse(newUniv);
-    setTrendPage(1);
     onUniverseChange?.(newUniv);
   };
 
@@ -448,7 +438,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     if (newDate === selectedDate) return;
     marketOwner.current.cancel(); scanOwner.current.cancel();
     setSelectedDate(newDate);
-    setTrendPage(1);
   };
 
   // Filter trends based on active filter chip and search query
@@ -468,19 +457,67 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     return true;
   });
 
-  const totalTrendPages = Math.max(1, Math.ceil(filteredTrends.length / TREND_ITEMS_PER_PAGE));
-  const currentPageSafe = Math.min(trendPage, totalTrendPages);
-  const paginatedTrends = filteredTrends.slice(
-    (currentPageSafe - 1) * TREND_ITEMS_PER_PAGE,
-    currentPageSafe * TREND_ITEMS_PER_PAGE
-  );
+  const trendColumns: DataColumn<StockTrendData>[] = [
+    {
+      key: 'symbol',
+      header: 'Symbol',
+      className: 'max-sm:max-w-[190px]',
+      render: t => (
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-sm font-medium text-[var(--text-1)]">{t.ticker}</span>
+            <span className="text-[11px] text-[var(--text-3)]">{t.sector}</span>
+          </div>
+          <p className="max-sm:hidden truncate text-[11px] text-[var(--text-3)]">{t.name}</p>
+          <p className="line-clamp-2 text-[11px] text-[var(--text-3)] sm:hidden">{t.trendLabel}</p>
+        </div>
+      ),
+    },
+    { key: 'close', header: 'Close ₹', align: 'right', render: t => scannerPrice(t.ltp) },
+    {
+      key: 'change',
+      header: 'Change',
+      align: 'right',
+      hideOnMobile: true,
+      render: t => <span className={t.changePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}>{scannerPercent(t.changePercent)}</span>,
+    },
+    {
+      key: 'live',
+      header: 'Live',
+      align: 'right',
+      hideOnMobile: true,
+      render: t => {
+        const quote = liveQuoteFor(t.id);
+        return quote
+          ? <span className="text-[var(--text-2)]" title={liveQuoteTimeTitle(quote)}>{formatLivePrice(quote.ltp)}</span>
+          : <span className="text-[var(--text-3)]">—</span>;
+      },
+    },
+    { key: 'regime', header: 'Regime', hideOnMobile: true, render: t => <span className="text-[var(--text-2)]">{t.trendLabel}</span> },
+    { key: 'rsi', header: 'RSI', align: 'right', hideOnMobile: true, render: t => scannerNumber(t.rsi, 1) },
+    {
+      key: 'action',
+      header: 'Action',
+      align: 'right',
+      render: t => (
+        <button
+          type="button"
+          onClick={() => launchBacktest(t.id, t.date)}
+          className="inline-flex min-h-9 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-2.5 py-1 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
+          aria-label={'Backtest ' + t.ticker}
+        >
+          Backtest
+        </button>
+      ),
+    },
+  ];
 
   // Up to 10 visible cards: top five gainers + top five losers, or ten trend cards.
   const moverQuoteIds = [
     ...(movers?.topGainers ?? []).slice(0, 5).map(stock => stock.id),
     ...(movers?.topLosers ?? []).slice(0, 5).map(stock => stock.id),
   ];
-  const trendQuoteIds = paginatedTrends.slice(0, 10).map(trend => trend.id);
+  const trendQuoteIds = filteredTrends.slice(0, 10).map(trend => trend.id);
   const hasLiveOverlay = activeTab === 'movers' || activeTab === 'trends';
   const liveQuoteIds = activeTab === 'movers' ? moverQuoteIds : activeTab === 'trends' ? trendQuoteIds : [];
   const liveQuotes = useLiveQuotes(Array.from(new Set(liveQuoteIds)).slice(0, 10), {
@@ -723,7 +760,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         />
       )}
 
-      {initialLoading && !modelOnlyTab ? <ScannerLoadingSkeleton /> : (<>
+      {initialLoading && !modelOnlyTab ? <ScannerLoadingState message={marketLoadingMessage(marketProgress, currentUniverseConfig.shortLabel)} /> : (<>
       {/* TAB 1: TOP GAINERS & TOP LOSERS */}
       {activeTab === 'movers' && (
         <section aria-label="Top gainers and losers" className="space-y-3">
@@ -944,11 +981,15 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
       {(modelModeUnavailable || modelPending) && (
         <div role="status" className="space-y-3 rounded-[var(--r-card)] border border-dashed border-[var(--line-strong)] px-4 py-10 text-center">
-          <p className="text-sm font-medium text-[var(--text-1)]">The {latestOnlyLabel} view is a fictional demo model</p>
+          <p className="text-sm font-medium text-[var(--text-1)]">
+            {activeTab === 'option_chain' ? "Option chain isn't available" : `The ${latestOnlyLabel} view is a fictional demo model`}
+          </p>
           <p className="mx-auto max-w-xl text-xs leading-5 text-[var(--text-3)]">
-            {dataEvidence?.mode === 'real'
-              ? 'This server is running real observed market data, so model-only derivatives are disabled. No observed derivative, synthetic price or live quote is substituted here.'
-              : 'Model-only fields are demo values, not observed derivatives. Nothing here is live or an observed quote.'}
+            {activeTab === 'option_chain'
+              ? "Stragy only shows real observed data, and there's no real option-chain feed yet."
+              : dataEvidence?.mode === 'real'
+                ? 'This server is running real observed market data, so model-only derivatives are disabled. No observed derivative, synthetic price or live quote is substituted here.'
+                : 'Model-only fields are demo values, not observed derivatives. Nothing here is live or an observed quote.'}
           </p>
           <button
             type="button"
@@ -961,22 +1002,22 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       )}
 
       {/* TAB: OPTION CHAIN & GREEKS */}
-      {activeTab === 'option_chain' && !latestOnlyUnavailable && !modelModeUnavailable && (
+      {activeTab === 'option_chain' && !latestOnlyUnavailable && !modelModeUnavailable && !modelPending && (
         <OptionChainScanner key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
       {/* TAB: VOLUME PROFILE & MICROSTRUCTURE VWAP */}
-      {activeTab === 'volume_profile' && !latestOnlyUnavailable && !modelModeUnavailable && (
+      {activeTab === 'volume_profile' && !latestOnlyUnavailable && !modelModeUnavailable && !modelPending && (
         <VolumeProfileScanner key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
       {/* TAB: AUTOMATED GTT BRACKET & TRAILING STOP-LOSS ORDER CALCULATOR */}
-      {activeTab === 'gtt_bracket' && !latestOnlyUnavailable && !modelModeUnavailable && (
+      {activeTab === 'gtt_bracket' && !latestOnlyUnavailable && !modelModeUnavailable && !modelPending && (
         <GttBracketCalculator key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
       {/* TAB: CASH VS FUTURES BASIS & CALENDAR SPREAD SCANNER */}
-      {activeTab === 'basis_spreads' && !latestOnlyUnavailable && !modelModeUnavailable && (
+      {activeTab === 'basis_spreads' && !latestOnlyUnavailable && !modelModeUnavailable && !modelPending && (
         <BasisSpreadScanner key={contextKey} onSelectStockAndBacktest={symbolId => launchBacktest(symbolId)} />
       )}
 
@@ -1038,9 +1079,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         <section aria-label="Technical regimes" className="space-y-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
             <div>
-              <h3 className="text-sm font-semibold text-neutral-100">Technical regimes — {currentUniverseConfig.shortLabel}</h3>
-              <p className="mt-1 text-[11px] text-neutral-500">
-                Showing {filteredTrends.length} evaluated constituents. Technical ranks use the {rankingSession} EOD session. Live LTPs are a separate overlay.
+              <h3 className="st-title font-semibold text-[var(--text-1)]">Technical regimes</h3>
+              <p className="st-meta mt-1 text-[var(--text-3)]">
+                {filteredTrends.length} {filteredTrends.length === 1 ? 'stock' : 'stocks'} · {shortDay(rankingSession)} close. Live prices shown separately.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-1">
@@ -1048,10 +1089,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 <button
                   key={f}
                   type="button"
-                  onClick={() => {
-                    setTrendFilter(f);
-                    setTrendPage(1);
-                  }}
+                  onClick={() => setTrendFilter(f)}
                   aria-pressed={trendFilter === f}
                   className={'rounded-md border px-2 py-1 text-[11px] transition-colors ' + (trendFilter === f ? 'border-[#a8c7fa]/40 bg-white/[0.06] text-neutral-100' : 'border-white/10 text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-200')}
                 >
@@ -1070,10 +1108,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             <input
               type="text"
               value={trendSearchQuery}
-              onChange={e => {
-                setTrendSearchQuery(e.target.value);
-                setTrendPage(1);
-              }}
+              onChange={e => setTrendSearchQuery(e.target.value)}
               placeholder={`Search ${trends.length > 0 ? trends.length : 'the'} evaluated symbols (ticker, name or sector)`}
               aria-label="Search technical regimes"
               className="w-full rounded-lg border border-white/12 bg-[#171719] py-2 pl-9 pr-16 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-[#a8c7fa]/60 focus:outline-none"
@@ -1081,10 +1116,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             {trendSearchQuery && (
               <button
                 type="button"
-                onClick={() => {
-                  setTrendSearchQuery('');
-                  setTrendPage(1);
-                }}
+                onClick={() => setTrendSearchQuery('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] text-neutral-400 hover:bg-white/5 hover:text-neutral-200"
               >
                 Clear
@@ -1107,76 +1139,15 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </div>
           ) : (
             <>
-              <ul className="divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-[#171719]">
-                {paginatedTrends.map(t => {
-                  const quote = liveQuoteFor(t.id);
-                  return (
-                    <li key={'trend_' + t.id + '_' + t.ticker} className="space-y-2 px-4 py-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-baseline gap-x-2">
-                            <span className="text-sm font-medium text-neutral-100">{t.ticker}</span>
-                            <span className="text-[11px] text-neutral-500">{t.sector}</span>
-                          </div>
-                          <p className="truncate text-[11px] text-neutral-500">{t.name}</p>
-                          {quote && <QuoteMeta quote={quote} eodClose={t.ltp} className="mt-1" />}
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <div className="st-tnum text-xs text-[var(--text-1)]">{scannerPrice(t.ltp)}</div>
-                          <div className={'st-tnum text-[11px] ' + (t.changePercent >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]')}>{scannerPercent(t.changePercent)}</div>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-neutral-400">
-                        <span className="flex items-center gap-1.5">
-                          <span aria-hidden="true" className={'h-1.5 w-1.5 rounded-full ' + (t.trend === 'STRONG_BULLISH' ? 'bg-emerald-400' : t.trend === 'BULLISH' ? 'bg-emerald-500' : t.trend === 'OVERSOLD_REVERSAL' ? 'bg-amber-400' : 'bg-rose-400')} />
-                          <span className="text-neutral-300">{t.trendLabel}</span>
-                        </span>
-                        <span className="text-neutral-500">{t.signalLabel}</span>
-                        <span className="st-tnum text-[var(--text-3)]">RSI {scannerNumber(t.rsi, 1)}</span>
-                        <span className="st-tnum text-[var(--text-3)]">20 EMA {scannerPrice(t.ema20)}</span>
-                        <span className="st-tnum text-[var(--text-3)]">50 SMA {scannerPrice(t.sma50)}</span>
-                        <span className="st-tnum text-[var(--text-3)]">H/L {scannerNumber(t.high)} / {scannerNumber(t.low)}</span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => launchBacktest(t.id, t.date)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1 text-[11px] text-neutral-300 transition-colors hover:border-[#a8c7fa]/40 hover:bg-white/[0.04]"
-                      >
-                        <span>Backtest {t.ticker} with the active strategy</span>
-                        <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-
-              {totalTrendPages > 1 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/8 bg-[#171719] px-4 py-2.5 text-[11px] text-neutral-400">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setTrendPage(p => Math.max(1, p - 1))}
-                      disabled={currentPageSafe <= 1}
-                      className="inline-flex items-center gap-1 rounded-lg border border-white/12 px-2.5 py-1 text-neutral-300 hover:bg-white/[0.04] disabled:pointer-events-none disabled:opacity-40"
-                    >
-                      <ChevronLeft className="h-3 w-3" aria-hidden="true" />
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTrendPage(p => Math.min(totalTrendPages, p + 1))}
-                      disabled={currentPageSafe >= totalTrendPages}
-                      className="inline-flex items-center gap-1 rounded-lg border border-white/12 px-2.5 py-1 text-neutral-300 hover:bg-white/[0.04] disabled:pointer-events-none disabled:opacity-40"
-                    >
-                      Next
-                      <ChevronRight className="h-3 w-3" aria-hidden="true" />
-                    </button>
-                  </div>
-                  <span>Page {currentPageSafe} of {totalTrendPages} · {filteredTrends.length} matching symbols</span>
-                </div>
-              )}
+              <DataTable
+                caption="Technical regimes"
+                columns={trendColumns}
+                rows={filteredTrends}
+                rowKey={t => 'trend_' + t.id + '_' + t.ticker}
+                initialLimit={20}
+                fitMobile
+                empty="No matching stocks in the evaluated subset."
+              />
             </>
           )}
         </section>

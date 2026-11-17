@@ -67,6 +67,20 @@ describe('calm app shell', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('keeps the drawer footer in normal flow below a scrollable nav list', () => {
+    renderShell();
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    const dialog = screen.getByRole('dialog', { name: 'Navigation menu' });
+    const nav = within(dialog).getByRole('navigation', { name: 'Primary' });
+    expect(nav.className).toContain('overflow-y-auto');
+    expect(nav.className).toContain('min-h-0');
+    expect(nav.className).toContain('flex-1');
+    const footer = dialog.lastElementChild as HTMLElement;
+    expect(footer.className).toContain('shrink-0');
+    expect(footer.contains(nav)).toBe(false);
+    expect(footer.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
   it('closes on Escape, restores focus to the trigger and keeps Tab inside the drawer', () => {
     renderShell();
     const trigger = screen.getByRole('button', { name: 'Open navigation' });
