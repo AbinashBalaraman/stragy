@@ -472,6 +472,29 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const activePending = isStrategyView ? isScanning : isLoadingTrends;
   const marketWaiting = isLoadingTrends || Boolean(marketDeadline);
   const initialLoading = !dataEvidence && !activeError && !marketDeadline && !marketCancelled;
+  const pendingSession = selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0]?.date;
+  const observedMarketSession = movers?.asOfDate || dataCutoff;
+  const scanPending = isStrategyView && !scanError && !scanResult;
+  const scanRunning = isScanning || scanPending;
+  const strategySession = scanResult?.asOf || dataCutoff || selectedDate;
+  // A request that has not reported yet is checking, not unavailable; the loading
+  // panel below already says the first load can take minutes.
+  const sessionHeadline = isStrategyView
+    ? scanRunning
+      ? 'checking ' + (selectedDate ? fullDay(selectedDate) : 'latest close') + '…'
+      : strategySession ? 'end-of-day ' + fullDay(strategySession) : 'latest close'
+    : marketWaiting || initialLoading
+      ? 'checking ' + (pendingSession ? fullDay(pendingSession) : 'latest close') + '…'
+      : 'end-of-day ' + (movers?.formattedDate || (observedMarketSession ? fullDay(observedMarketSession) : 'session unavailable'));
+  const scanTitle = scanError
+    ? "The strategy scan didn't finish"
+    : scanResult
+      ? scanResult.matched > 0
+        ? scanResult.matched + (scanResult.matched === 1 ? ' match' : ' matches') + ' for “' + strategy.name + '” in ' + currentUniverseConfig.shortLabel
+        : scanResult.succeeded > 0
+          ? 'No matches for “' + strategy.name + '” in ' + currentUniverseConfig.shortLabel
+          : 'Strategy scan unavailable for “' + strategy.name + '” in ' + currentUniverseConfig.shortLabel
+      : 'Scanning ' + currentUniverseConfig.shortLabel + ' with “' + strategy.name + '”…';
 
   const handleUniverseChange = (newUniv: MarketUniverseType) => {
     if (newUniv !== 'NIFTY_50' || newUniv === selectedUniverse) return;
@@ -607,11 +630,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
               <span className="text-neutral-200">{currentUniverseConfig.shortLabel}</span>
               <span aria-hidden="true">·</span>
-              <span>{marketWaiting
-                ? (selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0]?.date
-                  ? fullDay(selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0].date)
-                  : 'latest close')
-                : 'end-of-day ' + (movers?.formattedDate || fullDay(movers?.asOfDate || dataCutoff))}</span>
+              <span>{sessionHeadline}</span>
               {hasLiveOverlay && !initialLoading && !marketDeadline && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -819,12 +838,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         </div>
       </section>
 
-      {isScanning && scanSlow && (
-        <p role="status" className="st-meta rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-3)]">
-          Still scanning · Angel One allows 2 requests a second
-        </p>
-      )}
-
       {prefill && (
         <PrefillNote
           assumptions={prefill.assumptions}
@@ -837,7 +850,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <p className="text-sm text-[var(--text-1)]">Market load cancelled.</p>
           <button type="button" onClick={() => void fetchMarketData()} className="mt-3 rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]">Load market data</button>
         </div>
-      ) : initialLoading && !modelOnlyTab ? <ScannerLoadingState message={marketLoadingMessage(marketProgress, currentUniverseConfig.shortLabel)} /> : (<>
+      ) : initialLoading && !modelOnlyTab && !isStrategyView ? <ScannerLoadingState message={marketLoadingMessage(marketProgress, currentUniverseConfig.shortLabel)} /> : (<>
       {/* TAB 1: TOP GAINERS & TOP LOSERS */}
       {activeTab === 'movers' && (
         <section aria-label="Top gainers and losers" className="space-y-3">
@@ -1235,11 +1248,11 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         <section aria-label="Strategy matches" className="space-y-3">
           <div className="space-y-2 px-1">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="st-title font-semibold text-[var(--text-1)]">Scanning {currentUniverseConfig.shortLabel} with “{strategy.name}”</h3>
-              <span className="st-meta text-[var(--text-3)]">{initialLoading ? 'Loading session…' : shortDay(scanResult?.asOf || dataCutoff) + ' close'}</span>
+              <h3 className="st-title font-semibold text-[var(--text-1)]">{scanTitle}</h3>
+              <span className="st-meta text-[var(--text-3)]">{scanRunning ? (selectedDate ? fullDay(selectedDate) : 'Latest close') : strategySession ? shortDay(strategySession) + ' close' : 'Latest close'}</span>
             </div>
             <p className="st-meta leading-5 text-[var(--text-3)]">
-              {initialLoading ? 'Loading the latest close…' : `Stocks where every entry rule is true on the ${shortDay(scanResult?.asOf || dataCutoff)} close.`}
+              {strategySession ? `Stocks where every entry rule is true on the ${shortDay(strategySession)} close.` : 'Stocks where every entry rule is true on the latest close.'}
             </p>
             {(strategy.rules?.entry ?? []).length > 0 ? (
               <ul className="space-y-1">
@@ -1264,9 +1277,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             </p>
           )}
 
-          {isScanning ? (
+          {scanRunning ? (
             <div role="status" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-10 text-center st-meta text-[var(--text-3)]">
-              <p>Evaluating the entry conditions against {currentUniverseConfig.shortLabel}. Coverage may be partial.</p>
+              <p>{scanSlow
+                ? 'Still scanning · Angel One allows 2 requests a second'
+                : `Scanning ${currentUniverseConfig.shortLabel} with your strategy… This can take up to 4 minutes on a cold load.`}</p>
+              {!scanSlow && <p className="mt-1">Coverage may be partial.</p>}
             </div>
           ) : !scanError && scanResult && scanResult.matches.length > 0 ? (
             <ul className="divide-y divide-[var(--line)] border-t border-[var(--line)]">

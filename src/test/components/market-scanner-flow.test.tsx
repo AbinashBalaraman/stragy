@@ -168,6 +168,8 @@ describe('bounded lazy market scanner flow', () => {
     market.mockImplementationOnce(() => new Promise(() => {}));
     renderScanner();
     expect(screen.getByText(/Loading Nifty 50 prices/)).toBeTruthy();
+    expect(screen.getByText('checking latest close…')).toBeTruthy();
+    expect(screen.queryByText(/session unavailable/)).toBeNull();
     expect(screen.queryByText('checking live prices…')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     expect(screen.queryByText('Refreshing…')).toBeNull();
@@ -238,6 +240,18 @@ describe('bounded lazy market scanner flow', () => {
     expect(document.body.textContent).toContain('AAA, BBB, CCC, DDD');
   });
 
+  it('says the session is unavailable only after an empty snapshot finishes', async () => {
+    market.mockResolvedValueOnce({
+      ...snapshot(), mode: 'real', trends: [], provenance: undefined,
+      coverage: { requested: 84, succeeded: 0, unavailable: 84 }, sourceCoverage: {}, movers: null,
+    } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    renderScanner();
+
+    expect((await screen.findAllByText('Gainers unavailable: no evaluated price coverage.')).length).toBeGreaterThan(0);
+    expect(screen.getByText(/end-of-day session unavailable/)).toBeTruthy();
+    expect(screen.queryByText(/checking latest close…/)).toBeNull();
+  });
+
   it('never turns unavailable market data into no gainers, no losers, or zero breadth', async () => {
     market.mockResolvedValueOnce({ ...snapshot(), mode: 'real', trends: [], provenance: undefined, coverage: { requested: 84, succeeded: 0, unavailable: 84 }, sourceCoverage: {}, movers: { asOfDate: '2025-01-02', formattedDate: '2025-01-02', totalFilteredCount: 0, topGainers: [], topLosers: [], volumeShockers: [], nearFiftyTwoWeekHigh: [], nearFiftyTwoWeekLow: [], derivativesBuildup: { longBuildup: [], shortCovering: [], shortBuildup: [], longUnwinding: [] }, sectorHeatmap: [], marketBreadth: { advances: 0, declines: 0, unchanged: 0, advanceDeclineRatio: 0, bullishPercent: 0 } } } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
     const onBacktest = vi.fn();
@@ -271,6 +285,47 @@ describe('bounded lazy market scanner flow', () => {
     await waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
     fireEvent.click(await screen.findByRole('button', { name: 'Backtest TEST' }));
     expect(onBacktest).toHaveBeenLastCalledWith(7, '2025-01-01');
+  });
+
+  it('shows strategy-scan loading copy instead of market loading copy and finishes with a result title', async () => {
+    const pending = deferred<Awaited<ReturnType<typeof requestScan>>>();
+    scan.mockReturnValueOnce(pending.promise);
+    renderScanner();
+    openMatches();
+
+    expect(screen.getByText(/Scanning Nifty 50 with your strategy… This can take up to 4 minutes on a cold load\./)).toBeTruthy();
+    expect(screen.queryByText(/Loading Nifty 50 prices/)).toBeNull();
+    expect(screen.queryByText(/session unavailable/)).toBeNull();
+    expect(screen.getByText('checking latest close…')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Scanning Nifty 50 with “Test rules”…' })).toBeTruthy();
+
+    const matches = Array.from({ length: 9 }, (_, index) => ({
+      symbolId: index + 1, ticker: 'T' + index, name: 'Stock ' + index, sector: 'IT', lastDate: '2025-01-02',
+      lastClose: 100, changePercent: 1, matchedRules: [], indicatorValues: {},
+      provenance: { mode: 'real', actualRange: { end: '2025-01-02' } },
+    }));
+    await act(async () => { pending.resolve(scanResult({ asOf: '2025-01-02', matched: 9, matches })); });
+
+    expect(await screen.findByRole('heading', { name: '9 matches for “Test rules” in Nifty 50' })).toBeTruthy();
+    expect(screen.getByText(/end-of-day 02 Jan 2025/)).toBeTruthy();
+    expect(screen.queryByText(/session unavailable/)).toBeNull();
+  });
+
+  it('names a finished scan with no matches instead of saying it is still scanning', async () => {
+    scan.mockResolvedValueOnce(scanResult({ matched: 0, matches: [] }));
+    renderScanner();
+    openMatches();
+    expect(await screen.findByRole('heading', { name: 'No matches for “Test rules” in Nifty 50' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: /Scanning Nifty 50 with/ })).toBeNull();
+  });
+
+  it('names a failed strategy scan and keeps the retry action', async () => {
+    scan.mockRejectedValueOnce(new Error('HTTP 504'));
+    renderScanner();
+    openMatches();
+    expect(await screen.findByRole('heading', { name: "The strategy scan didn't finish" })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry strategy scan' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: /Scanning Nifty 50 with/ })).toBeNull();
   });
 
   it('shows one loading skeleton instead of false unavailable copy before market data arrives', async () => {
