@@ -371,6 +371,10 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [jumpVisible, setJumpVisible] = useState(false);
   /** Apply-and-backtest: the draft id plus the exact strategy the workspace must hold. */
   const [pendingDraftBacktest, setPendingDraftBacktest] = useState<{ id: string; snapshot: string } | null>(null);
+  /** One absolute deadline per apply: re-renders can neither postpone nor cancel it. */
+  const pendingBacktestDeadline = useRef(0);
+  /** The workspace as last rendered, read when that deadline fires. */
+  const latestWorkspace = useRef<{ applied: string | null; snapshot: string }>({ applied: null, snapshot: '' });
   /** Last request text, so a failed apply-to-review can offer its retry. */
   const lastPromptRef = useRef('');
   /** A send asks for the answer: follow it until the reader scrolls by hand. */
@@ -434,6 +438,15 @@ export const AiCopilotDock: React.FC<Props> = ({
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const imageGeneration = useRef(0);
   const snapshot = JSON.stringify(strategy);
+  if (pendingDraftBacktest) {
+    // Only while an apply is waiting: the deadline timer needs the workspace as
+    // of the newest render, which may commit after the timer was armed.
+    try {
+      latestWorkspace.current = { applied, snapshot: JSON.stringify(snapshotStrategy(strategy)) };
+    } catch {
+      latestWorkspace.current = { applied, snapshot: '' };
+    }
+  }
   const full = variant === 'full';
   const busy = loading || scanPending || reviewStatus === 'running';
   const canSubmit = !loading && reviewStatus !== 'running' && !preparingImage && !pendingApply.current && (!!prompt.trim() || !!chartImage);
@@ -998,6 +1011,26 @@ export const AiCopilotDock: React.FC<Props> = ({
       askForSymbol(sourceType, 'I found more than one possible stock: ' +
         resolution.candidates.map(candidate => candidate.ticker + ' (' + candidate.name + ')').join(', ') +
         '. Reply with the exact NSE ticker to use. Nothing was run.');
+      return;
+    }
+    /**
+     * "Backtest the top match" needs no ticker when the finished scan still
+     * owns the conversation: the first row is the answer, and it goes through
+     * the same review path as that row's Backtest button.
+     */
+    const refersToTopRow = /\b(?:top|first|number\s*one)\b|\b#\s*1\b|\b1st\b/i.test(text);
+    if (refersToTopRow && !explicitWorkspace && screenPlan && scanResult) {
+      const best = scanResult.matches[0];
+      if (!best) {
+        append('assistant', 'This screen found no matches, so there is nothing to backtest. Widen a condition or run a new screen.');
+        return;
+      }
+      const symbol = symbols.find(candidate => candidate.id === best.symbolId);
+      if (symbol) {
+        prepareReview('screen', symbol, best.lastDate || scanResult.asOf);
+        return;
+      }
+      append('assistant', 'The symbol list is unavailable, so I cannot prepare a backtest for that match.');
       return;
     }
     const label = sourceType === 'workspace' ? strategy.name : selectBaseContext(sourceType)?.strategy.name;
@@ -1697,16 +1730,24 @@ export const AiCopilotDock: React.FC<Props> = ({
     const id = proposal.id;
     let snapshot = '';
     try { snapshot = JSON.stringify(snapshotStrategy(proposal.validatedCandidate)); } catch { snapshot = ''; }
+    pendingBacktestDeadline.current = Date.now() + 8000;
     setPendingDraftBacktest({ id, snapshot });
     const ok = await apply();
-    if (!ok) setPendingDraftBacktest(current => current?.id === id ? null : current);
+    if (!ok) {
+      pendingBacktestDeadline.current = 0;
+      setPendingDraftBacktest(current => current?.id === id ? null : current);
+    }
   };
 
   /**
    * Freeze the review only once the workspace actually holds the applied
    * strategy: the apply may be confirmed by the workspace effect before the
    * awaited call resumes, and the strategy prop arrives a tick later.
-   * If it never confirms, say so with a retry instead of staying silent.
+   *
+   * The success check runs on every workspace render, never inside a timer, so
+   * a slow commit cannot lose the review. The fallback has one absolute
+   * deadline and re-reads the latest workspace first, so it only speaks when
+   * no update arrived.
    */
   useEffect(() => {
     if (!pendingDraftBacktest) return;
@@ -1714,18 +1755,27 @@ export const AiCopilotDock: React.FC<Props> = ({
     let workspaceNow = '';
     try { workspaceNow = JSON.stringify(snapshotStrategy(strategy)); } catch { workspaceNow = ''; }
     if (applied === id && workspaceNow === snapshot) {
+      pendingBacktestDeadline.current = 0;
       setPendingDraftBacktest(null);
       const symbol = symbols.find(candidate => candidate.id === strategy.universe.symbolId);
       if (symbol) prepareReview('workspace', symbol);
       else append('assistant', 'The draft is applied, but it has no stock yet. Choose a symbol in the tester, then review a backtest.');
       return;
     }
+    if (!pendingBacktestDeadline.current) pendingBacktestDeadline.current = Date.now() + 8000;
+    const deadline = pendingBacktestDeadline.current;
     const timer = window.setTimeout(() => {
-      setPendingDraftBacktest(null);
+      const latest = latestWorkspace.current;
+      // A workspace update may land between the last render and this timer; it
+      // still owns the outcome, and the check above will review it.
+      if (latest.applied === id && latest.snapshot === snapshot) return;
+      if (pendingBacktestDeadline.current !== deadline) return;
+      pendingBacktestDeadline.current = 0;
+      setPendingDraftBacktest(current => current?.id === id ? null : current);
       append('assistant', 'The draft was applied, but the workspace did not confirm it in time, so no backtest review was prepared. Nothing was run.', {
         retryPrompt: lastPromptRef.current || undefined,
       });
-    }, 8000);
+    }, Math.max(0, deadline - Date.now()));
     return () => window.clearTimeout(timer);
   }, [pendingDraftBacktest, applied, strategy, symbols]);
 

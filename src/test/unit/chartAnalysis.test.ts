@@ -135,12 +135,36 @@ describe('chart analysis transport', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('bounds a stalled request at 180 seconds, leaving room for the self-check repair', async () => {
+  it('keeps waiting inside the 200-second server budget', async () => {
+    vi.useFakeTimers();
+    let settle: ((value: unknown) => void) | undefined;
+    fetchMock.mockReturnValue(new Promise(resolve => { settle = resolve; }));
+    const pending = requestChartAnalysis({ image: dataUrl(), currentStrategy: chartTemplate() });
+    await vi.advanceTimersByTimeAsync(209_000);
+    // Ten seconds of margin over the server budget: still in flight, not aborted.
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(false);
+    settle?.({ ok: true, status: 200, json: async () => screenResponse() });
+    expect((await pending).kind).toBe('screen');
+  });
+
+  it('bounds a stalled request at 210 seconds and confirms no result', async () => {
     vi.useFakeTimers();
     fetchMock.mockReturnValue(new Promise(() => {}));
     const result = requestChartAnalysis({ image: dataUrl(), currentStrategy: chartTemplate() }).catch(error => error);
-    await vi.advanceTimersByTimeAsync(180001);
-    expect(await result).toMatchObject({ code: 'CLIENT_DEADLINE' });
+    await vi.advanceTimersByTimeAsync(210_001);
+    expect(await result).toMatchObject({
+      code: 'CLIENT_DEADLINE',
+      message: 'Chart analysis deadline exceeded. No result was confirmed.',
+    });
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+
+  it('cancels immediately when the caller aborts mid-flight', async () => {
+    const controller = new AbortController();
+    fetchMock.mockReturnValue(new Promise(() => {}));
+    const pending = requestChartAnalysis({ image: dataUrl(), currentStrategy: chartTemplate() }, controller.signal).catch(error => error);
+    controller.abort();
+    expect(await pending).toMatchObject({ name: 'AbortError' });
     expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
   });
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import type { ChartImageReading } from '../../client/chartAnalysis';
@@ -29,6 +29,19 @@ interface Props {
 const confidenceLabel = (confidence: number) => Math.round(Math.max(0, Math.min(1, confidence)) * 100) + '%';
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+/**
+ * The card's own reset identity. The parent re-creates the plan object on
+ * ordinary re-renders, so identity alone must never wipe an edit in progress:
+ * only a different reading (new strategy, universe or as-of date) does.
+ */
+const planContentKey = (plan: ResearchScreenPlan): string => {
+  try {
+    return JSON.stringify([plan.strategy, plan.universe ?? null, plan.asOf ?? null]);
+  } catch {
+    return '';
+  }
+};
+
 const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <p className="st-meta font-medium text-[var(--text-3)]">{children}</p>
 );
@@ -45,8 +58,13 @@ export const ChartReadingCard: React.FC<Props> = ({ plan, reading, busy, applied
   const [indicators, setIndicators] = useState<IndicatorConfig[]>(() => clone(plan.strategy.indicators));
   const [expanded, setExpanded] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  /** The reading the local edits belong to; changed only by new plan content. */
+  const editsForPlan = useRef(planContentKey(plan));
 
   useEffect(() => {
+    const key = planContentKey(plan);
+    if (key === editsForPlan.current) return;
+    editsForPlan.current = key;
     setEntryRules(clone(plan.strategy.rules.entry));
     setIndicators(clone(plan.strategy.indicators));
   }, [plan]);

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -61,8 +61,15 @@ const send = (text: string) => {
 };
 
 /** Mirrors App: apply the variation to the workspace strategy prop. */
-const Harness: React.FC<{ delay?: number; confirm?: boolean }> = ({ delay = 0, confirm = true }) => {
+const Harness: React.FC<{ delay?: number; confirm?: boolean; rerenderEvery?: number }> = ({ delay = 0, confirm = true, rerenderEvery = 0 }) => {
   const [strategy, setStrategy] = useState<StrategyAST>(validStrategy());
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!rerenderEvery) return;
+    // A live dock re-renders while a run is pending; that must not postpone its deadline.
+    const timer = window.setInterval(() => setTick(tick => tick + 1), rerenderEvery);
+    return () => window.clearInterval(timer);
+  }, [rerenderEvery]);
   return (
     <AiCopilotDock
       strategy={strategy}
@@ -88,7 +95,7 @@ describe('Apply and backtest', () => {
   it('opens one review for the applied stop loss and target, with the run button', async () => {
     render(<Harness />);
     await openDraft();
-    const review = await screen.findByRole('article', { name: 'Backtest review' });
+    const review = await screen.findByRole('article', { name: 'Backtest review' }, { timeout: 5000 });
     expect(review.textContent).toContain('5%');
     expect(review.textContent).toContain('12%');
     expect(within(review).getByRole('button', { name: 'Use these assumptions and run' })).toBeTruthy();
@@ -98,7 +105,7 @@ describe('Apply and backtest', () => {
   it('still opens the review when the workspace update arrives a tick later', async () => {
     render(<Harness delay={30} />);
     await openDraft();
-    const review = await screen.findByRole('article', { name: 'Backtest review' });
+    const review = await screen.findByRole('article', { name: 'Backtest review' }, { timeout: 5000 });
     expect(review.textContent).toContain('5%');
     expect(screen.getAllByRole('article', { name: 'Backtest review' })).toHaveLength(1);
   });
@@ -111,4 +118,14 @@ describe('Apply and backtest', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(screen.queryByRole('article', { name: 'Backtest review' })).toBeNull();
   }, 15000);
+
+  it('speaks at its deadline even while the panel keeps re-rendering', async () => {
+    // Every render hands the dock a fresh symbols array: an effect that re-arms
+    // its timer would push the fallback forward forever and stay silent.
+    render(<Harness confirm={false} rerenderEvery={700} />);
+    await openDraft();
+    const line = await screen.findByText(/the workspace did not confirm it in time/, undefined, { timeout: 12000 });
+    expect(line).toBeTruthy();
+    expect(screen.queryByRole('article', { name: 'Backtest review' })).toBeNull();
+  }, 25000);
 });

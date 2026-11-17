@@ -187,9 +187,11 @@ export async function requestChartAnalysis(input: ChartAnalysisInput, signal?: A
     rejectAbort = () => reject(controller.signal.reason ?? new DOMException('Request cancelled', 'AbortError'));
     controller.signal.addEventListener('abort', rejectAbort, { once: true });
   });
-  // Two vision passes plus one deterministic self-check repair can exceed 90 s
-  // on a free model; the server still bounds each provider call independently.
-  const timer = setTimeout(() => controller.abort(new ApiError('Chart analysis deadline exceeded. No result was confirmed.', 'CLIENT_DEADLINE')), 180000);
+  // The server chart budget is 200 s (observations up to 135 s, then the plan up
+  // to 65 s), and cold reads were already failing at the old 50 s paid cap, so
+  // the client waits 10 s past that budget before it gives up. Provider calls
+  // stay bounded independently by the server.
+  const timer = setTimeout(() => controller.abort(new ApiError('Chart analysis deadline exceeded. No result was confirmed.', 'CLIENT_DEADLINE')), 210000);
   try {
     if (controller.signal.aborted) throw controller.signal.reason;
     const work = (async () => {
