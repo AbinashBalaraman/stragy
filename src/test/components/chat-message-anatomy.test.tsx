@@ -319,7 +319,7 @@ describe('chat message anatomy', () => {
     expect(second.textContent).not.toContain('did not return JSON');
   });
 
-  it('offers "Jump to latest" only when the newest content is a screen away', async () => {
+  it('offers "Jump to latest" once the newest content is clearly out of view', async () => {
     vi.mocked(requestResearchChat).mockResolvedValue({
       schemaVersion: 1, kind: 'conversation', originatingRevision: 1, message: 'A plain answer.',
       method: 'local_heuristic', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
@@ -334,15 +334,21 @@ describe('chat message anatomy', () => {
     Object.defineProperty(log, 'clientHeight', { configurable: true, value: 400 });
     Object.defineProperty(log, 'scrollTop', { configurable: true, get: () => top, set: value => { top = value; } });
 
-    // 200 px from the end: the newest content is already on screen.
+    // 200 px from the end: the newest content is still close enough.
     top = 1400;
     fireEvent.scroll(log);
     expect(screen.queryByTestId('jump-to-latest')).toBeNull();
 
-    // More than a screen away: the button appears.
-    top = 900;
+    // Past the 240 px rule (or 0.6 of a short log, whichever is smaller): the
+    // newest card is out of view and the button appears.
+    top = 1259;
     fireEvent.scroll(log);
     expect(await screen.findByTestId('jump-to-latest')).toBeTruthy();
+
+    // Back at the bottom it goes away again.
+    top = 1600;
+    fireEvent.scroll(log);
+    expect(screen.queryByTestId('jump-to-latest')).toBeNull();
   });
 
   it('shows scan progress from the job stage', async () => {

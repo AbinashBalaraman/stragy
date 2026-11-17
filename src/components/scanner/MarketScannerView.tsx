@@ -8,6 +8,7 @@ import { requestMarketSnapshot, requestScan, checkMarketJob, cancelResearchJob, 
 import { marketLoadingMessage } from './marketLoading';
 import { useLiveQuotes, formatLivePrice, formatLiveChange, liveQuoteTime, liveQuoteTimeTitle, type LiveQuote } from '../../client/liveQuotes';
 import { actualDataCutoff, scannerContextKey, ScannerRequestOwner } from './scannerRequestContext';
+import { UNIVERSE_OPTIONS } from '../../shared/data/symbols';
 import { OptionChainScanner } from './OptionChainScanner';
 import { VolumeProfileScanner } from './VolumeProfileScanner';
 import { GttBracketCalculator } from './GttBracketCalculator';
@@ -115,6 +116,25 @@ function fullDay(iso: string | null | undefined): string {
     : iso;
 }
 
+/** Compact left-aligned unavailable state; normal scanner surface, no dashed box. */
+function ScannerUnavailablePanel({ title, why, actionLabel, onAction }: {
+  title: string; why: string; actionLabel: string; onAction: () => void;
+}) {
+  return (
+    <section role="status" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
+      <h3 className="text-sm font-medium text-[var(--text-1)]">{title}</h3>
+      <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--text-3)]">{why}</p>
+      <button
+        type="button"
+        onClick={onAction}
+        className="mt-3 inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] sm:min-h-8"
+      >
+        {actionLabel}
+      </button>
+    </section>
+  );
+}
+
 /** "2026-11-16" -> "16 Nov"; never an ambiguous MM-DD. */
 function shortDay(iso: string | null | undefined): string {
   if (!iso) return 'the latest session';
@@ -180,10 +200,30 @@ const scannerDateTime = (value: string | null | undefined): string => {
   return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST';
 };
 
-const ScannerLoadingState: React.FC<{ message: string }> = ({ message }) => (
-  <div role="status" aria-live="polite" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-10 text-center">
-    <p className="text-sm text-[var(--text-1)]">{message}</p>
-    <p className="mt-1 text-xs text-[var(--text-3)]">No partial rankings are shown while prices load.</p>
+const ScannerLoadingState: React.FC<{
+  message: string;
+  slow: boolean;
+  onCancel: () => void;
+  onRetry: () => void;
+}> = ({ message, slow, onCancel, onRetry }) => (
+  <div role="status" aria-live="polite" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 sm:p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm text-[var(--text-1)]">{message}</p>
+        <p className="mt-1 text-xs text-[var(--text-3)]">No partial rankings are shown while prices load.</p>
+        {slow && <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">Still loading after 90 seconds. Retry the snapshot, or cancel and try another universe.</p>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {slow && (
+          <button type="button" onClick={onRetry} className="inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] sm:min-h-8">
+            Retry snapshot
+          </button>
+        )}
+        <button type="button" onClick={onCancel} className="inline-flex min-h-11 items-center rounded-[var(--r-btn)] px-3 py-1.5 text-xs text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] sm:min-h-8">
+          Cancel load
+        </button>
+      </div>
+    </div>
   </div>
 );
 
@@ -238,6 +278,16 @@ export const UNIVERSE_LIST: UniverseConfig[] = [
   { id: 'POPULAR_INDICES', label: 'Popular Indices', shortLabel: 'Major Indices', category: 'Benchmark & Sector Indices', description: 'All major benchmark & sectoral market indices (^NSEI, ^NSEBANK, ^BSESN, etc.)', badge: 'INDICES' }
 ];
 
+/** Desktop "More" menu: id, full menu label, compact trigger label. */
+const MORE_SECTIONS = [
+  ['derivatives_oi', 'Derivatives OI & PCR', 'Derivatives OI'],
+  ['option_chain', 'Option chain & Greeks', 'Option chain'],
+  ['volume_profile', 'Volume profile & VWAP', 'Volume profile'],
+  ['gtt_bracket', 'GTT bracket & trailing SL', 'GTT bracket'],
+  ['basis_spreads', 'Basis & calendar spreads', 'Basis spreads'],
+  ['breadth_sectors', 'Market breadth & heatmap', 'Market breadth'],
+] as const;
+
 export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   strategy,
   symbols = [],
@@ -259,7 +309,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     | 'trends'
     | 'strategy_matches'
   >('movers');
-  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>('NIFTY_50');
+  const [selectedUniverse, setSelectedUniverse] = useState<MarketUniverseType>(() =>
+    initialUniverse && UNIVERSE_OPTIONS.some(item => item.id === initialUniverse) ? initialUniverse : 'NIFTY_50');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
   const [moreTabsOpen, setMoreTabsOpen] = useState(false);
@@ -290,6 +341,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [scannerError, setScannerError] = useState('');
   const [marketError, setMarketError] = useState('');
   const [marketProgress, setMarketProgress] = useState<ResearchJobProgress | null>(null);
+  const [marketSlow, setMarketSlow] = useState(false);
+  const [marketAttempt, setMarketAttempt] = useState(0);
+  const [universeNoData, setUniverseNoData] = useState(false);
   const [marketDeadline, setMarketDeadline] = useState<{ jobId: string } | null>(null);
   const [checkingMarket, setCheckingMarket] = useState(false);
   const [marketCancelled, setMarketCancelled] = useState(false);
@@ -298,7 +352,14 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [scanError, setScanError] = useState('');
   const [coverageLabel, setCoverageLabel] = useState('Coverage not yet reported');
   const [coverageDetail, setCoverageDetail] = useState('Coverage details not yet reported.');
-  const [dataEvidence,setDataEvidence] = useState<{mode?:'real'|'demo';membership?:Awaited<ReturnType<typeof requestMarketSnapshot>>['membership'];observationDates?:Awaited<ReturnType<typeof requestMarketSnapshot>>['observationDates'];sourceCoverage?:Record<string,number>}|null>(null);
+  const [dataEvidence,setDataEvidence] = useState<{
+    mode?: 'real' | 'demo';
+    membership?: Awaited<ReturnType<typeof requestMarketSnapshot>>['membership'];
+    observationDates?: Awaited<ReturnType<typeof requestMarketSnapshot>>['observationDates'];
+    sourceCoverage?: Record<string, number>;
+    status?: Awaited<ReturnType<typeof requestMarketSnapshot>>['status'];
+    warnings?: string[];
+  } | null>(null);
   const [priceLabel, setPriceLabel] = useState('Price source not yet reported');
   const [marketEvaluated, setMarketEvaluated] = useState(0);
   const launchBacktest = (symbolId: number, observedDate?: string) => {
@@ -352,6 +413,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
   const fetchMarketData = async () => {
     const ticket = marketOwner.current.begin(contextKey);
+    setMarketAttempt(attempt => attempt + 1);
+    setMarketSlow(false);
+    setUniverseNoData(false);
     setIsLoadingTrends(true);
     setMarketError(''); setScannerError('');
     setMarketProgress(null);
@@ -371,7 +435,13 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         setMarketDeadline({ jobId: failure.jobId });
         setMarketError('');
       } else {
-        setMarketError(e instanceof Error ? e.message : 'Market data unavailable');
+        const message = e instanceof Error ? e.message : 'Market data unavailable';
+        if (selectedUniverse !== 'NIFTY_50' && /only.*nifty\s*50|verified membership|unsupported universe/i.test(message)) {
+          setUniverseNoData(true);
+          setMarketError('');
+        } else {
+          setMarketError(message);
+        }
       }
     } finally {
       if (marketOwner.current.owns(ticket, currentContext.current)) setIsLoadingTrends(false);
@@ -436,12 +506,22 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     return () => clearTimeout(timer);
   }, [isScanning]);
 
+  // A cold snapshot can run for minutes. After 90s offer an explicit retry.
+  useEffect(() => {
+    if (!isLoadingTrends) { setMarketSlow(false); return; }
+    const timer = setTimeout(() => setMarketSlow(true), 90_000);
+    // jsdom keeps Node timers alive; this is a no-op in browsers.
+    (timer as unknown as { unref?: () => void }).unref?.();
+    return () => clearTimeout(timer);
+  }, [isLoadingTrends, marketAttempt]);
+
   // The market snapshot can also take longer than ten seconds on a cold cache.
   // A chat hand-off fills the universe, cutoff and scan size, then opens the matches.
   useEffect(() => {
     if (!incomingPrefill || appliedPrefill.current === incomingPrefill) return;
     appliedPrefill.current = incomingPrefill;
     setPrefill(incomingPrefill);
+    if (UNIVERSE_OPTIONS.some(item => item.id === incomingPrefill.universe)) setSelectedUniverse(incomingPrefill.universe as MarketUniverseType);
     setScanLimit(incomingPrefill.limit);
     setActiveTab('strategy_matches');
   }, [incomingPrefill]);
@@ -474,6 +554,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const initialLoading = !dataEvidence && !activeError && !marketDeadline && !marketCancelled;
   const pendingSession = selectedDate || latestDataCutoff || dataCutoff || availableTradingDates[0]?.date;
   const observedMarketSession = movers?.asOfDate || dataCutoff;
+  const marketNoData = Boolean(universeNoData || (selectedUniverse !== 'NIFTY_50' && dataEvidence && marketCoverage && marketCoverage.succeeded === 0));
   const scanPending = isStrategyView && !scanError && !scanResult;
   const scanRunning = isScanning || scanPending;
   const strategySession = scanResult?.asOf || dataCutoff || selectedDate;
@@ -497,10 +578,20 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       : 'Scanning ' + currentUniverseConfig.shortLabel + ' with “' + strategy.name + '”…';
 
   const handleUniverseChange = (newUniv: MarketUniverseType) => {
-    if (newUniv !== 'NIFTY_50' || newUniv === selectedUniverse) return;
+    if (newUniv === selectedUniverse) return;
     marketOwner.current.cancel(); scanOwner.current.cancel();
     setSelectedUniverse(newUniv);
     onUniverseChange?.(newUniv);
+  };
+
+  const cancelMarketLoad = () => {
+    marketOwner.current.cancel();
+    setMarketCancelled(true);
+    setIsLoadingTrends(false);
+    setMarketProgress(null);
+    setMarketSlow(false);
+    setMarketError('');
+    setMarketDeadline(null);
   };
 
   const handleDateChange = (newDate: string) => {
@@ -601,6 +692,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const modelOnlyTabs = ['option_chain', 'volume_profile', 'gtt_bracket', 'basis_spreads'];
   const modelOnlyTab = modelOnlyTabs.includes(activeTab);
   const modelPending = modelOnlyTab && !dataEvidence;
+  const activeMoreLabel = MORE_SECTIONS.find(([id]) => id === activeTab)?.[2];
   const latestOnlyLabel = activeTab === 'option_chain' ? 'Option chain & Greeks'
     : activeTab === 'volume_profile' ? 'Volume profile & VWAP'
       : activeTab === 'gtt_bracket' ? 'GTT bracket & trailing stop'
@@ -647,12 +739,17 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 </>
               )}
             </p>
-            {dataEvidence && marketCoverage && marketUnavailable.length > 0 && (
+            {dataEvidence && marketCoverage && (
               <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
                 {marketCoverage.succeeded} of {marketCoverage.requested} stocks priced
-                {' · '}
-                {unavailableNames.length <= 3 ? unavailableNames.join(', ') + ' unavailable' : `${unavailableNames.length} unavailable`}
+                {dataEvidence.status ? ' · ' + dataEvidence.status + ' coverage' : ''}
+                {marketUnavailable.length > 0 && (
+                  ' · ' + (unavailableNames.length <= 3 ? unavailableNames.join(', ') + ' unavailable' : `${unavailableNames.length} unavailable`)
+                )}
               </p>
+            )}
+            {dataEvidence?.warnings && dataEvidence.warnings.length > 0 && (
+              <p className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">{dataEvidence.warnings.join(' · ')}</p>
             )}
             {dataEvidence && marketCoverage && marketUnavailable.length > 3 && (
               <details className="mt-1 text-[11px] leading-5 text-[var(--text-3)]">
@@ -672,7 +769,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                   <p>Derivatives/OI/PCR and related model fields are model-only, not observed derivatives or live quotes. Universe membership is unverified unless explicitly reported; current membership may introduce survivorship bias.</p>
                   <p>Coverage detail: {coverageDetail} {sourceSummary(dataEvidence?.sourceCoverage)}.</p>
                   {dataEvidence?.observationDates && <p>Observed sessions: {dataEvidence.observationDates.earliest} to {dataEvidence.observationDates.latest}; stale datasets: {dataEvidence.observationDates.staleSymbols}.</p>}
-                  {dataEvidence?.membership && <p>Membership source: {dataEvidence.membership.source}; retrieved {scannerDateTime(dataEvidence.membership.observedAt)}; {dataEvidence.membership.freshness}.</p>}
+                  {dataEvidence?.membership && <p>Membership: {dataEvidence.membership.requested} requested, {dataEvidence.membership.unmapped.length} unmapped; source {dataEvidence.membership.source}; retrieved {scannerDateTime(dataEvidence.membership.observedAt)}; {dataEvidence.membership.freshness}.</p>}
                 </div>
               </details>
             )}
@@ -704,24 +801,16 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               onChange={(e) => handleUniverseChange(e.target.value as MarketUniverseType)}
               className="min-w-0 flex-1 rounded-lg border border-white/12 bg-[#101012] px-2.5 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-[#a8c7fa]/60"
             >
-              <optgroup label="Broad and exchanges">
-                <option value="ALL" disabled>All markets (NSE + BSE) · not available</option>
-                <option value="NSE" disabled>All NSE stocks · not available</option>
-                <option value="BSE" disabled>All BSE stocks · not available</option>
-              </optgroup>
-              <optgroup label="Benchmark indices">
-                <option value="NIFTY_50">Nifty 50</option>
-                <option value="BANK_NIFTY" disabled>Bank NIFTY · not available</option>
-                <option value="BSE_SENSEX" disabled>BSE SENSEX 30 · not available</option>
-                <option value="POPULAR_INDICES" disabled>Popular indices · not available</option>
-              </optgroup>
-              <optgroup label="Sectoral indices">
-                <option value="NIFTY_IT" disabled>NIFTY IT · not available</option>
-                <option value="NIFTY_AUTO" disabled>NIFTY Auto · not available</option>
-                <option value="NIFTY_PHARMA" disabled>NIFTY Pharma · not available</option>
-                <option value="NIFTY_METAL" disabled>NIFTY Metal · not available</option>
-                <option value="NIFTY_FMCG" disabled>NIFTY FMCG · not available</option>
-              </optgroup>
+              {(['All', 'Exchange', 'Benchmark & Sector Indices'] as const).map(category => (
+                <optgroup
+                  key={category}
+                  label={category === 'All' ? 'All markets' : category === 'Exchange' ? 'Broad and exchanges' : 'Benchmark and sector indices'}
+                >
+                  {UNIVERSE_OPTIONS.filter(option => option.category === category).map(option => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
           </label>
 
@@ -760,7 +849,6 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
             )}
           </div>
         </div>
-        <p className="text-[11px] leading-4 text-[var(--text-3)]">Only the Nifty 50 has verified membership today. The other index pools are illustrative.</p>
 
         {/* Core sections first; the specialists live under More. */}
         <label className="md:hidden block">
@@ -809,19 +897,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
                 aria-controls="scanner-more-sections"
                 className={'flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-xs transition-colors ' + (['derivatives_oi', 'option_chain', 'volume_profile', 'gtt_bracket', 'basis_spreads', 'breadth_sectors'].includes(activeTab) ? 'bg-white/[0.08] font-medium text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
               >
-                More
+                {activeMoreLabel ? 'More · ' + activeMoreLabel : 'More'}
                 <ChevronDown className={'h-3 w-3 transition-transform ' + (moreTabsOpen ? 'rotate-180' : '')} aria-hidden="true" />
               </button>
               {moreTabsOpen && (
                 <div id="scanner-more-sections" role="group" aria-label="More scanner sections" className="absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-white/12 bg-[#171719] p-1 shadow-xl shadow-black/50">
-                  {([
-                    ['derivatives_oi', 'Derivatives OI & PCR'],
-                    ['option_chain', 'Option chain & Greeks'],
-                    ['volume_profile', 'Volume profile & VWAP'],
-                    ['gtt_bracket', 'GTT bracket & trailing SL'],
-                    ['basis_spreads', 'Basis & calendar spreads'],
-                    ['breadth_sectors', 'Market breadth & heatmap'],
-                  ] as const).map(([tab, label]) => (
+                  {MORE_SECTIONS.map(([tab, label]) => (
                     <button
                       key={tab}
                       type="button"
@@ -850,7 +931,21 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           <p className="text-sm text-[var(--text-1)]">Market load cancelled.</p>
           <button type="button" onClick={() => void fetchMarketData()} className="mt-3 rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]">Load market data</button>
         </div>
-      ) : initialLoading && !modelOnlyTab && !isStrategyView ? <ScannerLoadingState message={marketLoadingMessage(marketProgress, currentUniverseConfig.shortLabel)} /> : (<>
+      ) : marketNoData && !modelOnlyTab && !isStrategyView ? (
+        <ScannerUnavailablePanel
+          title={'No verified data for ' + currentUniverseConfig.shortLabel + ' in the current feed'}
+          why="The feed returned no evaluated symbols for this universe. Try again, or choose another universe above."
+          actionLabel="Retry snapshot"
+          onAction={() => void fetchMarketData()}
+        />
+      ) : initialLoading && !modelOnlyTab && !isStrategyView ? (
+        <ScannerLoadingState
+          message={marketLoadingMessage(marketProgress, currentUniverseConfig.shortLabel)}
+          slow={marketSlow}
+          onCancel={cancelMarketLoad}
+          onRetry={() => void fetchMarketData()}
+        />
+      ) : (<>
       {/* TAB 1: TOP GAINERS & TOP LOSERS */}
       {activeTab === 'movers' && (
         <section aria-label="Top gainers and losers" className="space-y-3">
@@ -1006,19 +1101,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       )}
 
       {latestOnlyUnavailable && (
-        <div role="status" className="rounded-2xl border border-dashed border-[rgba(236,236,237,0.16)] bg-[#171719]/40 p-8 text-center space-y-3">
-          <p className="text-sm font-semibold text-neutral-200">The {latestOnlyLabel} view uses the latest model reference</p>
-          <p className="mx-auto max-w-xl text-xs leading-5 text-neutral-400">
-            These model-only fields are not tied to a historical EOD session. Switch to the latest available cutoff to open the modelled view. Nothing here is an observed derivative, trade or quote.
-          </p>
-          <button
-            type="button"
-            onClick={() => handleDateChange('')}
-            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500 hover:text-[#101012]"
-          >
-            Use latest session
-          </button>
-        </div>
+        <ScannerUnavailablePanel
+          title={'The ' + latestOnlyLabel + ' view uses the latest model reference'}
+          why="These model-only fields are not tied to a historical EOD session. Switch to the latest available cutoff to open the modelled view. Nothing here is an observed derivative, trade or quote."
+          actionLabel="Use latest session"
+          onAction={() => handleDateChange('')}
+        />
       )}
       {/* TAB 3: DERIVATIVES OPEN INTEREST & PCR SENTIMENT */}
       {activeTab === 'derivatives_oi' && (
@@ -1070,25 +1158,16 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       )}
 
       {(modelModeUnavailable || modelPending) && (
-        <div role="status" className="space-y-3 rounded-[var(--r-card)] border border-dashed border-[var(--line-strong)] px-4 py-10 text-center">
-          <p className="text-sm font-medium text-[var(--text-1)]">
-            {activeTab === 'option_chain' ? "Option chain isn't available" : `The ${latestOnlyLabel} view is a fictional demo model`}
-          </p>
-          <p className="mx-auto max-w-xl text-xs leading-5 text-[var(--text-3)]">
-            {activeTab === 'option_chain'
-              ? "Stragy only shows real observed data, and there's no real option-chain feed yet."
-              : dataEvidence?.mode === 'real'
-                ? 'This server is running real observed market data, so model-only derivatives are disabled. No observed derivative, synthetic price or live quote is substituted here.'
-                : 'Model-only fields are demo values, not observed derivatives. Nothing here is live or an observed quote.'}
-          </p>
-          <button
-            type="button"
-            onClick={() => setActiveTab('movers')}
-            className="rounded-[var(--r-btn)] border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)]"
-          >
-            Back to gainers &amp; losers
-          </button>
-        </div>
+        <ScannerUnavailablePanel
+          title={activeTab === 'option_chain' ? "Option chain isn't available" : 'The ' + latestOnlyLabel + ' view is a fictional demo model'}
+          why={activeTab === 'option_chain'
+            ? "Stragy only shows real observed data, and there's no real option-chain feed yet."
+            : dataEvidence?.mode === 'real'
+              ? 'This server is running real observed market data, so model-only derivatives are disabled. No observed derivative, synthetic price or live quote is substituted here.'
+              : 'Model-only fields are demo values, not observed derivatives. Nothing here is live or an observed quote.'}
+          actionLabel="Back to Top gainers & losers"
+          onAction={() => setActiveTab('movers')}
+        />
       )}
 
       {/* TAB: OPTION CHAIN & GREEKS */}
@@ -1215,12 +1294,12 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
           </div>
 
           {isLoadingTrends ? (
-            <div role="status" className="rounded-xl border border-white/8 bg-[#171719] px-4 py-10 text-center text-xs text-neutral-400">
+            <div role="status" className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-4 text-xs text-[var(--text-3)]">
               Loading available price data and evaluating regimes; coverage may be partial.
             </div>
           ) : filteredTrends.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-white/12 px-4 py-10 text-center text-xs text-neutral-400">
-              <p className="text-sm text-neutral-300">{marketEvaluated > 0 ? `No matching stocks in the evaluated subset for "${trendSearchQuery}"` : 'Trends unavailable: no evaluated price coverage.'}</p>
+            <div className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-4 text-xs text-[var(--text-3)]">
+              <p className="text-sm text-[var(--text-1)]">{marketEvaluated > 0 ? `No matching stocks in the evaluated subset for "${trendSearchQuery}"` : 'Trends unavailable: no evaluated price coverage.'}</p>
               {marketEvaluated === 0 ? (
                 <button type="button" onClick={retryActiveView} className="mt-2 underline hover:text-neutral-200">Retry market snapshot</button>
               ) : (
@@ -1330,7 +1409,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               })}
             </ul>
           ) : (
-            <div className="rounded-[var(--r-card)] border border-dashed border-[var(--line-strong)] px-4 py-10 text-center st-meta text-[var(--text-3)]">
+            <div className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] px-4 py-4 st-meta text-[var(--text-3)]">
               <p>{scanError ? 'Strategy scan failed. Results are unavailable; retry the scan.' : scanResult && scanResult.succeeded > 0 && scanResult.matched === 0 ? `No matches in the ${scanResult.succeeded} evaluated symbols. This does not establish no matches across the full universe.` : 'Strategy results unavailable: no evaluated coverage was reported.'}</p>
               {!scanError && <button type="button" onClick={() => void runScan()} className="mt-2 underline hover:text-[var(--text-1)]">Retry strategy scan</button>}
               <div className="mt-3">

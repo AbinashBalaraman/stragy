@@ -24,9 +24,21 @@ const trend = z.object({
   date: date.optional(), formattedDate: z.string().optional(), timestamp: finite.optional(),
 });
 const trends = z.array(trend).max(2500);
-const membership = z.object({ requested: count, unmapped: z.array(z.object({ ticker: z.string(), reason: z.string() })), source: z.string(), observedAt: z.string(), asOf: z.string().optional(), freshness: z.string(), warnings: z.array(z.string()) });
+const membership = z.object({
+  requested: count,
+  unmapped: z.array(z.object({ ticker: z.string(), reason: z.string() })),
+  source: z.string(), observedAt: z.string(), asOf: z.string().optional(), freshness: z.string(), warnings: z.array(z.string()),
+  basis: z.enum(['official-feed', 'bundled-catalog', 'none']).optional(),
+  verified: z.boolean().optional(),
+  available: count.optional(), selected: count.optional(), cap: count.optional(), truncated: z.boolean().optional(),
+  order: z.string().optional(),
+  role: z.enum(['official-membership', 'configured-catalog', 'benchmark-only']).optional(),
+  unavailableReason: z.string().optional(), recommendations: z.array(z.string()).optional(),
+});
 const observationDates = z.object({ earliest: date, latest: date, staleSymbols: count });
 const coverageStatus = z.enum(['complete', 'partial', 'unavailable']);
+const deadline = z.object({ budgetMs: count, reached: z.boolean(), truncated: z.boolean(), elapsedMs: count });
+const progress = z.object({ processed: count, total: count, stage: z.string() });
 const movers = z.object({
   universe: z.string().optional(), asOfDate: date, formattedDate: z.string(), isHistorical: z.boolean().optional(),
   availableTradingSessions: z.array(z.object({ date, label: z.string(), isLatest: z.boolean() })).optional(),
@@ -41,6 +53,8 @@ export const MarketSnapshotResultSchema = z.object({
   provenance: provenance.optional(), coverage: z.object({ requested: count, succeeded: count, unavailable: count }),
   sourceCoverage: z.record(z.string(), count), universe: z.string(), requestedDate: date.optional(), mode: z.enum(['demo', 'real']),
   membership: membership.optional(), observationDates: observationDates.optional(), status: coverageStatus.optional(), warnings: z.array(z.string()).optional(),
+  statusReason: z.string().optional(), recommendations: z.array(z.string()).optional(), retryable: z.boolean().optional(),
+  deadline: deadline.optional(), progress: progress.optional(),
 }).superRefine((value, ctx) => {
   if (value.coverage.succeeded !== value.trends.length || value.coverage.unavailable !== value.errors.length || value.coverage.succeeded + value.coverage.unavailable !== value.coverage.requested)
     ctx.addIssue({ code: 'custom', message: 'Market coverage does not reconcile' });

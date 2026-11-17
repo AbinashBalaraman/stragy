@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { collectNseInstruments, resolveAngelInstrument, resetAngelInstrumentCache, SMARTAPI_TOKEN_MAP } from '../../server/data/angelSymbols';
+import { collectInstruments, collectNseInstruments, resolveAngelInstrument, resetAngelInstrumentCache, SMARTAPI_TOKEN_MAP } from '../../server/data/angelSymbols';
 
 const FILLER = Array.from({ length: 1_000 }, (_, i) => ({ token: String(20000 + i), symbol: `FILL${i}-EQ`, name: `FILL${i}`, exch_seg: 'NSE' }));
 const MASTER = JSON.stringify([
@@ -10,7 +10,10 @@ const MASTER = JSON.stringify([
   { token: '3417', symbol: 'HCLTECH-EQ', name: 'HCLTECH', exch_seg: 'NSE' },
   { token: '99926000', symbol: 'Nifty 50', name: 'NIFTY', instrumenttype: 'AMXIDX', exch_seg: 'NSE' },
   { token: '99926009', symbol: 'Nifty Bank', name: 'BANKNIFTY', instrumenttype: 'AMXIDX', exch_seg: 'NSE' },
+  { token: '99926008', symbol: 'Nifty IT', name: 'NIFTY IT', instrumenttype: 'AMXIDX', exch_seg: 'NSE' },
+  { token: '99919000', symbol: 'SENSEX', name: 'SENSEX', instrumenttype: 'AMXIDX', exch_seg: 'BSE' },
   { token: '500325', symbol: 'RELIANCE', name: 'RELIANCE', exch_seg: 'BSE' },
+  { token: '500180', symbol: 'HDFCBANK', name: 'HDFC BANK', exch_seg: 'BSE' },
   { token: '12345', symbol: 'RELIANCE25NOVFUT', name: 'RELIANCE', exch_seg: 'NFO' },
   { token: '777', symbol: 'IDEA-EQ', name: 'IDEA', exch_seg: 'BSE' },
   ...FILLER
@@ -52,8 +55,18 @@ describe('Angel One token mapping', () => {
     expect(await resolveAngelInstrument('HCLTECH', { fetch: fetcher as unknown as typeof fetch, cacheDirectory: directory, now })).toMatchObject({ token: '3417' });
     expect(fetcher).toHaveBeenCalledTimes(1);
     const cached = JSON.parse(await fs.readFile(path.join(directory, 'angel-scrip-master.json'), 'utf8'));
-    expect(cached).toMatchObject({ version: 1, count: expect.any(Number) });
-    expect(cached.symbols).toContainEqual(['HCLTECH', '3417', 'HCLTECH-EQ', 'EQUITY']);
+    expect(cached).toMatchObject({ version: 2, count: expect.any(Number) });
+    expect(cached.symbols).toContainEqual(['HCLTECH', '3417', 'NSE', 'HCLTECH-EQ', 'EQUITY']);
+    expect(cached.symbols).toContainEqual(['RELIANCE', '500325', 'BSE', 'RELIANCE', 'EQUITY']);
+  });
+
+  it('resolves BSE scrip codes and index aliases from the provider master, never by guessing', async () => {
+    const fetcher = vi.fn(async () => new Response(MASTER, { status: 200 }));
+    const options = { fetch: fetcher as unknown as typeof fetch, cacheDirectory: directory, now: () => Date.parse('2026-11-16T05:00:00Z') };
+    expect(await resolveAngelInstrument('500325.BO', options)).toMatchObject({ ticker: '500325.BO', token: '500325', exchange: 'BSE', kind: 'EQUITY' });
+    expect(await resolveAngelInstrument('^CNXIT', options)).toMatchObject({ ticker: '^CNXIT', token: '99926008', exchange: 'NSE', kind: 'INDEX' });
+    expect(await resolveAngelInstrument('^BSESN', options)).toMatchObject({ ticker: '^BSESN', token: '99919000', exchange: 'BSE', kind: 'INDEX' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('refreshes the master on the next IST day', async () => {
@@ -70,17 +83,21 @@ describe('Angel One token mapping', () => {
     const fetcher = vi.fn(async () => new Response(MASTER, { status: 200 }));
     const options = { fetch: fetcher as unknown as typeof fetch, cacheDirectory: directory, now: () => Date.parse('2026-11-16T05:00:00Z') };
     await expect(resolveAngelInstrument('NOTREAL', options)).rejects.toMatchObject({ code: 'UNKNOWN_MAPPING' });
-    await expect(resolveAngelInstrument('IDEA', options)).rejects.toMatchObject({ code: 'UNKNOWN_MAPPING' }); // BSE-only
-    await expect(resolveAngelInstrument('^BSESN', options)).rejects.toMatchObject({ code: 'UNKNOWN_MAPPING' });
+    await expect(resolveAngelInstrument('IDEA', options)).rejects.toMatchObject({ code: 'UNKNOWN_MAPPING' }); // BSE-only suffix is not an NSE ticker
+    await expect(resolveAngelInstrument('^CNXAUTO', options)).rejects.toMatchObject({ code: 'UNKNOWN_MAPPING' }); // not in this master
+    await expect(resolveAngelInstrument('^NIFTY_UNKNOWN', options)).rejects.toMatchObject({ code: 'UNKNOWN_MAPPING' });
+    await expect(resolveAngelInstrument('500999.BO', options)).rejects.toMatchObject({ code: 'UNKNOWN_MAPPING' }); // scrip code absent
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps only NSE -EQ equities and NSE indices from the 40 MB-style master', () => {
-    const tuples = collectNseInstruments(`[${MASTER.slice(1, -1)}]`);
-    expect(tuples).toContainEqual(['HCLTECH', '3417', 'HCLTECH-EQ', 'EQUITY']);
-    expect(tuples.some(t => t[2] === 'RELIANCE' && t[3] === 'EQUITY')).toBe(false); // BSE ignored
-    expect(tuples.some(t => t[2] === 'RELIANCE25NOVFUT')).toBe(false); // NFO ignored
-    expect(tuples.filter(t => t[3] === 'INDEX').length).toBe(2);
+  it('keeps only NSE/BSE cash equities and NSE/BSE indices from the 40 MB-style master', () => {
+    const tuples = collectInstruments(`[${MASTER.slice(1, -1)}]`);
+    expect(tuples).toContainEqual(['HCLTECH', '3417', 'NSE', 'HCLTECH-EQ', 'EQUITY']);
+    expect(tuples).toContainEqual(['RELIANCE', '500325', 'BSE', 'RELIANCE', 'EQUITY']);
+    expect(tuples.some(t => t[3] === 'RELIANCE25NOVFUT')).toBe(false); // NFO ignored
+    expect(tuples.some(t => t[2] === 'BSE' && t[3] === 'IDEA-EQ')).toBe(false); // odd BSE suffix ignored
+    expect(tuples.filter(t => t[4] === 'INDEX')).toHaveLength(4);
+    expect(collectNseInstruments(`[${MASTER.slice(1, -1)}]`).every(t => t[2] === 'NSE')).toBe(true);
   });
 
   it('refuses an oversized master response before buffering it', async () => {

@@ -8,7 +8,7 @@
 import { promises as dns } from 'node:dns';
 import { z } from 'zod';
 import {
-  OPENCODE_GO_MODELS, getLastProviderCall, isOpenCodeGoFreeModel, resolveAIConfig,
+  OPENCODE_GO_MODELS, buildProviderPayload, getLastProviderCall, isOpenCodeGoFreeModel, resolveAIConfig,
   type AIEntryFailure, type AIFallbackTarget, type AIProviderName, type AIRuntimeConfig,
 } from './provider';
 import { VERIFIED_FREE_MODEL } from './freeModel';
@@ -420,18 +420,37 @@ export async function testProvider(id: string, raw: unknown, env: Record<string,
   const key = providerKey(record, env);
   if (!key) return { ok: false, latencyMs: 0, error: 'No API key is configured for this provider.' };
   const started = Date.now();
+  const defaults = resolveAIConfig(env);
+  // Reuse the real request builder so provider identity headers (OpenCode Go's
+  // User-Agent and x-opencode-session) and the provider-specific body are tested.
+  const config: AIRuntimeConfig = {
+    provider: record.adapter, model: input.model, state: 'ready', ready: true, keyPresent: true,
+    endpointHost: new URL(record.baseUrl).host, timeoutMs: 15_000, maxOutputTokens: 64,
+    requestsPerHour: defaults.requestsPerHour, costPolicy: 'operator-approved', approvedPaid: true,
+    supportsImages: false, approvedPaidModels: [], baseUrl: record.baseUrl,
+    providerLabel: record.label, ...(record.extraHeaders ? { extraHeaders: record.extraHeaders } : {}),
+  };
+  Object.defineProperty(config, 'apiKey', { value: key, enumerable: false });
   try {
-    const response = await fetch(`${record.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const built = buildProviderPayload(config, {
+      system: 'Connectivity check. Reply with OK.', user: 'Reply OK', json: false,
+      maxOutputTokens: 64, sessionId: `provider-test-${id}`,
+    });
+    const response = await fetch(built.url, {
       method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15_000),
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${key}`, ...(record.extraHeaders ?? {}) },
-      body: JSON.stringify({ model: input.model, messages: [{ role: 'user', content: 'Reply OK' }], max_tokens: 16 }),
+      headers: built.headers, body: built.body,
     });
     const latencyMs = Date.now() - started;
     if (!response.ok) return { ok: false, latencyMs, error: redactSecret(`Provider returned HTTP ${response.status}.`, key) };
-    const payload = await response.json() as { model?: unknown; choices?: Array<{ message?: { content?: unknown } }> };
+    const payload = await response.json() as { model?: unknown; choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }> };
+    const choice = payload.choices?.[0];
+    const content = typeof choice?.message?.content === 'string' ? choice.message.content.trim() : '';
+    const finish = typeof choice?.finish_reason === 'string' ? choice.finish_reason : '';
+    // Some reasoning models spend the small allowance before writing text; a
+    // normal stop/length finish still proves the endpoint accepted the request.
+    const ok = Boolean(content) || finish === 'stop' || finish === 'length';
     const answeredBy = typeof payload.model === 'string' ? payload.model : input.model;
-    const hasContent = typeof payload.choices?.[0]?.message?.content === 'string' && payload.choices[0].message.content.trim();
-    return { ok: Boolean(hasContent), latencyMs, ...(hasContent ? { answeredBy } : { error: 'Provider returned no text.' }) };
+    return { ok, latencyMs, ...(ok ? { answeredBy } : { error: 'Provider returned no text or finish reason.' }) };
   } catch (error) {
     return { ok: false, latencyMs: Date.now() - started, error: redactSecret((error as Error).message || 'Provider test failed.', key) };
   }

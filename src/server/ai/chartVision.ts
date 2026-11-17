@@ -38,23 +38,25 @@ export const VISION_TOTAL_BUDGET_MS = 200_000;
 export const VISION_PLAN_RESERVE_MS = 65_000;
 /** Observations may use at most this much of the total budget. */
 export const VISION_OBSERVATIONS_BUDGET_MS = VISION_TOTAL_BUDGET_MS - VISION_PLAN_RESERVE_MS;
+/** Do not start a shape repair with less than this much observations time left. */
+export const VISION_OBSERVATION_REPAIR_MIN_MS = 15_000;
 
 /**
  * Audited observations split for the default chain [free primary, free probe,
  * paid fallback]. Logged cold reads show the primary needs ~50 s and the second
- * free model has never answered within 55 s; the paid fallback can need 55–65 s.
+ * free model has never answered within 55 s; the paid fallback can need up to ~67 s.
  * Sum = 135 s, exactly the observations budget.
  */
 export const VISION_OBSERVATION_ALLOCATION_MS = {
-  primaryFree: 55_000,
-  secondFree: 10_000,
-  paid: 70_000,
+  primaryFree: 50_000,
+  secondFree: 5_000,
+  paid: 80_000,
 } as const;
 
 /**
  * Split the observations budget by chain role. The primary free model gets a
  * real attempt, the second free model is a short probe, and the approved paid
- * fallback keeps 70 s. Extra free models get no time so they cannot starve the
+ * fallback keeps 80 s. Extra free models get no time so they cannot starve the
  * paid attempt. A chain without a paid entry falls back to an equal split.
  */
 export function observationAttemptTimeouts(
@@ -832,17 +834,132 @@ export function chartObservationSummary(observations: ChartObservations): string
 
 const safeParseJson = (text: string): { ok: true; value: unknown } | { ok: false; message: string } => parseModelJson(text);
 
-/** Models sometimes add an extra note field; keep the known observation keys. */
-function parseChartObservations(raw: unknown): ChartObservations | null {
-  const checked = ChartObservationsSchema.safeParse(raw);
-  if (checked.success) return checked.data;
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    const shape = ChartObservationsSchema.shape;
-    const stripped = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter(([key]) => key in shape));
-    const retry = ChartObservationsSchema.safeParse(stripped);
-    if (retry.success) return retry.data;
+export interface ObservationParseFailure {
+  keys: string[];
+  issues: { path: string; code: string }[];
+}
+export type ObservationParseResult = { ok: true; data: ChartObservations } | ({ ok: false } & ObservationParseFailure);
+
+const OBSERVATION_NUMERIC_KEYS = new Set(['lastClose', 'lastChangePct', 'value', 'approxPctAboveLow', 'rsiBelow30BarsAgo']);
+const REQUIRED_OBSERVATION_KEYS = ['timeframe', 'indicators', 'drawnLines', 'priceTrend', 'nearRange', 'lastCandle', 'events'];
+
+function coerceObservationNumber(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const text = value.trim();
+  const numeric = text.replace(/[^0-9.+-]/g, '');
+  if (!numeric) return value;
+  const parsed = Number(numeric);
+  return Number.isFinite(parsed) ? parsed : value;
+}
+
+/** Trim strings and coerce numeric strings; never add a value the model omitted. */
+function normalizeObservationShape(value: unknown): unknown {
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) return value.map(normalizeObservationShape);
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    let next = normalizeObservationShape(item);
+    if (OBSERVATION_NUMERIC_KEYS.has(key)) next = coerceObservationNumber(next);
+    else if ((key === 'params' || key === 'legendValues') && Array.isArray(item)) next = item.map(coerceObservationNumber);
+    out[key] = next;
   }
-  return null;
+  return out;
+}
+
+/** Known observation shape; unknown keys are dropped at every level. */
+type ObservationShape = true | { [key: string]: ObservationShape };
+const OBSERVATION_SHAPE: ObservationShape = {
+  header: { symbol: true, exchange: true, timeframe: true, captureDate: true, lastClose: true, lastChangePct: true },
+  timeframe: true,
+  indicators: { name: true, params: true, legendValues: true, legendRoles: true },
+  drawnLines: {
+    panel: true, direction: true, description: true,
+    start: { when: true, value: true }, end: { when: true, value: true },
+    lastBarRelation: true,
+  },
+  recentBars: { note: true, rsiBelow30BarsAgo: true },
+  rangePosition: { approxPctAboveLow: true },
+  priceTrend: true,
+  nearRange: true,
+  lastCandle: true,
+  events: true,
+};
+
+/** Strip unknown keys; a null optional object is omitted, never defaulted. */
+function stripUnknownObservationKeys(value: unknown, shape: ObservationShape): unknown {
+  if (shape === true) return value;
+  if (Array.isArray(value)) return value.map(item => stripUnknownObservationKeys(item, shape));
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(shape)) {
+    const item = (value as Record<string, unknown>)[key];
+    if (item === undefined) continue;
+    if (child !== true && item === null) continue;
+    out[key] = stripUnknownObservationKeys(item, child);
+  }
+  return out;
+}
+
+/**
+ * Tolerant parse for model drift. Unknown keys, surrounding whitespace and
+ * numeric strings are normalised; required readings are never defaulted.
+ */
+/** Extract balanced JSON objects from reasoning or prose; returns the last first. */
+function extractJsonObjects(text: string): unknown[] {
+  const values: unknown[] = [];
+  if (!text) return values;
+  for (let start = text.indexOf('{'); start >= 0 && values.length < 20; start = text.indexOf('{', start + 1)) {
+    let depth = 0, inString = false, escaped = false;
+    for (let index = start; index < text.length; index++) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+      } else if (char === '"') inString = true;
+      else if (char === '{') depth += 1;
+      else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          try { values.push(JSON.parse(text.slice(start, index + 1))); } catch { /* not JSON */ }
+          break;
+        }
+      }
+    }
+  }
+  return values.reverse();
+}
+
+function observationCandidates(text: string, reasoningText?: string): unknown[] {
+  const values: unknown[] = [];
+  if (text.trim()) {
+    const parsed = safeParseJson(text);
+    if (parsed.ok) values.push(parsed.value);
+    else values.push(...extractJsonObjects(text));
+  }
+  if (reasoningText) values.push(...extractJsonObjects(reasoningText));
+  return values;
+}
+
+export function parseChartObservations(raw: unknown): ObservationParseResult {
+  const normalized = normalizeObservationShape(raw);
+  const stripped = stripUnknownObservationKeys(normalized, OBSERVATION_SHAPE);
+  const keys = raw && typeof raw === 'object' && !Array.isArray(raw) ? Object.keys(raw as Record<string, unknown>).slice(0, 20) : [];
+  // The schema catches malformed enums as "unknown"; a missing required reading
+  // must still fail rather than being defaulted.
+  if (!stripped || typeof stripped !== 'object' || Array.isArray(stripped)) {
+    return { ok: false, keys, issues: [{ path: '', code: 'object' }] };
+  }
+  const missing = REQUIRED_OBSERVATION_KEYS.filter(key => !(key in stripped));
+  if (missing.length) return { ok: false, keys, issues: missing.map(key => ({ path: key, code: 'missing' })) };
+  const checked = ChartObservationsSchema.safeParse(stripped);
+  if (checked.success) return { ok: true, data: checked.data };
+  return {
+    ok: false,
+    keys,
+    issues: checked.error.issues.slice(0, 12).map(issue => ({ path: issue.path.join('.'), code: issue.code })),
+  };
 }
 
 /**
@@ -905,6 +1022,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     // the JSON; the observation pass gets the full bounded output allowance.
     maxOutputTokens: visionOutputTokens,
     reasoningEffort: 'low',
+    reasoningFallback: true,
   };
   const pass1Attempts = chartModelAttempts(cfg, true);
   const pass1Timeouts = observationAttemptTimeouts(pass1Attempts);
@@ -913,18 +1031,68 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
   for (let index = 0; index < pass1Attempts.length; index++) {
     const result = await callChartModel(pass1Attempts[index], pass1Request, providerDeps, observationsDeadlineAt, pass1Attempts.length - index, 'observations', index + 1, false, pass1Timeouts[index], traceId);
     if (!result.ok) continue;
-    const parsed = safeParseJson(result.text);
-    if (!parsed.ok) continue;
-    const raw = parsed.value && typeof parsed.value === 'object' && 'observations' in parsed.value
-      ? (parsed.value as Record<string, unknown>).observations
-      : parsed.value;
-    const checked = parseChartObservations(raw);
-    if (!checked) {
-      console.info(JSON.stringify({ event: 'chart_observation_rejected', trace: traceId, provider: result.provider, model: result.model, at: new Date().toISOString() }));
+    const textCandidates = observationCandidates(result.text);
+    const reasoningCandidates = result.reasoningText ? extractJsonObjects(result.reasoningText) : [];
+    const candidates = [...textCandidates, ...reasoningCandidates];
+    let checked: ObservationParseResult | null = null;
+    let rejectedRaw: unknown = null;
+    let fromReasoning = false;
+    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+      const candidate = candidates[candidateIndex];
+      const raw = candidate && typeof candidate === 'object' && !Array.isArray(candidate) && 'observations' in candidate
+        ? (candidate as Record<string, unknown>).observations
+        : candidate;
+      const parsedCandidate = parseChartObservations(raw);
+      if (parsedCandidate.ok) {
+        checked = parsedCandidate;
+        rejectedRaw = candidate;
+        fromReasoning = candidateIndex >= textCandidates.length;
+        break;
+      }
+      checked = parsedCandidate;
+      rejectedRaw = candidate;
+    }
+    if (!checked || !checked.ok) {
+      const issues = checked && !checked.ok ? checked.issues : [{ path: '', code: 'no_json' }];
+      const keys = checked && !checked.ok ? checked.keys : [];
+      console.info(JSON.stringify({ event: 'chart_observation_rejected', trace: traceId, provider: result.provider, model: result.model, keys, issues, at: new Date().toISOString() }));
+      const remaining = observationsDeadlineAt - Date.now();
+      if (index === pass1Attempts.length - 1 && remaining >= VISION_OBSERVATION_REPAIR_MIN_MS) {
+        const repairRequest: ProviderRequest = {
+          ...pass1Request,
+          system: PASS1_SYSTEM + ' Return corrected JSON only. Keep the same observations; fix only the shape. Do not invent or remove readings. Validation errors: ' + JSON.stringify(issues.slice(0, 8)),
+          user: JSON.stringify({ hint: hint || null, rejected: JSON.stringify(rejectedRaw).slice(0, 6_000), errors: issues.slice(0, 8) }),
+        };
+        const repair = await callChartModel(pass1Attempts[index], repairRequest, providerDeps, observationsDeadlineAt, 1, 'repair', 1, false, Math.min(VISION_ATTEMPT_TIMEOUT_MS, remaining), traceId);
+        if (repair.ok) {
+          const repairedCandidates = [...observationCandidates(repair.text), ...(repair.reasoningText ? extractJsonObjects(repair.reasoningText) : [])];
+          let repaired: ObservationParseResult | null = null;
+          for (const candidate of repairedCandidates) {
+            const raw = candidate && typeof candidate === 'object' && !Array.isArray(candidate) && 'observations' in candidate
+              ? (candidate as Record<string, unknown>).observations
+              : candidate;
+            repaired = parseChartObservations(raw);
+            if (repaired.ok) break;
+          }
+          if (repaired?.ok) {
+            pass1Answer = { provider: repair.provider, model: repair.model };
+            observations = repaired.data;
+            if (repair.reasoningText) console.info(JSON.stringify({ event: 'chart_observations_from_reasoning', trace: traceId, provider: repair.provider, model: repair.model, at: new Date().toISOString() }));
+            break;
+          }
+          console.info(JSON.stringify({
+            event: 'chart_observation_repair_rejected', trace: traceId, provider: repair.provider, model: repair.model,
+            keys: repaired && !repaired.ok ? repaired.keys : [],
+            issues: repaired && !repaired.ok ? repaired.issues : [{ path: '', code: 'schema' }],
+            at: new Date().toISOString(),
+          }));
+        }
+      }
       continue;
     }
     pass1Answer = { provider: result.provider, model: result.model };
-    observations = checked;
+    observations = checked.data;
+    if (fromReasoning) console.info(JSON.stringify({ event: 'chart_observations_from_reasoning', trace: traceId, provider: result.provider, model: result.model, at: new Date().toISOString() }));
     break;
   }
   if (!pass1Answer || !observations) return unavailable(CHART_READ_FAILURE_MESSAGE);

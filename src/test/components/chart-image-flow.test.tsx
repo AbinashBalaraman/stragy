@@ -215,6 +215,27 @@ describe('chart image research flow', () => {
     expect(screen.queryByLabelText('Screen results')).toBeNull();
   });
 
+  it('offers Try again that re-reads the same chart image and hint', async () => {
+    chartResponse = unavailable();
+    render(<AiCopilotDock strategy={chartTemplate()} />);
+    attachFile(pngFile());
+    await screen.findByAltText('Attached chart preview');
+    fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Focus on the RSI breakout' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    await waitFor(() => expect(screen.getAllByText(unavailable().message).length).toBeGreaterThan(0));
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    chartResponse = chartScreen();
+    fireEvent.click(retry);
+    const card = await screen.findByRole('article', { name: 'Chart reading' });
+    expect(within(card).getByText(/Price sits near a 250-bar low/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      const body = JSON.parse(String(call[1].body));
+      expect(body.hint).toBe('Focus on the RSI breakout');
+      expect(body.image.startsWith('data:image/png;base64,')).toBe(true);
+    }
+  });
+
   it('shows close matches with scores and still requires explicit approval before a backtest', async () => {
     const fiveRules: StrategyAST = {
       ...chartTemplate(),

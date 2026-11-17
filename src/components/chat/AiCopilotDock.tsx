@@ -21,7 +21,7 @@ import { BacktestResultCard } from './BacktestResultCard';
 import { BacktestReviewCard } from './BacktestReviewCard';
 import { AssistantPending } from './AssistantPending';
 import { MessageText } from './MessageText';
-import { Checkbox } from '../common/Checkbox';
+import { RequestOptionsButton, RequestOptionsPanel } from './ComposerOptions';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
 import { ActionRow } from '../common/ActionRow';
@@ -355,6 +355,8 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [prompt, setPrompt] = useState('');
   const [chartImage, setChartImage] = useState<ChartImageAttachment | null>(null);
   const [chartReading, setChartReading] = useState<ChartImageReading | null>(null);
+  /** The failed chart request, kept so Try again can re-read the same image and hint. */
+  const [chartRetry, setChartRetry] = useState<{ image: ChartImageAttachment; hint: string; messageId: string } | null>(null);
   /**
    * Completed cards from earlier in this conversation. A later request clears
    * the live card state, but the answer that produced a table stays readable.
@@ -367,8 +369,11 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [sentChartImage, setSentChartImage] = useState<ChartImageAttachment | null>(null);
   /** Auto-scroll only while the reader is at the bottom (P0-6). */
   const [pinned, setPinned] = useState(true);
-  /** "Jump to latest" appears only for a screenful (or new content) out of view. */
+  /** "Jump to latest" appears once the newest content is clearly out of view. */
   const [jumpVisible, setJumpVisible] = useState(false);
+  /** Request options open inline in the composer, never over the textarea. */
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const optionsButtonRef = useRef<HTMLButtonElement | null>(null);
   /** Apply-and-backtest: the draft id plus the exact strategy the workspace must hold. */
   const [pendingDraftBacktest, setPendingDraftBacktest] = useState<{ id: string; snapshot: string } | null>(null);
   /** One absolute deadline per apply: re-renders can neither postpone nor cancel it. */
@@ -549,6 +554,8 @@ export const AiCopilotDock: React.FC<Props> = ({
    * header is never clipped.
    */
   const NEAR_BOTTOM = 48;
+  /** The newest content this far below the fold earns a "Jump to latest" pill. */
+  const JUMP_AFTER = 240;
 
   const scrollToLatest = (behavior: ScrollBehavior = 'smooth') => {
     const log = logRef.current;
@@ -610,8 +617,9 @@ export const AiCopilotDock: React.FC<Props> = ({
       pinnedRef.current = next;
       setPinned(next);
     }
-    // Within a screen of the end the reader can see what is newest: no button.
-    const show = away > Math.max(300, log.clientHeight);
+    // A few lines below the fold are not worth a button; a quarter screen is:
+    // the newest card is then out of view and would have to be hunted for.
+    const show = away > Math.max(120, Math.min(JUMP_AFTER, log.clientHeight * 0.6));
     setJumpVisible(current => (current === show ? current : show));
   };
 
@@ -1453,6 +1461,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   const submitText = async (raw: string, attachedImage: ChartImageAttachment | null = null) => {
     const text = raw.trim();
     if ((!text && !attachedImage) || loading || reviewStatus === 'running' || pendingApply.current) return;
+    setChartRetry(null);
     append('user', attachedImage ? '[chart image attached]' : text);
     setError('');
     setApplyStatus('');
@@ -1569,6 +1578,11 @@ export const AiCopilotDock: React.FC<Props> = ({
           // in the conversation, never repeated above the composer.
           tone: data.method === 'unavailable' && !deterministicMarket ? 'error' : undefined,
         });
+      if (attachedImage && data.method === 'unavailable' && !deterministicMarket) {
+        setChartRetry({ image: attachedImage, hint: text, messageId });
+      } else {
+        setChartRetry(null);
+      }
       if (data.kind === 'proposal') {
         const parsed = parseStrategyProposal(data.proposal);
         setCardMessageId(messageId);
@@ -2159,6 +2173,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                     // Retry belongs to the latest answer only (older ones keep Copy),
                     // and an error reply's action is the card's own Retry.
                     const retryText = index === lastAssistantIndex && message.tone !== 'error' ? promptForMessage(index) : '';
+                    const failedChart = chartRetry?.messageId === message.id ? chartRetry : null;
                     return (
                       <ActionRow
                         actions={[
@@ -2175,6 +2190,16 @@ export const AiCopilotDock: React.FC<Props> = ({
                             label: 'Retry',
                             icon: <RefreshCw size={14} aria-hidden="true" />,
                             onClick: () => void submitText(retryText),
+                            disabled: busy,
+                          }] : []),
+                          ...(failedChart ? [{
+                            id: 'retry-chart',
+                            label: 'Try again',
+                            icon: <RefreshCw size={14} aria-hidden="true" />,
+                            onClick: () => {
+                              setSentChartImage(failedChart.image);
+                              void submitText(failedChart.hint, failedChart.image);
+                            },
                             disabled: busy,
                           }] : []),
                         ]}
@@ -2270,6 +2295,16 @@ export const AiCopilotDock: React.FC<Props> = ({
               {preparingImage && <p role="status" className="st-meta mb-1 px-1 text-[var(--text-3)]">Preparing chart image…</p>}
               {imageError && <p role="alert" className="st-meta mb-1 px-1 text-[var(--down)]">{imageError}</p>}
               {dragActive && <p className="st-meta mb-1 px-1 text-[var(--accent)]">Drop a chart image to attach it.</p>}
+              {optionsOpen && (
+                <RequestOptionsPanel
+                  checked={allowLocal}
+                  onChange={setAllowLocal}
+                  onClose={() => {
+                    setOptionsOpen(false);
+                    optionsButtonRef.current?.focus();
+                  }}
+                />
+              )}
               <textarea
                 id="copilot-prompt"
                 ref={promptRef}
@@ -2313,18 +2348,7 @@ export const AiCopilotDock: React.FC<Props> = ({
                   >
                     <ImagePlus size={15} aria-hidden="true" />
                   </button>
-                  <details className="relative text-[12px] text-[var(--text-3)]">
-                    <summary aria-label="Request options" className="flex min-h-11 cursor-pointer list-none items-center whitespace-nowrap rounded-[var(--r-btn)] px-2 transition-colors hover:text-[var(--text-1)] [&::-webkit-details-marker]:hidden sm:min-h-8">
-                      Request options
-                    </summary>
-                    <div className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-[var(--r-inner)] border border-[var(--line)] bg-[var(--surface-2)] p-3 shadow-[0_12px_32px_rgba(0,0,0,0.45)]">
-                      <label className="flex min-h-11 items-start gap-2 text-[12px] leading-4 text-[var(--text-2)] sm:min-h-6">
-                        <Checkbox checked={allowLocal} onChange={setAllowLocal} className="mt-0.5" />
-                        Allow local keyword fallback (not AI)
-                      </label>
-                      <p className="mt-2 text-[12px] leading-4 text-[var(--text-3)]">Local tools only understand explicit stop, target, trailing-stop and symbol edits.</p>
-                    </div>
-                  </details>
+                  <RequestOptionsButton ref={optionsButtonRef} open={optionsOpen} onToggle={() => setOptionsOpen(open => !open)} />
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   {/* One control in this slot: send, or cancel while a request runs. */}

@@ -13,8 +13,8 @@ beforeEach(() => { vi.useFakeTimers(); fetchMock = vi.fn(); vi.stubGlobal('fetch
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('bounded asynchronous research job client', () => {
-  it('waits 600s for a cold market snapshot and then keeps the job', async () => {
-    expect(RESEARCH_DEADLINE_MS.market).toBe(600_000);
+  it('waits 240s for a cold market snapshot and then keeps the job', async () => {
+    expect(RESEARCH_DEADLINE_MS.market).toBe(240_000);
     fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
       if (String(url) === '/api/v2/market-snapshots') return response(receipt, 202);
       if (init.method === 'DELETE') return response({});
@@ -22,7 +22,7 @@ describe('bounded asynchronous research job client', () => {
     });
     const promise = requestMarketSnapshot({ universe: 'NIFTY_50' });
     const assertion = expect(promise).rejects.toMatchObject({ code: 'CLIENT_DEADLINE', message: 'The market snapshot is still loading. Check again.' });
-    await vi.advanceTimersByTimeAsync(599_000);
+    await vi.advanceTimersByTimeAsync(239_000);
     let settled = false;
     void promise.then(() => { settled = true; }, () => { settled = true; });
     await vi.advanceTimersByTimeAsync(1_000);

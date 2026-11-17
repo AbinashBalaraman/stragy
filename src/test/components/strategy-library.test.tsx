@@ -51,7 +51,8 @@ describe('My Strategies alongside immutable templates', () => {
     const onLoad = vi.fn(), current = strategy(), original = JSON.stringify(current);
     render(<StrategyLibraryView currentStrategy={current} onLoadStrategy={onLoad} />);
     expect(window.localStorage.getItem(KEY)).toBeNull();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Save as name' }), { target: { value: 'Mine' } });
+    expect(screen.getByText('Save as')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Save as' }), { target: { value: 'Mine' } });
     fireEvent.click(saveButton()); await screen.findByRole('article', { name: 'Mine' });
     expect(screen.getByRole('status')).toHaveTextContent('saved as a new copy');
     expect(JSON.stringify(current)).toBe(original);

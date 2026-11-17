@@ -7,6 +7,7 @@ import type { StrategyAST } from '../../shared/strategy/types';
 import type { ScannerPrefill } from '../../shared/contracts/featureRegistry';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { cancelResearchJob, checkMarketJob, requestMarketSnapshot, requestScan } from '../../client/api';
+import { UNIVERSE_OPTIONS } from '../../shared/data/symbols';
 
 vi.mock('../../client/api', () => ({ requestMarketSnapshot: vi.fn(), requestScan: vi.fn(), checkMarketJob: vi.fn(), cancelResearchJob: vi.fn() }));
 const market = vi.mocked(requestMarketSnapshot);
@@ -60,7 +61,7 @@ describe('bounded lazy market scanner flow', () => {
     expect(await screen.findByText(/Price source not reported; observed coverage unverified/)).toBeTruthy();
   });
 
-  it('sanitizes a chat scanner prefill to the verified Nifty 50 and says so', async () => {
+  it('applies a chat scanner prefill: universe, cutoff, limit, tab and note', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (String(url) === '/api/market/dates') {
         return { ok: true, status: 200, json: async () => ({ success: true, dates: [{ date: '2025-01-02', label: '2025-01-02', isLatest: true }, { date: '2025-01-01', label: '2025-01-01', isLatest: false }] }) };
@@ -74,37 +75,51 @@ describe('bounded lazy market scanner flow', () => {
     } as ScannerPrefill;
     render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} prefill={prefill} />);
     expect(await screen.findByText(/Filled from chat/)).toBeTruthy();
-    expect((screen.getByLabelText('Market universe') as HTMLSelectElement).value).toBe('NIFTY_50');
-    expect(screen.getByText(/Only the Nifty 50 has verified membership today/)).toBeTruthy();
-    await waitFor(() => expect(scan).toHaveBeenCalledWith(expect.objectContaining({ universe: 'NIFTY_50', limit: 12, asOf: '2025-01-01' }), expect.anything()));
+    expect((screen.getByLabelText('Market universe') as HTMLSelectElement).value).toBe('NIFTY_IT');
+    await waitFor(() => expect(scan).toHaveBeenCalledWith(expect.objectContaining({ universe: 'NIFTY_IT', limit: 12, asOf: '2025-01-01' }), expect.anything()));
   });
 
-  it('falls back from a remembered unsupported universe without a failing request', async () => {
+  it('keeps a remembered universe selectable and requests it', async () => {
     const onUniverseChange = vi.fn();
     render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} initialUniverse="NIFTY_IT" onUniverseChange={onUniverseChange} />);
     expect(await screen.findByText('Market scanner')).toBeTruthy();
     const select = screen.getByLabelText('Market universe') as HTMLSelectElement;
-    expect(select.value).toBe('NIFTY_50');
-    expect(screen.getByText(/Only the Nifty 50 has verified membership today\. The other index pools are illustrative\./)).toBeTruthy();
+    expect(select.value).toBe('NIFTY_IT');
     expect(onUniverseChange).not.toHaveBeenCalled();
-    expect(market).toHaveBeenCalledWith({ universe: 'NIFTY_50', asOf: undefined }, expect.anything(), expect.anything());
+    expect(market).toHaveBeenCalledWith({ universe: 'NIFTY_IT', asOf: undefined }, expect.anything(), expect.anything());
     expect(market).toHaveBeenCalledTimes(1);
     expect(scan).not.toHaveBeenCalled();
   });
 
-  it('marks every unverified pool unavailable and never requests a disabled selection', async () => {
+  it('renders every universe option enabled and requests a new selection', async () => {
     const onUniverseChange = vi.fn();
     render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} onUniverseChange={onUniverseChange} />);
     await waitFor(() => expect(screen.getByText('Date: 02 Jan 2025')).toBeTruthy());
-    for (const label of ['All markets (NSE + BSE) · not available', 'All NSE stocks · not available', 'Bank NIFTY · not available', 'NIFTY IT · not available', 'NIFTY FMCG · not available']) {
-      expect((screen.getByRole('option', { name: label }) as HTMLOptionElement).disabled).toBe(true);
-    }
-    expect((screen.getByRole('option', { name: 'Nifty 50' }) as HTMLOptionElement).disabled).toBe(false);
-    fireEvent.change(universe(), { target: { value: 'NIFTY_IT' } });
-    expect((universe() as HTMLSelectElement).value).toBe('NIFTY_50');
-    expect(onUniverseChange).not.toHaveBeenCalled();
-    expect(market).toHaveBeenCalledTimes(1);
-    expect(scan).not.toHaveBeenCalled();
+    const select = screen.getByLabelText('Market universe') as HTMLSelectElement;
+    const options = Array.from(select.querySelectorAll('option')) as HTMLOptionElement[];
+    expect(options).toHaveLength(UNIVERSE_OPTIONS.length);
+    expect(options.every(option => !option.disabled)).toBe(true);
+    expect(options.map(option => option.value).sort()).toEqual(UNIVERSE_OPTIONS.map(option => option.id).sort());
+    expect(select.textContent).not.toContain('not available');
+
+    fireEvent.change(select, { target: { value: 'NIFTY_IT' } });
+    expect(onUniverseChange).toHaveBeenCalledWith('NIFTY_IT');
+    await waitFor(() => expect(market).toHaveBeenLastCalledWith({ universe: 'NIFTY_IT', asOf: undefined }, expect.anything(), expect.anything()));
+  });
+
+  it('shows a compact inline status when the selected universe has no data', async () => {
+    market.mockResolvedValueOnce({
+      ...snapshot(), universe: 'NIFTY_IT',
+      coverage: { requested: 50, succeeded: 0, unavailable: 50 },
+      errors: Array.from({ length: 50 }, (_, index) => ({ symbolId: index + 1, code: 'NO_MEMBERSHIP', ticker: 'S' + index })),
+    } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    render(<MarketScannerView strategy={strategy} onSelectStockAndBacktest={vi.fn()} initialUniverse="NIFTY_IT" />);
+
+    expect(await screen.findByText('No verified data for NIFTY IT in the current feed')).toBeTruthy();
+    expect(screen.getByText(/The feed returned no evaluated symbols for this universe/)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry snapshot' }));
+    await waitFor(() => expect(market).toHaveBeenCalledTimes(2));
   });
 
   it('renders matched rule evidence in plain language when the rule index is known', async () => {
@@ -175,10 +190,54 @@ describe('bounded lazy market scanner flow', () => {
     expect(screen.queryByText('Refreshing…')).toBeNull();
   });
 
-  it('names a partially unpriced symbol quietly instead of raising an alarm', async () => {
-    market.mockResolvedValueOnce({ ...snapshot(), coverage: { requested: 50, succeeded: 49, unavailable: 1 }, errors: [{ symbolId: 18, code: 'PROVIDER_RATE_LIMITED', ticker: 'TATAMOTORS' }] } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+  it('shows running job progress from the server stage and cancels the load', async () => {
+    market.mockReturnValueOnce(new Promise(() => {}));
     renderScanner();
-    expect(await screen.findByText('49 of 50 stocks priced · TATAMOTORS unavailable')).toBeTruthy();
+    await waitFor(() => expect(market).toHaveBeenCalledTimes(1));
+    const onProgress = market.mock.calls[0][2];
+    act(() => onProgress?.({ status: 'running', stage: 'market symbols 7/50' }));
+
+    expect(screen.getByText('Loading Nifty 50 prices · 7 of 50')).toBeTruthy();
+    const cancel = screen.getByRole('button', { name: 'Cancel load' });
+    expect(cancel.className).toContain('min-h-11');
+    fireEvent.click(cancel);
+
+    expect(screen.getByText('Market load cancelled.')).toBeTruthy();
+    expect(market.mock.calls[0][1]?.aborted).toBe(true);
+  });
+
+  it('offers a retry path after 90 seconds without progress', async () => {
+    vi.useFakeTimers();
+    try {
+      market.mockImplementationOnce(() => new Promise(() => {}));
+      renderScanner();
+      expect(screen.queryByRole('button', { name: 'Retry snapshot' })).toBeNull();
+      act(() => { vi.advanceTimersByTime(90_000); });
+      expect(screen.getByText(/Still loading after 90 seconds/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry snapshot' }));
+      expect(market).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows finished coverage, status, warnings and membership quietly', async () => {
+    const salesforceMembership = {
+      requested: 50, unmapped: [{ ticker: 'OLD', reason: 'Not in feed' }],
+      source: 'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv',
+      observedAt: '2026-11-17T10:00:00.000Z', freshness: 'official feed observed',
+      warnings: ['One symbol was renamed.'],
+    };
+    market.mockResolvedValueOnce({
+      ...snapshot(), status: 'partial', warnings: ['Two symbols had no close for this session.'],
+      membership: salesforceMembership,
+      coverage: { requested: 50, succeeded: 49, unavailable: 1 },
+      errors: [{ symbolId: 18, code: 'PROVIDER_RATE_LIMITED', ticker: 'TATAMOTORS' }],
+    } as unknown as Awaited<ReturnType<typeof requestMarketSnapshot>>);
+    renderScanner();
+    expect(await screen.findByText(/49 of 50 stocks priced · partial coverage · TATAMOTORS unavailable/)).toBeTruthy();
+    expect(screen.getByText('Two symbols had no close for this session.')).toBeTruthy();
+    expect(screen.getByText(/Membership: 50 requested, 1 unmapped/)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(document.body.textContent).not.toContain('symbolId');
     expect(document.body.textContent).not.toContain('PROVIDER_RATE_LIMITED');
@@ -479,7 +538,7 @@ describe('bounded lazy market scanner flow', () => {
 
 it('shows official membership and actual observation dates after a real market response',async()=>{
   market.mockResolvedValueOnce({...snapshot(),mode:'real',sourceCoverage:{YAHOO_PUBLIC_CHART:50},membership:{requested:50,unmapped:[],source:'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv',observedAt:'2026-10-16T11:00:00.000Z',freshness:'official-feed-observed; effective date not supplied',warnings:[]},observationDates:{earliest:'2026-10-15',latest:'2026-10-16',staleSymbols:0}});
-  renderScanner();await screen.findByText(/Observed sessions: 2026-10-15 to 2026-10-16/);expect(screen.getAllByText(/NIFTY 50 \(official constituent feed\)/).length).toBeGreaterThan(0);expect(screen.getByRole('option',{name:'Nifty 50'})).toBeTruthy();
+  renderScanner();await screen.findByText(/Observed sessions: 2026-10-15 to 2026-10-16/);expect(screen.getAllByText(/NIFTY 50 \(official constituent feed\)/).length).toBeGreaterThan(0);expect(screen.getByRole('option',{name:/NIFTY 50/i})).toBeTruthy();
 });
 
 describe('live quotes and readable coverage in the scanner', () => {
@@ -572,11 +631,12 @@ describe('live quotes and readable coverage in the scanner', () => {
     expect(await screen.findByText('Market scanner')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.click(screen.getByRole('button', { name: /Option chain/i }));
+    expect(screen.getByRole('button', { name: 'More · Option chain' })).toBeTruthy();
     expect(screen.queryByText(/do not support the selected historical cutoff/)).toBeNull();
     expect(screen.getByText(/Latest session only/)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Trading date'), { target: { value: '2025-01-01' } });
-    expect(await screen.findByText(/uses the latest model reference/)).toBeTruthy();
+    expect(screen.getByText(/uses the latest model reference/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Use latest session' }));
     await waitFor(() => expect(screen.queryByText(/uses the latest model reference/)).toBeNull());
   });
@@ -589,8 +649,15 @@ describe('live quotes and readable coverage in the scanner', () => {
     fireEvent.click(screen.getByRole('button', { name: /Option chain/i }));
     expect(await screen.findByText("Option chain isn't available")).toBeTruthy();
     expect(screen.getByText("Stragy only shows real observed data, and there's no real option-chain feed yet.")).toBeTruthy();
+    const panel = screen.getByText("Option chain isn't available").closest('[role="status"]') as HTMLElement;
+    expect(panel.className).not.toContain('border-dashed');
+    expect(panel.className).not.toContain('text-center');
+    const back = screen.getByRole('button', { name: 'Back to Top gainers & losers' });
+    expect(back.className).toContain('min-h-11');
     expect(screen.queryByText(/model-only derivatives are disabled/)).toBeNull();
     expect(screen.queryByText(/HTTP 422/)).toBeNull();
+    fireEvent.click(back);
+    expect(screen.queryByText("Option chain isn't available")).toBeNull();
   });
 
   it('uses one universe picker, one session picker and a mobile section select without emoji copy', async () => {

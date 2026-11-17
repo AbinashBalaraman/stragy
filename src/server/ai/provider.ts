@@ -323,7 +323,7 @@ export type ProviderErrorCode =
   | 'not_configured' | 'budget_exceeded' | 'request_too_large' | 'timeout' | 'network_error'
   | 'http_error' | 'response_too_large' | 'invalid_response' | 'empty_response' | 'refusal' | 'cost_not_approved';
 
-export interface ProviderCallSuccess { ok: true; text: string; provider: AIProviderName; model: string; providerLabel?: string }
+export interface ProviderCallSuccess { ok: true; text: string; reasoningText?: string; provider: AIProviderName; model: string; providerLabel?: string }
 export interface ProviderCallFailure { ok: false; code: ProviderErrorCode; message: string; status?: number; retryAfterMs?: number }
 export type ProviderCallResult = ProviderCallSuccess | ProviderCallFailure;
 
@@ -364,6 +364,8 @@ export interface ProviderRequest {
   temperature?: number;
   /** Optional OpenAI-compatible reasoning effort hint (used for slower reasoning vision models). */
   reasoningEffort?: 'low' | 'medium' | 'high';
+  /** Read the answer from a reasoning-only reply instead of failing the pass. */
+  reasoningFallback?: boolean;
 }
 
 /** Rolling-window request budget. Injectable for tests. */
@@ -458,7 +460,7 @@ export function buildProviderPayload(cfg: AIRuntimeConfig, req: ProviderRequest)
   return { url, headers, body: JSON.stringify(payload) };
 }
 
-function extractText(provider: AIProviderName, data: any): ProviderCallFailure | { text: string } {
+function extractText(provider: AIProviderName, data: any, reasoningFallback = false): ProviderCallFailure | { text: string; reasoningText?: string } {
   if (!data || typeof data !== 'object') return fail('invalid_response', 'Provider response was not an object.');
   if (provider === 'gemini') {
     if (data.promptFeedback?.blockReason) return fail('refusal', 'Provider declined the request.');
@@ -473,20 +475,19 @@ function extractText(provider: AIProviderName, data: any): ProviderCallFailure |
   const choice = data.choices?.[0];
   if (!choice) return fail('empty_response', 'Provider returned no choices.');
   if (choice.message?.refusal || choice.finish_reason === 'content_filter') return fail('refusal', 'Provider declined the request.');
-  const reasoningOnly = typeof choice.message?.reasoning_content === 'string' && choice.message.reasoning_content.trim().length > 0;
+  const reasoning = typeof choice.message?.reasoning_content === 'string' ? choice.message.reasoning_content : '';
+  const reasoningOnly = reasoning.trim().length > 0;
   const content = choice.message?.content;
   let text = '';
   if (typeof content === 'string') text = content;
   else if (Array.isArray(content)) text = content.map((part: any) => typeof part === 'string' ? part : typeof part?.text === 'string' ? part.text : '').join('');
   else if (content && typeof content === 'object' && typeof content.text === 'string') text = content.text;
-  else return reasoningOnly
-    ? fail('empty_response', 'Provider returned reasoning without answer text.')
-    : fail(choice.finish_reason === 'length' ? 'empty_response' : 'invalid_response', choice.finish_reason === 'length' ? 'Provider returned no answer text. This is retryable.' : 'Provider message content was not text.');
-  return text.trim()
-    ? { text }
-    : fail('empty_response', reasoningOnly
-      ? 'Provider returned reasoning without answer text.'
-      : choice.finish_reason === 'length' ? 'Provider returned no answer text. This is retryable.' : 'Provider returned empty text.');
+  else if (!reasoningOnly) return fail(choice.finish_reason === 'length' ? 'empty_response' : 'invalid_response', choice.finish_reason === 'length' ? 'Provider returned no answer text. This is retryable.' : 'Provider message content was not text.');
+  if (text.trim()) return { text };
+  if (reasoningOnly && reasoningFallback) return { text: '', reasoningText: reasoning };
+  return fail('empty_response', reasoningOnly
+    ? 'Provider returned reasoning without answer text.'
+    : choice.finish_reason === 'length' ? 'Provider returned no answer text. This is retryable.' : 'Provider returned empty text.');
 }
 
 /**
@@ -572,12 +573,23 @@ async function attemptProvider(cfg: AIRuntimeConfig, req: ProviderRequest, deps:
     if (Buffer.byteLength(raw, 'utf8') > AI_LIMITS.maxResponseBytes) return fail('response_too_large', 'AI response exceeds the size limit.');
     let data: any;
     try { data = JSON.parse(raw); } catch { return fail('invalid_response', 'Provider response was not JSON.'); }
-    const extracted = extractText(cfg.provider, data);
+    if (cfg.provider === 'opencode-go' && req.images?.length) {
+      const choice = data?.choices?.[0];
+      const content = choice?.message?.content;
+      console.info(JSON.stringify({
+        event: 'provider_response_shape', provider: cfg.provider, model: cfg.model,
+        contentLength: typeof content === 'string' ? content.length : Array.isArray(content) ? content.length : 0,
+        reasoningLength: typeof choice?.message?.reasoning_content === 'string' ? choice.message.reasoning_content.length : 0,
+        finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : null,
+        toolCalls: Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls.length : 0,
+      }));
+    }
+    const extracted = extractText(cfg.provider, data, req.reasoningFallback === true);
     if ('ok' in extracted) return extracted;
     const routedModel = cfg.provider === 'openrouter' && typeof data.model === 'string' && data.model.trim()
       ? data.model.trim()
       : cfg.model!;
-    return { ok: true, text: extracted.text, provider: cfg.provider, model: routedModel, ...(cfg.providerLabel ? { providerLabel: cfg.providerLabel } : {}) };
+    return { ok: true, text: extracted.text, ...(extracted.reasoningText ? { reasoningText: extracted.reasoningText } : {}), provider: cfg.provider, model: routedModel, ...(cfg.providerLabel ? { providerLabel: cfg.providerLabel } : {}) };
   })();
 
   try {

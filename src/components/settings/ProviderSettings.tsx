@@ -645,7 +645,7 @@ export const ProviderSettings: React.FC = () => {
                         className={provider.keySource === 'none' ? 'text-[11px] text-neutral-500' : 'text-[11px] text-[#a8c7fa]'}
                       >{keyStatus(provider)}</span>
                     </div>
-                    <p className={'st-meta mt-1 truncate font-mono ' + (provider.enabled ? 'text-[var(--text-3)]' : 'text-[var(--text-disabled)]')}>{provider.baseUrl}</p>
+                    <p className={'st-meta mt-1 break-all font-mono no-underline ' + (provider.enabled ? 'text-[var(--text-3)]' : 'text-[var(--text-disabled)]')}>{provider.baseUrl}</p>
                     {provider.extraHeaderNames.length > 0 && <p className="mt-1 text-[10px] text-neutral-500">Headers: {provider.extraHeaderNames.join(', ')} (values hidden)</p>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -775,7 +775,7 @@ export const ProviderSettings: React.FC = () => {
             The primary model is disabled, so chat will fail until it is enabled or another model is moved up.
           </p>
         )}
-        {chain.length === 0 && <p className="rounded-[var(--r-inner)] border border-dashed border-[var(--line-strong)] p-6 text-center text-xs text-[var(--text-3)]">The chain is empty. Use “Add to chain” from a provider’s model list.</p>}
+        {chain.length === 0 && <p className="rounded-[var(--r-inner)] border border-[var(--line)] bg-[var(--surface-2)] px-3 py-3 text-xs text-[var(--text-3)]">The chain is empty. Use “Add to chain” from a provider’s model list.</p>}
         <ol className="space-y-2">
           {chain.map((entry, index) => {
             const paid = entry.free !== true;

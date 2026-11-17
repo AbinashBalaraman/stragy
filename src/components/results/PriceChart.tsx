@@ -75,7 +75,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
 
   if (safeBars.length === 0) {
     return (
-      <div className="st-card-surface p-8 text-center text-xs text-[var(--text-3)]">
+      <div className="st-card-surface p-4 text-xs text-[var(--text-3)]">
         No price action bars available to display.
       </div>
     );

@@ -1,7 +1,7 @@
 import type { ResearchJobProgress } from '../../client/api';
 
-/** Only count stages we deliberately present; raw server stage names never leak. */
-const COUNT_STAGE = /^(?:scan|prices?|loading)?\s*(\d+)\s*(?:of|\/)\s*(\d+)$/i;
+/** Only the trailing count is presented; raw server stage names never leak. */
+const COUNT_STAGE = /(\d+)\s*(?:of|\/)\s*(\d+)\s*$/i;
 
 /**
  * The scanner's cold-load line. Real job stages only; counts are shown only
@@ -12,5 +12,9 @@ export function marketLoadingMessage(progress: ResearchJobProgress | null, label
   const stage = progress?.stage?.trim() ?? '';
   const counts = stage.match(COUNT_STAGE);
   if (counts) return `Loading ${label} prices · ${counts[1]} of ${counts[2]}`;
+  const job = progress?.progress;
+  if (job && Number.isFinite(job.processed) && Number.isFinite(job.total) && job.total > 0) {
+    return `Loading ${label} prices · ${job.processed} of ${job.total}`;
+  }
   return `Loading ${label} prices. The first load takes up to 4 minutes; later loads are instant.`;
 }

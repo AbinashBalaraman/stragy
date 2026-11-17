@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleAIChat } from '../../server/ai/copilot';
 import { createProposal } from '../../server/ai/proposals';
-import { createRequestBudget } from '../../server/ai/provider';
+import { createRequestBudget, OPENCODE_GO_USER_AGENT } from '../../server/ai/provider';
 import { decryptSecret, encryptSecret, resetSecretsCache } from '../../server/ai/providerSecrets';
 import {
   deleteProvider, getProvidersResponse, initializeProviderRegistry, resetProviderRegistryCache, resetProviderRegistryForTests,
-  resolveActiveConfig, setChain, setDnsLookupForTests, upsertProvider, validateBaseUrl,
+  resolveActiveConfig, setChain, setDnsLookupForTests, testProvider, upsertProvider, validateBaseUrl,
 } from '../../server/ai/providerRegistry';
 import { fakeResponse, openAIBody, recordingFetch, validStrategy } from '../../server/ai/testFixtures';
 
@@ -35,6 +35,7 @@ afterEach(() => {
   resetProviderRegistryCache();
   resetProviderRegistryForTests();
   setDnsLookupForTests(null);
+  vi.unstubAllGlobals();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -135,6 +136,32 @@ describe('provider registry', () => {
     if (!r.ok) return;
     expect(r.proposal.warnings.join(' ')).toMatch(/OpenRouter is turned off in Settings → AI providers and was skipped/);
     expect(f.calls.every(call => !call.url.includes('openrouter'))).toBe(true);
+  });
+
+  it('tests OpenCode Go with the real identity headers and a 64-token bound', async () => {
+    let captured: { url: string; headers: Record<string, string>; body: { max_tokens?: number; model?: string } } | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: { headers: Record<string, string>; body: string }) => {
+      captured = { url, headers: init.headers, body: JSON.parse(init.body) };
+      return fakeResponse({ body: { model: 'hy4-flash-free', choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }] } });
+    }));
+    const out = await testProvider('opencode-go', { model: 'hy4-flash-free' }, env());
+    expect(out.ok).toBe(true);
+    expect(captured!.url).toContain('/chat/completions');
+    expect(captured!.headers['User-Agent']).toBe(OPENCODE_GO_USER_AGENT);
+    expect(captured!.headers['x-opencode-session']).toBeTruthy();
+    expect(captured!.body.model).toBe('hy4-flash-free');
+    expect(captured!.body.max_tokens).toBe(64);
+  });
+
+  it('accepts a valid OpenRouter finish even when the small reply has no text', async () => {
+    let body: { max_tokens?: number } | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      body = JSON.parse(init.body);
+      return fakeResponse({ body: { choices: [{ message: { content: '' }, finish_reason: 'length' }] } });
+    }));
+    const out = await testProvider('openrouter', { model: 'openrouter/free' }, env());
+    expect(out.ok).toBe(true);
+    expect(body!.max_tokens).toBe(64);
   });
 
   it('applies a saved chain without a restart and labels the OpenRouter routed model', async () => {

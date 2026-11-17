@@ -238,7 +238,7 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
 
   if (!currentResult) {
     return (
-      <div className="space-y-2 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-8 text-center text-xs text-[var(--text-3)]">
+      <div className="space-y-2 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 text-xs text-[var(--text-3)]">
         {batchError && <p role="alert" className="text-[var(--down)]">{batchError}</p>}
         <p className="text-xs text-[var(--text-3)]">Comparisons are immutable run snapshots. Different symbols, data windows, capital or execution assumptions are not directly comparable.</p>
         <p>No completed run is loaded for comparison.</p>
@@ -308,8 +308,8 @@ export const StrategyComparisonView: React.FC<StrategyComparisonViewProps> = ({
               {compatibility.excluded.map(({ result, reasons }) => (
                 <li key={result.backtestId}>
                   <strong className="text-[rgba(236,236,237,0.82)]">{result.strategy.name}</strong> ({result.symbol.ticker}) <code>{result.backtestId}</code>: {reasons.join('; ')}.
-                  {onSelectActiveResult && <button type="button" className="ml-2 text-[#a8c7fa] underline" onClick={() => onSelectActiveResult(result)}>Inspect</button>}
-                  {onUpdateComparisonList && <button type="button" className="ml-2 text-[#a8c7fa] underline" onClick={() => handleRemove(result.backtestId)}>Remove</button>}
+                  {onSelectActiveResult && <button type="button" className="ml-2 inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-2 py-0.5 text-[11px] text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] sm:min-h-7" onClick={() => onSelectActiveResult(result)}>Inspect</button>}
+                  {onUpdateComparisonList && <button type="button" className="ml-2 inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-2 py-0.5 text-[11px] text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] sm:min-h-7" onClick={() => handleRemove(result.backtestId)}>Remove</button>}
                 </li>
               ))}
             </ul>

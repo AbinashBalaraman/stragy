@@ -701,7 +701,7 @@ export async function angelLogin(signal?: AbortSignal): Promise<AngelSessionInfo
 export type AngelInterval = 'ONE_DAY';
 
 export interface AngelCandleRequest {
-  exchange: 'NSE';
+  exchange: 'NSE' | 'BSE';
   symbolToken: string;
   interval: AngelInterval;
   fromDate: Date;

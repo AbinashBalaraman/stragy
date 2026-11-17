@@ -37,7 +37,7 @@ async function setup(withJobs = false) {
   const config = parseConfig({ NODE_ENV: 'test', DATA_MODE: 'demo', AI_PROVIDER: 'none', STORAGE_MODE: 'ephemeral', MAX_JOB_MS: '1000' });
   const repository = await ResearchRepository.open({ maxRuns: 10 }); repositories.push(repository);
   const executor = vi.fn(async (payload: ResearchPayload) => {
-    if (payload.kind === 'scan' || payload.kind === 'market') throw new Error('Unexpected job');
+    if (payload.kind !== 'backtest') throw new Error('Unexpected job');
     return simulate(payload.strategy, payload.bars, payload.options);
   });
   const manager = new JobManager({ executor, maxMs: 1000 }); managers.push(manager);
@@ -76,7 +76,7 @@ describe('API requested window retains indicator-only warmup', () => {
     const { app, enqueue } = await setup(true), p = { ...input(), end: '2025-06-10', asOf: '2025-06-12' };
     expect((await request(app).post('/api/v2/backtests').send(p)).status).toBe(202);
     const payload = enqueue.mock.calls[0][0];
-    if (payload.kind === 'scan' || payload.kind === 'market') throw new Error('Unexpected job');
+    if (payload.kind !== 'backtest') throw new Error('Unexpected job');
     expect(payload.bars[0].date).toBe('2024-01-01');
     expect(payload.bars.at(-1)?.date).toBe('2025-06-03');
     expect(payload.bars.every(bar => bar.date <= '2025-06-03')).toBe(true);
@@ -101,7 +101,7 @@ describe('API requested window retains indicator-only warmup', () => {
     const different = await request(app).post('/api/v2/backtests').set('Idempotency-Key', 'window-identity').send(input());
     expect(different.status).toBe(409); expect(different.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     const a = enqueue.mock.calls[0][0], b = enqueue.mock.calls[2][0];
-    if (a.kind === 'scan' || a.kind === 'market' || b.kind === 'scan' || b.kind === 'market') throw new Error('Unexpected job');
+    if (a.kind !== 'backtest' || b.kind !== 'backtest') throw new Error('Unexpected job');
     expect(a.bars).toEqual(b.bars); expect(a.options?.startIndex).toBe(b.options?.startIndex);
   });
   it.each([

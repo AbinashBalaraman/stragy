@@ -2,11 +2,20 @@ import { z } from 'zod';
 import type { StrategyAST } from '../shared/strategy/types';
 import { ChartObservationsSchema, ChartSelfCheckSchema, parseResearchChatResponse, type ResearchChatResponse } from '../shared/contracts/research-chat';
 import { snapshotStrategy } from './workspace';
-import { ApiError, readJson } from './api';
+import { ApiError, cancelResearchJob, readJson } from './api';
 
 export const CHART_IMAGE_MAX_BYTES = 5_000_000;
 export const CHART_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 export const CHART_IMAGE_ACCEPT = CHART_IMAGE_MIME_TYPES.join(',');
+/** The POST only enqueues, so the whole wait is polling with short GETs. */
+export const CHART_JOB_POLL_MS = 1_500;
+/**
+ * The server runs two bounded vision passes inside a 200 s budget and caps the
+ * job at 210 s. The client keeps the same ceiling: long enough for a cold read,
+ * short enough that a dead provider is not an endless spinner.
+ */
+export const CHART_ANALYSIS_DEADLINE_MS = 210_000;
+const POLL_MAX_CONSECUTIVE_FAILURES = 10;
 const MAX_SOURCE_SIDE = 2000;
 const DATA_URL = /^data:image\/(png|jpeg|webp);base64,/i;
 
@@ -166,6 +175,24 @@ export function parseChartAnalysisResponse(raw: unknown): ChartAnalysisResponse 
   return { ...parsed, chartReading: reading };
 }
 
+function parseChartResult(raw: unknown): ChartAnalysisResponse {
+  try { return parseChartAnalysisResponse(raw); }
+  catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError('The chart analysis response was invalid. No result was confirmed.', 'INVALID_RESPONSE');
+  }
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal.reason ?? new DOMException('Request cancelled', 'AbortError')); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, ms);
+    if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
+const JOB_ID = /^[A-Za-z0-9-]{1,100}$/;
+
 export async function requestChartAnalysis(input: ChartAnalysisInput, signal?: AbortSignal): Promise<ChartAnalysisResponse> {
   if (typeof input.image !== 'string' || !DATA_URL.test(input.image)) {
     throw new ApiError('Attach a PNG, JPEG or WebP chart image.', 'CHART_IMAGE_INVALID');
@@ -187,24 +214,62 @@ export async function requestChartAnalysis(input: ChartAnalysisInput, signal?: A
     rejectAbort = () => reject(controller.signal.reason ?? new DOMException('Request cancelled', 'AbortError'));
     controller.signal.addEventListener('abort', rejectAbort, { once: true });
   });
-  // The server chart budget is 200 s (observations up to 135 s, then the plan up
-  // to 65 s), and cold reads were already failing at the old 50 s paid cap, so
-  // the client waits 10 s past that budget before it gives up. Provider calls
-  // stay bounded independently by the server.
-  const timer = setTimeout(() => controller.abort(new ApiError('Chart analysis deadline exceeded. No result was confirmed.', 'CLIENT_DEADLINE')), 210000);
+  const timer = setTimeout(() => controller.abort(new ApiError('Chart analysis deadline exceeded. No result was confirmed.', 'CLIENT_DEADLINE')), CHART_ANALYSIS_DEADLINE_MS);
+  let jobId: string | undefined, terminal = false;
   try {
     if (controller.signal.aborted) throw controller.signal.reason;
     const work = (async () => {
+      // The upload is a short request: it only validates the image and enqueues.
       const response = await fetch('/api/v2/chart-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      try { return parseChartAnalysisResponse(await readJson(response)); }
-      catch (error) {
-        if (error instanceof ApiError) throw error;
-        throw new ApiError('The chart analysis response was invalid. No result was confirmed.', 'INVALID_RESPONSE');
+      // A pre-job server answered inline. Keep the rolling-deploy path working.
+      if (response.status === 200) return parseChartResult(await readJson(response));
+      if (response.status !== 202) {
+        await readJson(response);
+        throw new ApiError('The chart analysis was not accepted. Try again.', 'INVALID_RESPONSE', response.status);
+      }
+      const receipt = await readJson(response);
+      if (receipt.schemaVersion !== 2 || typeof receipt.jobId !== 'string' || !JOB_ID.test(receipt.jobId)) {
+        throw new ApiError('The chart analysis was not accepted. Try again.', 'INVALID_RESPONSE', response.status);
+      }
+      jobId = receipt.jobId;
+      let failures = 0;
+      for (;;) {
+        let job: Record<string, unknown>;
+        try {
+          const polled = await fetch('/api/v2/jobs/' + encodeURIComponent(jobId), { signal: controller.signal });
+          job = await readJson(polled);
+          failures = 0;
+        } catch (error) {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          // A transient proxy/network failure must not discard a 200 s read.
+          const status = error instanceof ApiError ? error.status : 0;
+          const retryable = !(error instanceof ApiError) || status === 429 || status >= 500;
+          if (!retryable || ++failures >= POLL_MAX_CONSECUTIVE_FAILURES) throw error;
+          await sleep(CHART_JOB_POLL_MS, controller.signal);
+          continue;
+        }
+        if (job.id !== jobId || (job.kind !== undefined && job.kind !== 'chart')) {
+          throw new ApiError('The response belongs to a different research job.', 'RESULT_IDENTITY_MISMATCH');
+        }
+        if (job.status === 'succeeded') { terminal = true; return parseChartResult(job.result); }
+        if (job.status === 'failed' || job.status === 'cancelled') {
+          terminal = true;
+          const error = job.error as { message?: unknown; code?: unknown } | undefined;
+          throw new ApiError(
+            typeof error?.message === 'string' ? error.message : 'Chart analysis did not complete.',
+            typeof error?.code === 'string' ? error.code : 'JOB_FAILED',
+          );
+        }
+        if (job.status !== 'queued' && job.status !== 'running') {
+          terminal = true;
+          throw new ApiError('Invalid job status.', 'INVALID_RESPONSE');
+        }
+        await sleep(CHART_JOB_POLL_MS, controller.signal);
       }
     })();
     return await Promise.race([work, aborted]);
@@ -212,5 +277,8 @@ export async function requestChartAnalysis(input: ChartAnalysisInput, signal?: A
     clearTimeout(timer);
     signal?.removeEventListener('abort', relay);
     if (rejectAbort) controller.signal.removeEventListener('abort', rejectAbort);
+    // An abandoned job must not keep burning provider budget. Best effort and
+    // bounded, so a cancelled caller never waits on the cleanup request.
+    if (jobId && !terminal) void cancelResearchJob(jobId);
   }
 }

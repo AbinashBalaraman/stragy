@@ -1,7 +1,7 @@
 import {describe,it,expect,vi,beforeEach,afterEach} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {parseNifty50Constituents,forEachMarketSymbol,NIFTY50_CSV_URL,resolveObservedUniverse,resetObservedUniverseCacheForTests} from '../../server/data/observedUniverse';
-import {ALL_SYMBOLS} from '../../server/data/symbols';
+import {parseNifty50Constituents,forEachMarketSymbol,NIFTY50_CSV_URL,resolveObservedUniverse,resetObservedUniverseCacheForTests,BUNDLED_UNIVERSE_CAP} from '../../server/data/observedUniverse';
+import {ALL_SYMBOLS,UNIVERSE_OPTIONS} from '../../server/data/symbols';
 const csv=readFileSync(new URL('../../server/data/nifty50-observed-2026-10-15.csv',import.meta.url),'utf8');
 beforeEach(()=>resetObservedUniverseCacheForTests());
 afterEach(()=>resetObservedUniverseCacheForTests());
@@ -18,9 +18,20 @@ describe('official observed NIFTY50 membership',()=>{
   expect(d.symbols).toHaveLength(50);
   expect(d.source).toBe(NIFTY50_CSV_URL);
  });
- it('fails clearly after one retry when no good list is cached',async()=>{
+ it('falls back to the bundled NIFTY 50 pool after one retry instead of a blank screen',async()=>{
   const fetchText=vi.fn().mockRejectedValue(new Error('offline'));
-  await expect(resolveObservedUniverse('NIFTY_50',{fetchText,now:()=>Date.parse('2026-11-16T10:00:00Z')})).rejects.toThrow(/tried twice/);
+  const d=await resolveObservedUniverse('NIFTY_50',{fetchText,now:()=>Date.parse('2026-11-16T10:00:00Z')});
+  expect(fetchText).toHaveBeenCalledTimes(2);
+  expect(d.basis).toBe('bundled-catalog');
+  expect(d.verified).toBe(false);
+  expect(d.source).toBe('BUNDLED_INSTRUMENT_CATALOG');
+  expect(d.symbols.length).toBeGreaterThan(40);
+  expect(d.warnings.join(' ')).toMatch(/Official NIFTY 50 constituent feed unavailable/);
+  expect(d.warnings.join(' ')).toMatch(/Membership is unverified/);
+ });
+ it('can still fail strictly when the caller forbids the bundled fallback',async()=>{
+  const fetchText=vi.fn().mockRejectedValue(new Error('offline'));
+  await expect(resolveObservedUniverse('NIFTY_50',{fetchText,now:()=>Date.parse('2026-11-16T10:00:00Z'),allowBundledFallback:false})).rejects.toThrow(/tried twice/);
   expect(fetchText).toHaveBeenCalledTimes(2);
  });
  it('reuses the last good list for 24 h and labels its retrieval date',async()=>{
@@ -33,5 +44,54 @@ describe('official observed NIFTY50 membership',()=>{
   expect(failing).not.toHaveBeenCalled();
   expect(second.observedAt).toBe(first.observedAt);
   expect(second.warnings.join(' ')).toContain('retrieval at '+first.observedAt);
+ });
+});
+describe('bundled configured universes',()=>{
+ it('keeps the published evaluation cap in the shared universe options',()=>{
+  for(const option of UNIVERSE_OPTIONS){
+   if(typeof option.evaluatedCap==='number')expect(BUNDLED_UNIVERSE_CAP[option.id]).toBe(option.evaluatedCap);
+  }
+ });
+ it('caps broad NSE and ALL at 200 by configured order instead of failing',async()=>{
+  for(const id of ['NSE','ALL'] as const){
+   const d=await resolveObservedUniverse(id);
+   expect(d.basis).toBe('bundled-catalog');
+   expect(d.verified).toBe(false);
+   expect(d.selected).toBe(200);
+   expect(d.available).toBeGreaterThan(200);
+   expect(d.cap).toBe(200);
+   expect(d.truncated).toBe(true);
+   expect(d.symbols).toHaveLength(200);
+   expect(d.warnings.join(' ')).toMatch(/first 200 of/);
+   expect(d.symbols.every(symbol=>!symbol.ticker.startsWith('^'))).toBe(true);
+  }
+ });
+ it('caps sector pools at 50 and names the configured-cap limitation',async()=>{
+  for(const id of ['BANK_NIFTY','NIFTY_IT','NIFTY_AUTO','NIFTY_PHARMA','NIFTY_METAL','NIFTY_FMCG'] as const){
+   const d=await resolveObservedUniverse(id);
+   expect(d.selected).toBe(50);
+   expect(d.cap).toBe(50);
+   expect(d.symbols).toHaveLength(50);
+   expect(d.symbols.every(symbol=>!symbol.ticker.startsWith('^'))).toBe(true);
+   expect(d.warnings.join(' ')).toContain('Membership is unverified');
+  }
+ });
+ it('screens only BSE-listed Sensex constituents so cross-listings are not double counted',async()=>{
+  const d=await resolveObservedUniverse('BSE_SENSEX');
+  expect(d.symbols.length).toBe(30);
+  expect(d.symbols.every(symbol=>symbol.exchange==='BSE')).toBe(true);
+  expect(d.truncated).toBeUndefined();
+ });
+ it('returns the full popular index set as benchmark metadata',async()=>{
+  const d=await resolveObservedUniverse('POPULAR_INDICES');
+  expect(d.symbols).toHaveLength(8);
+  expect(d.symbols.every(symbol=>symbol.ticker.startsWith('^'))).toBe(true);
+  expect(d.role).toBe('benchmark-only');
+  expect(d.verified).toBe(false);
+ });
+ it('resolves aliases without inventing a universe',async()=>{
+  expect((await resolveObservedUniverse('BANKNIFTY')).symbols.length).toBe(50);
+  expect((await resolveObservedUniverse('NIFTY50',{fetchText:vi.fn().mockRejectedValue(new Error('offline'))})).basis).toBe('bundled-catalog');
+  await expect(resolveObservedUniverse('NO_SUCH_UNIVERSE')).rejects.toMatchObject({code:'INVALID_UNIVERSE'});
  });
 });

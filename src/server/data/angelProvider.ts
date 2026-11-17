@@ -26,15 +26,15 @@ export function completedAngelBars(candles: AngelCandle[], now: number = Date.no
   return { bars, skipped, incomplete };
 }
 
-export function angelEvidence(bars: OHLCVBar[], token: string, now: number, skipped: number, incomplete: number): ProviderObservation['evidence'] {
+export function angelEvidence(bars: OHLCVBar[], token: string, now: number, skipped: number, incomplete: number, exchange: 'NSE' | 'BSE' = 'NSE'): ProviderObservation['evidence'] {
   const today = new Date(now + 19_800_000).toISOString().slice(0, 10);
   const latest = bars[bars.length - 1];
   return {
     source: 'ANGEL_SMARTAPI',
-    providerSymbol: `NSE:${token}`,
+    providerSymbol: `${exchange}:${token}`,
     exchangeTimezone: 'Asia/Kolkata',
     providerMarketTime: new Date(latest.timestamp).toISOString(),
-    adjustment: 'Unadjusted NSE daily OHLCV from Angel One SmartAPI',
+    adjustment: `Unadjusted ${exchange} daily OHLCV from Angel One SmartAPI`,
     freshness: latest.date === today ? 'same-day-broker-close' : 'last-completed-session',
     calendarVersion: 'provider-observed-sessions',
     warnings: [
@@ -62,13 +62,13 @@ export function createAngelProvider(
       signal.throwIfAborted();
       const at = now();
       const candles = await getAngelCandles(
-        { exchange: 'NSE', symbolToken: instrument.token, interval: 'ONE_DAY', fromDate: new Date(at - 1100 * 86_400_000), toDate: new Date(at) },
+        { exchange: instrument.exchange, symbolToken: instrument.token, interval: 'ONE_DAY', fromDate: new Date(at - 1100 * 86_400_000), toDate: new Date(at) },
         // Wait out a rate-limit window, but never past the provider deadline.
         { signal, fetch: fetcher, retryDeadlineAt: Date.now() + 35_000 }
       );
       const { bars, skipped, incomplete } = completedAngelBars(candles, at);
       if (!bars.length) throw new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel One returned no completed daily bars');
-      return { bars, evidence: angelEvidence(bars, instrument.token, at, skipped, incomplete), fetchedAt: new Date(at).toISOString() };
+      return { bars, evidence: angelEvidence(bars, instrument.token, at, skipped, incomplete, instrument.exchange), fetchedAt: new Date(at).toISOString() };
     }
   };
 }

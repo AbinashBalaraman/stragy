@@ -27,7 +27,7 @@ export const RobustnessView: React.FC<RobustnessViewProps> = ({ robustness, resu
 
   if (!suite) {
     return (
-      <div className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-8 text-center text-xs text-[var(--text-3)]">
+      <div className="rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--surface-1)] p-4 text-xs text-[var(--text-3)]">
         No robustness data is available for this run.
       </div>
     );

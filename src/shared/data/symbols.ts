@@ -56,21 +56,25 @@ export interface UniverseOption {
   category: 'Exchange' | 'Benchmark & Sector Indices' | 'All';
   description: string;
   badge: string;
+  /** Maximum symbols a cold snapshot evaluates; the remainder is reported as not attempted. */
+  evaluatedCap?: number;
+  /** Where membership comes from when the official feed is not available. */
+  membershipBasis?: 'official-feed' | 'configured-catalog';
 }
 
 export const UNIVERSE_OPTIONS: UniverseOption[] = [
-  { id: 'ALL', label: 'All Markets (NSE + BSE)', category: 'All', description: 'Complete universe across all 2,000+ NSE & BSE equities and indices', badge: 'All' },
-  { id: 'NSE', label: 'All NSE Stocks (2000+)', category: 'Exchange', description: 'National Stock Exchange of India (NSE) listed equities (~2,000+ stocks)', badge: 'NSE' },
-  { id: 'BSE', label: 'All BSE Stocks', category: 'Exchange', description: 'Bombay Stock Exchange (BSE) listed equities', badge: 'BSE' },
-  { id: 'NIFTY_50', label: 'NIFTY 50', category: 'Benchmark & Sector Indices', description: 'Top 50 large-cap bluechip stocks of India', badge: 'NIFTY 50' },
-  { id: 'BANK_NIFTY', label: 'Bank NIFTY', category: 'Benchmark & Sector Indices', description: 'Leading private and PSU banking giants', badge: 'BANK' },
-  { id: 'NIFTY_IT', label: 'NIFTY IT', category: 'Benchmark & Sector Indices', description: 'Top technology & software exporters', badge: 'IT' },
-  { id: 'NIFTY_AUTO', label: 'NIFTY Auto', category: 'Benchmark & Sector Indices', description: 'Leading automotive, 2-wheeler, EV & commercial vehicle OEMs', badge: 'AUTO' },
-  { id: 'NIFTY_PHARMA', label: 'NIFTY Pharma', category: 'Benchmark & Sector Indices', description: 'Top pharmaceutical & healthcare leaders', badge: 'PHARMA' },
-  { id: 'NIFTY_METAL', label: 'NIFTY Metal', category: 'Benchmark & Sector Indices', description: 'Steel, aluminium, mining & base metal companies', badge: 'METAL' },
-  { id: 'NIFTY_FMCG', label: 'NIFTY FMCG', category: 'Benchmark & Sector Indices', description: 'Fast-moving consumer goods & household staples', badge: 'FMCG' },
-  { id: 'BSE_SENSEX', label: 'BSE SENSEX 30', category: 'Benchmark & Sector Indices', description: 'BSE flagship 30 well-established companies', badge: 'SENSEX' },
-  { id: 'POPULAR_INDICES', label: 'Popular Indices', category: 'Benchmark & Sector Indices', description: 'All major benchmark & sectoral market indices', badge: 'INDICES' }
+  { id: 'ALL', label: 'Configured NSE + BSE (first 200)', category: 'All', description: 'Bounded 200-symbol screen from the configured NSE + BSE catalog, in catalog order', badge: 'All', evaluatedCap: 200, membershipBasis: 'configured-catalog' },
+  { id: 'NSE', label: 'Configured NSE (first 200)', category: 'Exchange', description: 'Bounded 200-symbol screen from the configured National Stock Exchange catalog', badge: 'NSE', evaluatedCap: 200, membershipBasis: 'configured-catalog' },
+  { id: 'BSE', label: 'Configured BSE (first 200)', category: 'Exchange', description: 'Bounded 200-symbol screen from the configured Bombay Stock Exchange catalog', badge: 'BSE', evaluatedCap: 200, membershipBasis: 'configured-catalog' },
+  { id: 'NIFTY_50', label: 'NIFTY 50', category: 'Benchmark & Sector Indices', description: 'Official NSE constituent feed when reachable; otherwise the bundled NIFTY 50 pool with unverified membership', badge: 'NIFTY 50', membershipBasis: 'official-feed' },
+  { id: 'BANK_NIFTY', label: 'Bank NIFTY', category: 'Benchmark & Sector Indices', description: 'Configured bank pool, first 50 by catalog order; membership unverified', badge: 'BANK', evaluatedCap: 50, membershipBasis: 'configured-catalog' },
+  { id: 'NIFTY_IT', label: 'NIFTY IT', category: 'Benchmark & Sector Indices', description: 'Configured IT pool, first 50 by catalog order; membership unverified', badge: 'IT', evaluatedCap: 50, membershipBasis: 'configured-catalog' },
+  { id: 'NIFTY_AUTO', label: 'NIFTY Auto', category: 'Benchmark & Sector Indices', description: 'Configured auto pool, first 50 by catalog order; membership unverified', badge: 'AUTO', evaluatedCap: 50, membershipBasis: 'configured-catalog' },
+  { id: 'NIFTY_PHARMA', label: 'NIFTY Pharma', category: 'Benchmark & Sector Indices', description: 'Configured pharma pool, first 50 by catalog order; membership unverified', badge: 'PHARMA', evaluatedCap: 50, membershipBasis: 'configured-catalog' },
+  { id: 'NIFTY_METAL', label: 'NIFTY Metal', category: 'Benchmark & Sector Indices', description: 'Configured metal pool, first 50 by catalog order; membership unverified', badge: 'METAL', evaluatedCap: 50, membershipBasis: 'configured-catalog' },
+  { id: 'NIFTY_FMCG', label: 'NIFTY FMCG', category: 'Benchmark & Sector Indices', description: 'Configured FMCG pool, first 50 by catalog order; membership unverified', badge: 'FMCG', evaluatedCap: 50, membershipBasis: 'configured-catalog' },
+  { id: 'BSE_SENSEX', label: 'BSE SENSEX 30', category: 'Benchmark & Sector Indices', description: 'Configured BSE-listed Sensex pool screened through verified BSE scrip codes', badge: 'SENSEX', evaluatedCap: 40, membershipBasis: 'configured-catalog' },
+  { id: 'POPULAR_INDICES', label: 'Popular Indices', category: 'Benchmark & Sector Indices', description: 'Eight benchmark and sectoral indices resolved through the verified provider instrument master', badge: 'INDICES', evaluatedCap: 20, membershipBasis: 'configured-catalog' }
 ];
 
 export function filterSymbolsByUniverse(universe: MarketUniverseType = 'ALL'): SymbolMeta[] {

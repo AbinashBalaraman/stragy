@@ -111,7 +111,7 @@ export async function scanUniverseAsync(strategy:StrategyAST,name='nifty50',o:Sc
   const r=initialize(name,symbols,o);
   if(membership){
     const {symbols:_,...metadata}=membership;
-    r.membership=metadata;r.requested=membership.requested;
+    r.membership=metadata;r.requested=symbols.length+membership.unmapped.length;
     r.warnings=[...membership.warnings,'Public delayed/end-of-day observations, not live streaming'];
     for(const missing of membership.unmapped){r.unavailable++;r.errors.push({symbolId:0,ticker:missing.ticker,code:'IDENTITY_UNVERIFIED',message:missing.reason});}
   }

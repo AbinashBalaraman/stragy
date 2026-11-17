@@ -6,13 +6,13 @@ import { parseMarketSnapshotResult, parseScanResult, type MarketSnapshotResult, 
 export type { MarketSnapshotResult, ScanResult } from '../shared/contracts/scanner-results';
 /** Real milestones from the job lifecycle; never a simulated percentage. */
 export type ResearchPhase = 'waiting' | 'preparing' | 'running';
-export interface ResearchJobProgress { status: 'queued' | 'running'; stage?: string; queuedBehind?: number; }
+export interface ResearchJobProgress { status: 'queued' | 'running'; stage?: string; queuedBehind?: number; progress?: { processed: number; total: number }; }
 /**
- * Execution deadlines start only when the job leaves the queue. A cold
- * 50-symbol market snapshot legitimately takes 235-280 s and the server caps a
- * scan at 600 s, so the client waits the same and then keeps the job.
+ * Execution deadlines start only when the job leaves the queue. The server caps a
+ * market snapshot at 90 s (150 s for the broad 200-symbol universes), so the
+ * client never waits the old 600 s for a blank screen.
  */
-export const RESEARCH_DEADLINE_MS = { backtest: 45_000, scan: 300_000, market: 600_000 } as const;
+export const RESEARCH_DEADLINE_MS = { backtest: 45_000, scan: 300_000, market: 240_000 } as const;
 /** A queued job may wait behind long work, but never forever. */
 export const RESEARCH_QUEUE_LIMIT_MS = 300_000;
 /**
@@ -134,10 +134,12 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
         catch (error) { if (error instanceof ApiError) throw error; throw new ApiError('The computation worker returned an invalid result. Results are unavailable.', 'INVALID_RESPONSE'); }
       }
       if (onProgress && (job.status === 'queued' || job.status === 'running')) {
+        const counts = job.progress as { processed?: unknown; total?: unknown } | undefined;
         onProgress({
           status: job.status,
           ...(typeof job.stage === 'string' ? { stage: job.stage } : {}),
           ...(typeof job.queuedBehind === 'number' ? { queuedBehind: job.queuedBehind } : {}),
+          ...(typeof counts?.processed === 'number' && typeof counts?.total === 'number' ? { progress: { processed: counts.processed, total: counts.total } } : {}),
         });
       }
       const waiting = job.status === 'queued' || job.stage === 'waiting' || typeof job.queuedBehind === 'number';

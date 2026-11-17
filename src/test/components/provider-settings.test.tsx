@@ -166,7 +166,11 @@ describe('provider settings', () => {
     const row = (await screen.findByText('Dummy')).closest('li') as HTMLElement;
     expect(within(row).getByText('Disabled')).toBeTruthy();
     expect((within(row).getByLabelText('Enable Dummy') as HTMLInputElement).checked).toBe(false);
-    expect(within(row).getByText('https://example.com/v1').className).toContain('text-[var(--text-disabled)]');
+    const url = within(row).getByText('https://example.com/v1');
+    expect(url.className).toContain('text-[var(--text-disabled)]');
+    expect(url.className).toContain('break-all');
+    expect(url.className).not.toContain('truncate');
+    expect(url.className.split(' ')).not.toContain('underline');
   });
 
   it('warns while the primary chain provider is disabled and clears after enabling it', async () => {

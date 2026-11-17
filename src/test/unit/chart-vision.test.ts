@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, VISION_OBSERVATION_ALLOCATION_MS, VISION_OBSERVATIONS_BUDGET_MS, VISION_PLAN_ATTEMPT_TIMEOUT_MS, VISION_PLAN_RESERVE_MS, VISION_TOTAL_BUDGET_MS, analyzeChart, chartObservationSummary, legendBand, observationAttemptTimeouts, parseChartImageDataUrl, visionAttemptTimeout, withVisionTimeout,
+  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, VISION_OBSERVATION_ALLOCATION_MS, VISION_OBSERVATIONS_BUDGET_MS, VISION_PLAN_ATTEMPT_TIMEOUT_MS, VISION_PLAN_RESERVE_MS, parseChartObservations, VISION_TOTAL_BUDGET_MS, analyzeChart, chartObservationSummary, legendBand, observationAttemptTimeouts, parseChartImageDataUrl, visionAttemptTimeout, withVisionTimeout,
 } from '../../server/ai/chartVision';
 import { callProvider, createRequestBudget, resolveAIConfig, resolveVisionConfig } from '../../server/ai/provider';
 import { getAIStatus } from '../../server/ai/copilot';
@@ -136,14 +136,14 @@ describe('vision time budget', () => {
   it('reserves the plan pass and the paid observation fallback', () => {
     expect(VISION_OBSERVATIONS_BUDGET_MS + VISION_PLAN_RESERVE_MS).toBe(VISION_TOTAL_BUDGET_MS);
     expect(VISION_PLAN_RESERVE_MS).toBeGreaterThanOrEqual(VISION_ATTEMPT_TIMEOUT_MS + 5_000);
-    // The audited default chain: primary free 55 s, short probe 10 s, paid 70 s.
+    // The audited default chain: primary free 50 s, short probe 5 s, paid 80 s.
     const chain = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: true }]);
-    expect(chain).toEqual([55_000, 10_000, 70_000]);
+    expect(chain).toEqual([50_000, 5_000, 80_000]);
     expect(chain).toEqual([VISION_OBSERVATION_ALLOCATION_MS.primaryFree, VISION_OBSERVATION_ALLOCATION_MS.secondFree, VISION_OBSERVATION_ALLOCATION_MS.paid]);
     expect(chain.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
     // A fourth free model is skipped, never at the paid attempt's expense.
     const withExtraFree = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: false }, { approvedPaid: true }]);
-    expect(withExtraFree).toEqual([55_000, 10_000, 0, 70_000]);
+    expect(withExtraFree).toEqual([50_000, 5_000, 0, 80_000]);
     const freeOnly = observationAttemptTimeouts([{ approvedPaid: false }, { approvedPaid: false }, { approvedPaid: false }]);
     expect(freeOnly.every(ms => ms <= VISION_ATTEMPT_TIMEOUT_MS)).toBe(true);
     expect(freeOnly.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(VISION_OBSERVATIONS_BUDGET_MS);
@@ -321,5 +321,125 @@ describe('legend tolerance band', () => {
     expect(legendBand(45.76, 6)).toEqual([40, 52]);
     expect(legendBand(0, 6)).toEqual([0, 6]);
     expect(legendBand(98, 6)).toEqual([92, 100]);
+  });
+});
+
+describe('observation parsing and repair', () => {
+  const drifted = {
+    ...observations,
+    extra: 'ignore me',
+    timeframe: ' 1D ',
+    header: { symbol: ' HIMATSINGKA ', lastClose: '67.87', lastChangePct: '+7.37%', extra: 'ignore me' },
+    indicators: [{ ...observations.indicators[0], params: ['14'], legendValues: ['45.76', '31.90'], extra: 'ignore me' }],
+    drawnLines: [{ ...observations.drawnLines[0], start: { when: ' Jul ', value: '63.2' }, extra: 'ignore me' }],
+    recentBars: { note: ' three bars ', rsiBelow30BarsAgo: '3', extra: 'ignore me' },
+    rangePosition: { approxPctAboveLow: '12', extra: 'ignore me' },
+  };
+  const withoutPriceTrend = () => {
+    const { priceTrend: _priceTrend, ...rest } = observations;
+    return rest;
+  };
+
+  it('accepts extra keys, numeric strings, trimmed strings and null optional objects', () => {
+    const parsed = parseChartObservations({ ...drifted, header: null, recentBars: null, rangePosition: null });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.data.timeframe).toBe('1D');
+    expect(parsed.data.header).toBeUndefined();
+    expect(parsed.data.indicators[0].params).toEqual([14]);
+    expect(parsed.data.indicators[0].legendValues).toEqual([45.76, 31.9]);
+    expect(parsed.data.drawnLines[0].start?.value).toBe(63.2);
+    expect(parsed.data.priceTrend).toBe('downtrend');
+    const withNumbers = parseChartObservations(drifted);
+    expect(withNumbers.ok).toBe(true);
+    if (!withNumbers.ok) return;
+    expect(withNumbers.data.header).toMatchObject({ symbol: 'HIMATSINGKA', lastClose: 67.87, lastChangePct: 7.37 });
+    expect(withNumbers.data.recentBars?.rsiBelow30BarsAgo).toBe(3);
+    expect(withNumbers.data.rangePosition?.approxPctAboveLow).toBe(12);
+  });
+
+  it('rejects a missing required observation instead of filling it in', () => {
+    const parsed = parseChartObservations(withoutPriceTrend());
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.issues.some(issue => issue.path === 'priceTrend')).toBe(true);
+    expect(parsed.keys).toContain('timeframe');
+  });
+
+  it('repairs the final observation attempt once and accepts the corrected JSON', async () => {
+    let observationCalls = 0, repairCalls = 0;
+    const f = recordingFetch((_url, init) => {
+      const body = JSON.parse(init.body);
+      const system = String(body.messages[0].content);
+      if (Array.isArray(body.messages[1].content)) {
+        if (system.includes('Return corrected JSON only')) {
+          repairCalls += 1;
+          return fakeResponse({ body: openAIBody(JSON.stringify(drifted)) });
+        }
+        observationCalls += 1;
+        return fakeResponse({ body: openAIBody(JSON.stringify(withoutPriceTrend())) });
+      }
+      return fakeResponse({ body: openAIBody(JSON.stringify(plan)) });
+    });
+    const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env: visionEnv, fetch: f, budget: createRequestBudget() });
+    expect(result.kind).toBe('screen');
+    expect(observationCalls).toBe(1);
+    expect(repairCalls).toBe(1);
+  });
+
+  it('skips the repair when less than the minimum observations time remains', async () => {
+    let now = Date.now();
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let repairCalls = 0;
+    const f = recordingFetch((_url, init) => {
+      const body = JSON.parse(init.body);
+      const system = String(body.messages[0].content);
+      if (system.includes('Return corrected JSON only')) repairCalls += 1;
+      now += 121_000;
+      return fakeResponse({ body: openAIBody(JSON.stringify(withoutPriceTrend())) });
+    });
+    try {
+      const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env: visionEnv, fetch: f, budget: createRequestBudget() });
+      expect(result.kind).toBe('conversation');
+      expect(result.message).toContain("couldn't read this chart");
+      expect(repairCalls).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('extracts a valid observation JSON object from reasoning_content as a last resort', async () => {
+    const reasoning = 'The chart was analysed. Final reading: ' + JSON.stringify({ observations }) + ' End.';
+    const f = recordingFetch((_url, init) => {
+      const body = JSON.parse(init.body);
+      if (Array.isArray(body.messages[1].content)) {
+        return fakeResponse({ body: { choices: [{ message: { content: '', reasoning_content: reasoning }, finish_reason: 'stop' }] } });
+      }
+      return fakeResponse({ body: openAIBody(JSON.stringify(plan)) });
+    });
+    const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env: visionEnv, fetch: f, budget: createRequestBudget() });
+    expect(result.kind).toBe('screen');
+    expect(f.calls).toHaveLength(2);
+  });
+
+  it('does not treat free-form reasoning without JSON as a reading', async () => {
+    const f = recordingFetch(() => fakeResponse({ body: { choices: [{ message: { content: '', reasoning_content: 'I think the trend is down, but I am not sure.' }, finish_reason: 'stop' }] } }));
+    const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env: visionEnv, fetch: f, budget: createRequestBudget() });
+    expect(result.kind).toBe('conversation');
+    expect(result.message).toContain("couldn't read this chart");
+  });
+
+  it('stays honest when the observation repair is still invalid', async () => {
+    let repairCalls = 0;
+    const f = recordingFetch((_url, init) => {
+      const body = JSON.parse(init.body);
+      const system = String(body.messages[0].content);
+      if (system.includes('Return corrected JSON only')) { repairCalls += 1; return fakeResponse({ body: openAIBody(JSON.stringify(withoutPriceTrend())) }); }
+      return fakeResponse({ body: openAIBody(JSON.stringify(withoutPriceTrend())) });
+    });
+    const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env: visionEnv, fetch: f, budget: createRequestBudget() });
+    expect(result.kind).toBe('conversation');
+    expect(result.message).toContain("couldn't read this chart");
+    expect(repairCalls).toBe(1);
   });
 });

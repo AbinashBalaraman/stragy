@@ -40,9 +40,10 @@ export const SMARTAPI_TOKEN_MAP: Record<string, { token: string; exchange: 'NSE'
   '^NSEBANK': { token: '99926009', exchange: 'NSE', symbol: 'Nifty Bank' }
 };
 
+export type AngelExchange = 'NSE' | 'BSE';
 export type AngelInstrumentKind = 'EQUITY' | 'INDEX';
-export interface AngelInstrument { ticker: string; token: string; exchange: 'NSE'; symbol: string; kind: AngelInstrumentKind }
-export interface AngelMasterInfo { source: 'STATIC' | 'MASTER'; size: number; downloadedAt: string | null; warnings: string[] }
+export interface AngelInstrument { ticker: string; token: string; exchange: AngelExchange; symbol: string; kind: AngelInstrumentKind }
+export interface AngelMasterInfo { source: 'STATIC' | 'MASTER'; size: number; downloadedAt: string | null; warnings: string[]; exchanges?: AngelExchange[] }
 
 // Documented instrument master (docs/Instruments). Both hosts serve the same bytes;
 // the .com host is the one referenced by the documentation.
@@ -52,12 +53,30 @@ const MASTER_URLS = [
 ] as const;
 const CACHE_FILE = 'angel-scrip-master.json';
 const MAX_MASTER_BYTES = 80_000_000;
-const MAX_MASTER_RECORDS = 20_000;
+const MAX_MASTER_RECORDS = 40_000;
 const MASTER_TIMEOUT_MS = 60_000;
 const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
 
-type Tuple = [ticker: string, token: string, symbol: string, kind: AngelInstrumentKind];
-interface MasterCache { version: 1; downloadedAt: string; source: string; count: number; symbols: Tuple[] }
+/**
+ * Catalog index tickers are Yahoo/NSE shorthand; the provider master names the
+ * same series differently. The alias only names the series: the token is always
+ * read from the downloaded Angel master, never written here.
+ * ^NSEI/^NSEBANK additionally have long-standing static tokens above.
+ */
+export const INDEX_ALIASES: Record<string, { exchange: AngelExchange; symbol: string }> = {
+  '^NSEI': { exchange: 'NSE', symbol: 'Nifty 50' },
+  '^NSEBANK': { exchange: 'NSE', symbol: 'Nifty Bank' },
+  '^CNXIT': { exchange: 'NSE', symbol: 'Nifty IT' },
+  '^CNXAUTO': { exchange: 'NSE', symbol: 'Nifty Auto' },
+  '^CNXPHARMA': { exchange: 'NSE', symbol: 'Nifty Pharma' },
+  '^CNXMETAL': { exchange: 'NSE', symbol: 'Nifty Metal' },
+  '^CNXFMCG': { exchange: 'NSE', symbol: 'Nifty FMCG' },
+  '^BSESN': { exchange: 'BSE', symbol: 'SENSEX' }
+};
+
+/** [catalog ticker, provider token, exchange, provider symbol, kind] */
+type Tuple = [ticker: string, token: string, exchange: AngelExchange, symbol: string, kind: AngelInstrumentKind];
+interface MasterCache { version: 2; downloadedAt: string; source: string; count: number; symbols: Tuple[] }
 
 let master: { map: Map<string, AngelInstrument>; downloadedAt: string; source: string } | null = null;
 let loadPromise: Promise<void> | null = null;
@@ -65,6 +84,27 @@ let lastFailure: { at: number; message: string } | null = null;
 
 function istDay(now: number): string {
   return new Date(now + 19_800_000).toISOString().slice(0, 10);
+}
+
+function keyFor(exchange: AngelExchange, kind: AngelInstrumentKind, value: string): string {
+  const scope = exchange === 'BSE' ? 'bse' : 'nse';
+  if (kind === 'INDEX') return `${scope}:idx:${value.toUpperCase()}`;
+  // BSE equities are indexed by scrip code: the Angel master's token for a BSE
+  // equity is the BSE scrip code (e.g. RELIANCE -> 500325), which is exactly the
+  // numeric prefix of the catalog's Yahoo-style ticker (500325.BO).
+  return exchange === 'BSE' ? `bse:code:${value}` : `nse:eq:${value}`;
+}
+
+/** Catalog ticker -> provider lookup key. Only shapes with a verified key exist. */
+export function providerKeyForTicker(ticker: string): string | null {
+  if (ticker.startsWith('^')) {
+    const alias = INDEX_ALIASES[ticker];
+    return alias ? keyFor(alias.exchange, 'INDEX', alias.symbol) : null;
+  }
+  const bse = /^(\d{1,12})\.BO$/.exec(ticker);
+  if (bse) return keyFor('BSE', 'EQUITY', bse[1]);
+  if (/^[A-Z0-9][A-Z0-9&-]{0,24}$/.test(ticker)) return keyFor('NSE', 'EQUITY', ticker);
+  return null;
 }
 
 export function staticAngelMapping(ticker: string): AngelInstrument | undefined {
@@ -80,25 +120,31 @@ export function staticAngelMapping(ticker: string): AngelInstrument | undefined 
 }
 
 function selectedRecord(record: Record<string, unknown>): Tuple | null {
-  if (record.exch_seg !== 'NSE') return null;
+  const exchange = record.exch_seg;
+  if (exchange !== 'NSE' && exchange !== 'BSE') return null;
   const token = String(record.token ?? '').trim();
   const symbol = String(record.symbol ?? '').trim();
   if (!/^\d{1,12}$/.test(token) || !symbol) return null;
-  if (symbol.endsWith('-EQ')) {
+  if (record.instrumenttype === 'AMXIDX') return [symbol, token, exchange, symbol, 'INDEX'];
+  if (exchange === 'NSE' && symbol.endsWith('-EQ')) {
     const ticker = symbol.slice(0, -3);
     if (!/^[A-Z0-9][A-Z0-9&-]{0,24}$/.test(ticker)) return null;
-    return [ticker, token, symbol, 'EQUITY'];
+    return [ticker, token, 'NSE', symbol, 'EQUITY'];
   }
-  if (record.instrumenttype === 'AMXIDX') return [symbol, token, symbol, 'INDEX'];
+  // BSE cash equities carry no suffix and no instrumenttype; their token is the
+  // BSE scrip code. Anything else (futures, options, debt) is never retained.
+  if (exchange === 'BSE' && !record.instrumenttype && !symbol.endsWith('-EQ') && /^[A-Z0-9][A-Z0-9&-]{0,24}$/.test(symbol)) {
+    return [symbol, token, 'BSE', symbol, 'EQUITY'];
+  }
   return null;
 }
 
 /**
  * Streaming scan of the flat JSON array so a 40 MB master never becomes a 200 MB
- * heap object on the 512 MB free instance. Only NSE -EQ equities and NSE indices
- * are retained.
+ * heap object on the 512 MB free instance. Retains NSE -EQ equities, NSE indices,
+ * BSE cash equities (by scrip code) and BSE indices.
  */
-export function collectNseInstruments(text: string): Tuple[] {
+export function collectInstruments(text: string): Tuple[] {
   const out: Tuple[] = [];
   let depth = 0;
   let start = -1;
@@ -133,20 +179,35 @@ export function collectNseInstruments(text: string): Tuple[] {
   return out;
 }
 
+/** NSE-only view kept for existing callers and tests. */
+export function collectNseInstruments(text: string): Tuple[] {
+  return collectInstruments(text).filter(tuple => tuple[2] === 'NSE');
+}
+
+function buildMap(tuples: Tuple[]): Map<string, AngelInstrument> {
+  const map = new Map<string, AngelInstrument>();
+  for (const [ticker, token, exchange, symbol, kind] of tuples) {
+    const value = kind === 'INDEX' ? symbol : exchange === 'BSE' ? token : ticker;
+    map.set(keyFor(exchange, kind, value), { ticker, token, exchange, symbol, kind });
+  }
+  return map;
+}
+
 async function readCached(directory: string, now: number): Promise<{ map: Map<string, AngelInstrument>; downloadedAt: string; source: string } | null> {
   try {
     const raw = await fs.readFile(path.join(directory, CACHE_FILE), 'utf8');
     if (raw.length > MAX_MASTER_BYTES) return null;
     const parsed = JSON.parse(raw) as MasterCache;
-    if (parsed?.version !== 1 || !Array.isArray(parsed.symbols) || typeof parsed.downloadedAt !== 'string') return null;
+    if (parsed?.version !== 2 || !Array.isArray(parsed.symbols) || typeof parsed.downloadedAt !== 'string') return null;
     if (istDay(Date.parse(parsed.downloadedAt)) !== istDay(now)) return null;
-    const map = new Map<string, AngelInstrument>();
+    const tuples: Tuple[] = [];
     for (const tuple of parsed.symbols.slice(0, MAX_MASTER_RECORDS)) {
-      if (!Array.isArray(tuple) || tuple.length !== 4) continue;
-      const [ticker, token, symbol, kind] = tuple;
-      if (typeof ticker !== 'string' || typeof token !== 'string' || (kind !== 'EQUITY' && kind !== 'INDEX')) continue;
-      map.set(kind === 'INDEX' ? `^${ticker.toUpperCase()}` : ticker, { ticker, token, exchange: 'NSE', symbol: String(symbol), kind });
+      if (!Array.isArray(tuple) || tuple.length !== 5) continue;
+      const [ticker, token, exchange, symbol, kind] = tuple;
+      if (typeof ticker !== 'string' || typeof token !== 'string' || (exchange !== 'NSE' && exchange !== 'BSE') || (kind !== 'EQUITY' && kind !== 'INDEX')) continue;
+      tuples.push([ticker, String(token), exchange, String(symbol), kind]);
     }
+    const map = buildMap(tuples);
     return map.size ? { map, downloadedAt: parsed.downloadedAt, source: parsed.source } : null;
   } catch {
     return null;
@@ -175,14 +236,11 @@ async function downloadMaster(directory: string, fetcher: typeof fetch, now: num
         chunks.push(decoder.decode(part.value, { stream: true }));
       }
       chunks.push(decoder.decode());
-      const tuples = collectNseInstruments(chunks.join(''));
-      if (tuples.length < 1_000) throw new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel instrument master contained too few NSE instruments');
-      const map = new Map<string, AngelInstrument>();
-      for (const [ticker, token, symbol, kind] of tuples) {
-        map.set(kind === 'INDEX' ? `^${ticker.toUpperCase()}` : ticker, { ticker, token, exchange: 'NSE', symbol, kind });
-      }
+      const tuples = collectInstruments(chunks.join(''));
+      if (tuples.length < 1_000) throw new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel instrument master contained too few NSE/BSE instruments');
+      const map = buildMap(tuples);
       const downloadedAt = new Date(now).toISOString();
-      const cache: MasterCache = { version: 1, downloadedAt, source: url, count: map.size, symbols: [...map.values()].map(v => [v.kind === 'INDEX' ? v.symbol : v.ticker, v.token, v.symbol, v.kind]) };
+      const cache: MasterCache = { version: 2, downloadedAt, source: url, count: map.size, symbols: tuples };
       await fs.mkdir(directory, { recursive: true }).catch(() => undefined);
       await fs.writeFile(path.join(directory, CACHE_FILE), JSON.stringify(cache)).catch(() => undefined);
       return { map, downloadedAt, source: url };
@@ -199,7 +257,9 @@ function masterDirectory(options: { cacheDirectory?: string }): string {
   return options.cacheDirectory ?? path.join(process.cwd(), '.cache');
 }
 
-async function ensureMaster(options: { cacheDirectory?: string; fetch?: typeof fetch; now?: () => number }, signal?: AbortSignal): Promise<void> {
+export interface AngelMasterOptions { cacheDirectory?: string; fetch?: typeof fetch; now?: () => number }
+
+async function ensureMaster(options: AngelMasterOptions, signal?: AbortSignal): Promise<void> {
   const now = options.now?.() ?? Date.now();
   if (master && istDay(Date.parse(master.downloadedAt)) === istDay(now)) return;
   if (lastFailure && now - lastFailure.at < RETRY_AFTER_FAILURE_MS && !master) throw new MarketDataError('PROVIDER_UNAVAILABLE', lastFailure.message);
@@ -230,31 +290,47 @@ async function ensureMaster(options: { cacheDirectory?: string; fetch?: typeof f
   }
 }
 
+/** Boot-time preload so the first scan never pays the 40 MB master download. Best effort. */
+export async function warmAngelInstrumentMaster(options: AngelMasterOptions = {}): Promise<AngelMasterInfo> {
+  await ensureMaster(options);
+  return getAngelMasterInfo();
+}
+
 /**
  * Static verified map first; otherwise the once-per-day instrument master.
  * Missing mappings throw UNKNOWN_MAPPING and are never guessed.
  */
 export async function resolveAngelInstrument(
   ticker: string,
-  options: { cacheDirectory?: string; fetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}
+  options: AngelMasterOptions & { signal?: AbortSignal } = {}
 ): Promise<AngelInstrument> {
   const verified = staticAngelMapping(ticker);
   if (verified) return verified;
-  if (ticker.startsWith('^')) {
-    // BSE and sector indices have no verified NSE equity token; never guess.
-    throw new MarketDataError('UNKNOWN_MAPPING', `No verified Angel One NSE token for index ${ticker}`);
-  }
+  const key = providerKeyForTicker(ticker);
+  if (!key) throw new MarketDataError('UNKNOWN_MAPPING', `No verified Angel One instrument for ${ticker}; the catalog ticker has no registered provider shape`);
   await ensureMaster(options, options.signal);
-  const found = master?.map.get(ticker);
-  if (!found) throw new MarketDataError('UNKNOWN_MAPPING', `No verified Angel One NSE token for ${ticker}`);
-  return found;
+  const found = master?.map.get(key);
+  if (!found) {
+    const where = ticker.startsWith('^')
+      ? `the ${INDEX_ALIASES[ticker].exchange} index segment of today's instrument master`
+      : ticker.endsWith('.BO')
+        ? "the BSE cash segment of today's instrument master"
+        : "today's NSE instrument master";
+    throw new MarketDataError('UNKNOWN_MAPPING', `No verified Angel One token for ${ticker} in ${where}`);
+  }
+  return { ...found, ticker };
 }
 
 /** Synchronous view for routes/status; never triggers a download. */
 export function getAngelMasterInfo(): AngelMasterInfo {
-  return master
-    ? { source: 'MASTER', size: master.map.size, downloadedAt: master.downloadedAt, warnings: [] }
-    : { source: 'STATIC', size: Object.keys(SMARTAPI_TOKEN_MAP).length, downloadedAt: null, warnings: ['Instrument master not loaded; only verified static tokens are mappable'] };
+  if (!master) return { source: 'STATIC', size: Object.keys(SMARTAPI_TOKEN_MAP).length, downloadedAt: null, warnings: ['Instrument master not loaded; only verified static tokens are mappable'] };
+  return {
+    source: 'MASTER',
+    size: master.map.size,
+    downloadedAt: master.downloadedAt,
+    warnings: [],
+    exchanges: [...new Set([...master.map.values()].map(instrument => instrument.exchange))]
+  };
 }
 
 /** Test seam. */

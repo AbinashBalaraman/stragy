@@ -37,7 +37,7 @@ const IdSchema = z.coerce.number().int().positive();
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 const BacktestRequest = z.object({ strategy: z.unknown(), initialCapital: z.number().finite().min(100).max(1e9).optional(), start: DateSchema, end: DateSchema, asOf: DateSchema, seed: z.number().int().min(0).max(0xffffffff).optional(), robustness: z.boolean().optional() });
 const ScanRequest = z.object({ universe: z.string().max(40).default('NIFTY_50'), strategyJson: z.unknown().optional(), strategy: z.unknown().optional(), limit: z.number().int().min(1).max(100).default(35), date: DateSchema, asOf: DateSchema });
-export interface JobView { id: string; status: string; kind?: string; stage?: string; queuedBehind?: number; createdAt?: string; startedAt?: string; finishedAt?: string; result?: unknown; error?: unknown; }
+export interface JobView { id: string; status: string; kind?: string; stage?: string; queuedBehind?: number; createdAt?: string; startedAt?: string; finishedAt?: string; progress?: { processed: number; total: number }; result?: unknown; error?: unknown; }
 export interface AppJobService { enqueue: (payload: ResearchPayload, key?: string) => JobView; get: (id: string) => JobView | undefined; cancel: (id: string) => unknown; shutdown?: () => Promise<void>; }
 export interface AppDependencies { config?: RuntimeConfig; enableVite?: boolean; jobs?: AppJobService; repository?: ResearchRepository; }
 function parse<T>(schema: z.ZodType<T>, input: unknown): T { const r = schema.safeParse(input); if (!r.success) throw new ApiFailure(422, 'VALIDATION_FAILED', 'Input validation failed', r.error.issues.map(i => ({ path: i.path.join('.'), message: i.message }))); return r.data; }
@@ -67,9 +67,13 @@ export async function createApp(deps: AppDependencies = {}) {
   process.env.AI_PROVIDER = config.AI_PROVIDER;
   process.env.MARKET_PROVIDER = config.MARKET_PROVIDER;
   process.env.QUOTES_PROVIDER = config.QUOTES_PROVIDER;
-  // Start the official NIFTY 50 fetch during boot so the first chat request joins an
-  // in-flight load instead of seeing an empty symbol catalog. Tests never warm.
-  if (config.NODE_ENV === 'production' && config.DATA_MODE === 'real') void resolveObservedUniverse('NIFTY_50').catch(() => undefined);
+  // Start the official NIFTY 50 fetch and the Angel instrument master during boot so
+  // the first scan joins in-flight work instead of paying a 40 MB cold download.
+  // Tests never warm.
+  if (config.NODE_ENV === 'production' && config.DATA_MODE === 'real') {
+    void resolveObservedUniverse('NIFTY_50').catch(() => undefined);
+    if (config.MARKET_PROVIDER === 'angel') void import('./data/angelSymbols').then(m => m.warmAngelInstrumentMaster()).catch(() => undefined);
+  }
   process.env.AI_COST_POLICY = config.AI_COST_POLICY;
   if (config.VISION_PROVIDER) process.env.VISION_PROVIDER = config.VISION_PROVIDER;
   if (config.VISION_MODEL) process.env.VISION_MODEL = config.VISION_MODEL;
@@ -132,8 +136,14 @@ export async function createApp(deps: AppDependencies = {}) {
       const value = match?.[1] ?? '';
       if (!match || !config.API_ACCESS_TOKEN || !tokenMatches(value, config.API_ACCESS_TOKEN)) return next(new ApiFailure(401, 'UNAUTHORIZED', 'A private API access token is required.'));
     }
-    const expectedOrigin = config.PUBLIC_ORIGIN ?? `${req.protocol}://${req.get('host')}`;
-    if (req.method !== 'GET' && req.get('origin') && req.get('origin') !== expectedOrigin) return next(new ApiFailure(403, 'ORIGIN_REJECTED', 'Cross-origin writes are not allowed.'));
+    // Same host is enough: a TLS-terminating tunnel can present https to the
+    // browser while Express sees http. Cross-host writes still fail closed.
+    const origin = req.get('origin');
+    if (req.method !== 'GET' && origin) {
+      let sameHost = false;
+      try { sameHost = new URL(origin).host === req.get('host'); } catch { sameHost = false; }
+      if (!sameHost && origin !== config.PUBLIC_ORIGIN) return next(new ApiFailure(403, 'ORIGIN_REJECTED', 'Cross-origin writes are not allowed.'));
+    }
     const key = req.socket.remoteAddress ?? 'unknown', now = Date.now();
     const c = clients.get(key);
     if (!c || now - c.time >= 60_000) clients.set(key, { time: now, count: 1 });
@@ -149,7 +159,17 @@ export async function createApp(deps: AppDependencies = {}) {
     try { image = parseChartImageDataUrl(p.image); }
     catch (error) { if (error instanceof ChartImageError) throw new ApiFailure(error.status, error.code, error.message); throw error; }
     const current = p.currentStrategy === undefined ? undefined : executable(p.currentStrategy);
-    res.json(await analyzeChart({ image, hint: p.hint, currentStrategy: current }));
+    // Two model passes can run for 200 s, far past the ~100 s origin ceiling a
+    // proxied request survives (Cloudflare answers 524 first). The upload only
+    // returns a job receipt; the client polls GET /api/v2/jobs/:id with short
+    // requests and may DELETE that job to cancel.
+    if (!deps.jobs) {
+      if (config.NODE_ENV !== 'test') throw new ApiFailure(503, 'JOB_RUNNER_UNAVAILABLE', 'Chart analysis requires the bounded job runner.');
+      res.json(await analyzeChart({ image, hint: p.hint, currentStrategy: current }));
+      return;
+    }
+    const job = deps.jobs.enqueue({ kind: 'chart', image: image.dataUrl, hint: p.hint, currentStrategy: current }, req.get('Idempotency-Key'));
+    res.status(202).json({ schemaVersion: 2, jobId: job.id, status: job.status });
   }));
   app.use(express.json({ limit: config.MAX_BODY_BYTES }));  app.get('/api/v2/capabilities', wrap(async (_req, res) => res.json({ schemaVersion: 2, mode: config.DATA_MODE, demo: config.DATA_MODE === 'demo', engineVersion: 'stragy-next-open-v2', executionPolicy: 'next_open_long_cash_v1', timeframes: ['1D'], directions: ['LONG'], orders: ['MARKET'], liveTrading: false, realDataConfigured: ['yahoo', 'angel'].includes(config.MARKET_PROVIDER), marketProvider: config.MARKET_PROVIDER, quotesProvider: config.QUOTES_PROVIDER, liveQuotes: config.QUOTES_PROVIDER === 'angel', dataDescription: config.DATA_MODE === 'real' ? (config.MARKET_PROVIDER === 'angel' ? 'Angel One SmartAPI broker daily candles and live quotes (read-only), with provenance' : config.QUOTES_PROVIDER === 'angel' ? 'Delayed/end-of-day observed daily bars plus live Angel One quotes, labeled separately' : 'Observed public daily OHLCV, delayed/end-of-day, not exchange tick streaming') : 'Generated demo data', persistence: config.STORAGE_MODE, jobs: !!deps.jobs, ai: getAIStatus(), limitations: ['Real data entitlement, instrument metadata, calendars, and fee schedules require verification.', 'Research only. No broker orders are submitted.', 'Angel One redistribution terms apply to any public display of broker data.'] })));
   app.get('/api/symbols', wrap(async (_req, res) => {
@@ -157,7 +177,18 @@ export async function createApp(deps: AppDependencies = {}) {
     try {
       const membership = await resolveSymbolMembership();
       const symbols = [...ALL_SYMBOLS.filter(s => s.ticker.startsWith('^')), ...membership.symbols];
-      res.json({ success: true, symbols, mode: 'real', membershipBasis: 'official-current-feed; historical survivorship bias', membership: { source: membership.source, observedAt: membership.observedAt, requested: membership.requested, unmapped: membership.unmapped }, referencePricesObserved: false });
+      const official = membership.verified !== undefined
+        ? membership.verified
+        : (membership.basis ?? (membership.source === 'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv' ? 'official-feed' : 'bundled-catalog')) === 'official-feed';
+      res.json({
+        success: true,
+        symbols,
+        mode: 'real',
+        membershipBasis: official ? 'official-current-feed; historical survivorship bias' : 'bundled-catalog; official NIFTY 50 membership unverified',
+        membership: { source: membership.source, observedAt: membership.observedAt, requested: membership.requested, unmapped: membership.unmapped, basis: membership.basis, verified: membership.verified, warnings: membership.warnings },
+        ...(official ? {} : { warning: 'Official NIFTY 50 membership could not be loaded; showing the bundled configured catalog. Membership-dependent labels are unverified until the feed recovers.' }),
+        referencePricesObserved: false
+      });
     } catch {
       // Last resort: identifiers, not membership evidence. Scans that require the
       // official feed still fail honestly; chat can resolve a ticker immediately.
@@ -200,17 +231,26 @@ export async function createApp(deps: AppDependencies = {}) {
     for (;;) { const job = deps.jobs?.get(id); if (!job) throw new ApiFailure(404, 'JOB_NOT_FOUND', 'Job expired.'); if (job.status === 'succeeded') return job.result; if (['failed','cancelled'].includes(job.status)) throw new ApiFailure(422, 'JOB_FAILED', 'Research job did not complete.', job.error); if (Date.now() > deadline) throw new ApiFailure(504, 'JOB_TIMEOUT', 'Research deadline exceeded.'); await new Promise(r => setTimeout(r, 30)); }
   }
   function checkedUniverse(raw: string): string { const normalized = ({ NIFTY50: 'NIFTY_50', BANKNIFTY: 'BANK_NIFTY', INDICES: 'POPULAR_INDICES' } as Record<string,string>)[raw.toUpperCase()] ?? raw.toUpperCase(); if (!UNIVERSE_OPTIONS.some(u => u.id === normalized)) throw new ApiFailure(422, 'UNKNOWN_UNIVERSE', 'Unknown universe.'); return normalized; }
-  const marketCache = new Map<string, {time:number;value:Promise<MarketSnapshot>}>();
+  const marketCache = new Map<string, {time:number;ttl:number;value:Promise<MarketSnapshot>}>();
   async function trendsFor(rawUniverse: string, date?: string): Promise<MarketSnapshot> {
     const universe = checkedUniverse(rawUniverse), key = universe + ':' + (date ?? 'latest');
-    const existing = marketCache.get(key); if (existing && Date.now() - existing.time < 300000) return existing.value;
+    const existing = marketCache.get(key); if (existing && Date.now() - existing.time < existing.ttl) return existing.value;
     const value = (async () => { if (deps.jobs) return await waitResult(deps.jobs.enqueue({kind:'market',universe,asOf:date,mode:config.DATA_MODE}).id, SCAN_HARD_CAP_MS + 5_000) as MarketSnapshot; if (config.NODE_ENV !== 'test') throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Bounded market worker is required.'); return buildMarketSnapshot(universe,date,config.DATA_MODE); })();
-    marketCache.set(key,{time:Date.now(),value}); while(marketCache.size>5)marketCache.delete(marketCache.keys().next().value!);
-    value.catch(()=>{if(marketCache.get(key)?.value===value)marketCache.delete(key);});return value;
+    marketCache.set(key,{time:Date.now(),ttl:300000,value});
+    while(marketCache.size>5)marketCache.delete(marketCache.keys().next().value!);
+    value.then(snapshot=>{
+      // Never serve a dead-end or deadline-truncated snapshot from cache: a retry
+      // must be able to reach the provider again.
+      const ttl = snapshot.status === 'complete' ? 300000 : snapshot.status === 'partial' && !snapshot.deadline?.truncated ? 60000 : 0;
+      const entry = marketCache.get(key);
+      if (!entry || entry.value !== value) return;
+      if (ttl <= 0) marketCache.delete(key); else { entry.time = Date.now(); entry.ttl = ttl; }
+    },()=>{if(marketCache.get(key)?.value===value)marketCache.delete(key);});
+    return value;
   }
   app.post('/api/v2/market-snapshots', wrap(async(req,res)=>{if(!deps.jobs)throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Market worker unavailable.');const p=parse(z.object({universe:z.string().max(40),asOf:DateSchema}),req.body);const job=deps.jobs.enqueue({kind:'market',universe:checkedUniverse(p.universe),asOf:p.asOf,mode:config.DATA_MODE},req.get('Idempotency-Key'));res.status(202).json({schemaVersion:2,jobId:job.id,status:job.status});}));
   app.get('/api/market/trends', wrap(async (req, res) => { const universe = parse(z.string().max(40), req.query.universe ?? 'ALL'); const date = parse(DateSchema, req.query.date); const data = await trendsFor(universe, date); res.json({ success: true, ...data, count: data.trends.length, date: data.trends[0]?.date ?? date, formattedDate: data.trends[0]?.formattedDate ?? date, isHistorical: !!date, mode: config.DATA_MODE }); }));
-  app.get('/api/market/movers', wrap(async (req, res) => { const universe = parse(z.string().max(40), req.query.universe ?? 'ALL'); const date = parse(DateSchema, req.query.date); const data = await trendsFor(universe, date); res.json({ success: true, ...calculateMarketMovers(data.trends, universe, date), coverage: data.coverage, errors: data.errors, provenance: data.provenance, requestedDate: date, mode: config.DATA_MODE }); }));
+  app.get('/api/market/movers', wrap(async (req, res) => { const universe = parse(z.string().max(40), req.query.universe ?? 'ALL'); const date = parse(DateSchema, req.query.date); const data = await trendsFor(universe, date); res.json({ success: true, ...calculateMarketMovers(data.trends, universe, date), coverage: data.coverage, errors: data.errors, provenance: data.provenance, requestedDate: date, mode: config.DATA_MODE, status: data.status, statusReason: data.statusReason, recommendations: data.recommendations, retryable: data.retryable, warnings: data.warnings, membership: data.membership, deadline: data.deadline, progress: data.progress }); }));
   app.post('/api/market/refresh', (_req, _res, next) => next(new ApiFailure(503, 'REFRESH_UNAVAILABLE', 'No verified production provider is configured. Demo data is immutable.')));
   const optionChain = wrap(async (req, res) => { const symbolId = parse(IdSchema, req.query.symbolId ?? 2); res.json({ success: true, ...getOptionChainData(symbolId), mode: config.DATA_MODE, model: true }); });
   app.get('/api/derivatives/option-chain', optionChain); app.get('/api/market/option-chain', optionChain);

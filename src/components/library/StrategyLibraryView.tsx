@@ -136,7 +136,7 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
         <p role="status" className="text-xs text-[var(--up)]">
           {notice}
           {undoTrash && (
-            <button type="button" onClick={() => void commit({ type: 'restore', id: undoTrash.id }, 'Strategy restored.')} className="ml-1.5 underline decoration-[var(--line-strong)] underline-offset-2 hover:text-[var(--text-1)]">
+            <button type="button" onClick={() => void commit({ type: 'restore', id: undoTrash.id }, 'Strategy restored.')} className="ml-1.5 inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line)] px-1.5 py-0.5 text-[11px] text-[var(--text-2)] transition-colors hover:border-[var(--line-strong)] hover:text-[var(--text-1)] sm:min-h-0">
               Undo
             </button>
           )}
@@ -144,20 +144,23 @@ function MyStrategies({ currentStrategy, onLoadStrategy }: StrategyLibraryViewPr
       )}
       {library?.corrupt && <p role="alert" className="text-xs text-[#f5d383]">Stored library is invalid and has not been overwritten. An explicit save starts a fresh library only after preserving the original bytes.</p>}
 
-      <form className="flex flex-col gap-2 sm:flex-row" onSubmit={event => {
+      <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={event => {
         event.preventDefault();
         if (currentStrategy) void commit({ type: 'saveAs', strategy: currentStrategy, name: name.trim() || currentStrategy.name }, 'Strategy saved as a new copy.');
       }}>
-        <input
-          aria-label="Save as name"
-          maxLength={80}
-          value={name}
-          onChange={event => setName(event.target.value)}
-          placeholder={currentStrategy?.name ?? 'Open a strategy in the tester first'}
-          className={inputClass + ' sm:flex-1'}
-          disabled={disabled || !currentStrategy}
-        />
-        <button type="submit" disabled={disabled || !currentStrategy} className="inline-flex min-h-9 items-center justify-center rounded-[var(--r-btn)] bg-[#a8c7fa] px-3 py-1.5 text-xs font-semibold text-[#101012] transition-colors hover:bg-[#c7dbff] disabled:cursor-not-allowed disabled:opacity-40">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <label htmlFor="library-save-name" className="text-[11px] text-[var(--text-3)]">Save as</label>
+          <input
+            id="library-save-name"
+            maxLength={80}
+            value={name}
+            onChange={event => setName(event.target.value)}
+            placeholder={currentStrategy?.name ?? 'Open a strategy in the tester first'}
+            className={inputClass + ' min-h-11 sm:min-h-0'}
+            disabled={disabled || !currentStrategy}
+          />
+        </div>
+        <button type="submit" disabled={disabled || !currentStrategy} className="inline-flex min-h-11 items-center justify-center rounded-[var(--r-btn)] bg-[#a8c7fa] px-3 py-1.5 text-xs font-semibold text-[#101012] transition-colors hover:bg-[#c7dbff] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9">
           Save as new strategy
         </button>
       </form>

@@ -14,6 +14,8 @@ describe('market scanner loading copy', () => {
   it('shows real counts when the server reports them', () => {
     expect(marketLoadingMessage({ status: 'running', stage: 'scan 23/50' }, 'Nifty 50')).toBe('Loading Nifty 50 prices · 23 of 50');
     expect(marketLoadingMessage({ status: 'running', stage: '23 of 50' }, 'Nifty 50')).toBe('Loading Nifty 50 prices · 23 of 50');
+    expect(marketLoadingMessage({ status: 'running', stage: 'market symbols 7/50' }, 'Nifty 50')).toBe('Loading Nifty 50 prices · 7 of 50');
+    expect(marketLoadingMessage({ status: 'running', progress: { processed: 12, total: 50 } }, 'Nifty 50')).toBe('Loading Nifty 50 prices · 12 of 50');
   });
 
   it('falls back to the honest first-load expectation without inventing progress', () => {

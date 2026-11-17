@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, type AppJobService } from '../../server/app';
 import { parseConfig, type RuntimeConfig } from '../../server/config';
 import { JobManager, type ResearchPayload } from '../../server/jobs/manager';
+import { analyzeChart, parseChartImageDataUrl } from '../../server/ai/chartVision';
 import { ResearchRepository } from '../../server/storage/repository';
 import { simulate } from '../../server/backtest/engine';
 import { BacktestResponseSchema } from '../../shared/contracts/research';
@@ -64,6 +65,9 @@ async function setup(overrides: Partial<RuntimeConfig> = {}, injectedJobs?: AppJ
   repositories.push(repository);
   const executor = vi.fn(async (payload: ResearchPayload) => {
     if (payload.kind === 'scan' || payload.kind === 'market') throw new Error('Unexpected fixture job kind');
+    // No vision provider is configured in this suite, so the real worker path
+    // returns its explicit unavailable reading without any external call.
+    if (payload.kind === 'chart') return analyzeChart({ image: parseChartImageDataUrl(payload.image), hint: payload.hint, currentStrategy: payload.currentStrategy });
     const result = simulate(payload.strategy, payload.bars, { ...payload.options, robustness: false });
     return { ...result, backtestId: 'offline-fixture-run', executedAt: '2026-01-07T10:00:00.000Z', provenance: payload.provenance };
   });
@@ -157,23 +161,38 @@ describe('bounded offline API contracts', () => {
     const { app, executor } = await setup();
     const header = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
     const image = 'data:image/png;base64,' + Buffer.concat([header, Buffer.alloc(4_900_000)]).toString('base64');
-    const response = await bounded(request(app).post('/api/v2/chart-analysis').send({ image, hint: 'RSI trendline break', currentStrategy: strategy() }));
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ kind: 'conversation', method: 'unavailable' });
-    expect(executor).not.toHaveBeenCalled();
+    const response = await request(app).post('/api/v2/chart-analysis').timeout({ response: 5000, deadline: 8000 }).send({ image, hint: 'RSI trendline break', currentStrategy: strategy() });
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({ schemaVersion: 2, jobId: expect.any(String) });
+    const done = await poll(app, response.body.jobId);
+    expect(done.body).toMatchObject({ kind: 'chart', status: 'succeeded', result: { kind: 'conversation', method: 'unavailable' } });
+    expect(executor).toHaveBeenCalledTimes(1);
 
     // The explicit decoded-image check still returns IMAGE_TOO_LARGE (413), not a generic body error.
     const tooBig = 'data:image/png;base64,' + Buffer.concat([header, Buffer.alloc(5_100_000)]).toString('base64');
     errorContract(await bounded(request(app).post('/api/v2/chart-analysis').send({ image: tooBig, currentStrategy: strategy() })), 413, 'IMAGE_TOO_LARGE');
   });
+  it('returns a short 202 chart job receipt and completes through the jobs route', async () => {
+    const { app, enqueue } = await setup();
+    const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString('base64');
+    const response = await bounded(request(app).post('/api/v2/chart-analysis').send({ image: png, hint: 'RSI trendline break', currentStrategy: strategy() }));
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ schemaVersion: 2, jobId: expect.any(String), status: expect.stringMatching(/queued|running/) });
+    expect(response.body).not.toHaveProperty('result');
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ kind: 'chart', image: png, hint: 'RSI trendline break' }), undefined);
+    const done = await poll(app, response.body.jobId);
+    expect(done.body).toMatchObject({ id: response.body.jobId, kind: 'chart', status: 'succeeded' });
+    expect(done.body.result).toMatchObject({ schemaVersion: 1, kind: 'conversation', method: 'unavailable' });
+  });
   it('returns an explicit unavailable reading for a valid chart when no vision provider is configured', async () => {
     const { app, executor } = await setup();
     const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString('base64');
     const response = await bounded(request(app).post('/api/v2/chart-analysis').send({ image: png, hint: 'RSI trendline break', currentStrategy: strategy() }));
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ schemaVersion: 1, kind: 'conversation', method: 'unavailable', provider: { name: 'none', aiGenerated: false } });
-    expect(response.body.message).toMatch(/disabled|unavailable/i);
-    expect(executor).not.toHaveBeenCalled();
+    expect(response.status).toBe(202);
+    const done = await poll(app, response.body.jobId);
+    expect(done.body.result).toMatchObject({ schemaVersion: 1, kind: 'conversation', method: 'unavailable', provider: { name: 'none', aiGenerated: false } });
+    expect(done.body.result.message).toMatch(/disabled|unavailable/i);
+    expect(executor).toHaveBeenCalledTimes(1);
   });
   it('rejects invalid strategy, numeric input and unknown input before enqueue', async () => {
     const { app, enqueue } = await setup();
