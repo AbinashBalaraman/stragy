@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, analyzeChart, legendBand, parseChartImageDataUrl, withVisionTimeout,
+  CHART_IMAGE_LIMITS, ChartImageError, VISION_ATTEMPT_TIMEOUT_MS, VISION_TOTAL_BUDGET_MS, analyzeChart, legendBand, parseChartImageDataUrl, visionAttemptTimeout, withVisionTimeout,
 } from '../../server/ai/chartVision';
 import { callProvider, createRequestBudget, resolveAIConfig, resolveVisionConfig } from '../../server/ai/provider';
 import { getAIStatus } from '../../server/ai/copilot';
@@ -114,7 +114,19 @@ describe('vision time budget', () => {
     expect(capped.fallbackTargets?.[0]?.config?.timeoutMs).toBe(VISION_ATTEMPT_TIMEOUT_MS);
     expect((capped as unknown as { apiKey?: string }).apiKey).toBe('fixture-vision-key');
     expect((capped.fallbackTargets?.[0]?.config as unknown as { apiKey?: string } | undefined)?.apiKey).toBe('fixture-vision-key');
-    expect(VISION_ATTEMPT_TIMEOUT_MS * 7).toBeLessThan(180_000);
+    const shorter = withVisionTimeout(cfg, 30_000);
+    expect(shorter.timeoutMs).toBe(30_000);
+    expect(shorter.fallbackTargets?.[0]?.config?.timeoutMs).toBe(30_000);
+    expect(VISION_ATTEMPT_TIMEOUT_MS * 3).toBeLessThan(180_000);
+    expect(VISION_TOTAL_BUDGET_MS).toBeLessThan(180_000);
+  });
+
+  it('splits the remaining chart budget across the models still to try', () => {
+    expect(visionAttemptTimeout(VISION_TOTAL_BUDGET_MS, 3)).toBe(VISION_ATTEMPT_TIMEOUT_MS);
+    expect(visionAttemptTimeout(120_000, 3)).toBe(40_000);
+    expect(visionAttemptTimeout(30_000, 3)).toBe(10_000);
+    expect(visionAttemptTimeout(10_000, 1)).toBe(10_000);
+    expect(visionAttemptTimeout(0, 3)).toBe(0);
   });
 });
 
@@ -174,6 +186,22 @@ describe('chart analysis', () => {
     expect(result.kind).toBe('screen');
     expect(result.provider).toEqual({ name: 'openai', model: 'gpt-fallback', aiGenerated: true });
     expect(f.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('falls through a provider-success response with unusable observations', async () => {
+    const env = { ...visionEnv, AI_MODEL: 'gpt-primary', AI_FALLBACK_MODELS: 'openai:gpt-fallback', AI_COST_POLICY: 'operator-approved' };
+    const f = recordingFetch((_url, init) => {
+      const body = JSON.parse(init.body);
+      if (body.model === 'gpt-primary') return fakeResponse({ body: openAIBody('not json at all') });
+      const content = Array.isArray(body.messages[1].content) ? observations : plan;
+      return fakeResponse({ body: openAIBody(JSON.stringify(content)) });
+    });
+    const result = await analyzeChart({ image: image(), currentStrategy: validStrategy() }, { env, fetch: f, budget: createRequestBudget() });
+    expect(result.kind).toBe('screen');
+    expect(result.provider).toEqual({ name: 'openai', model: 'gpt-fallback', aiGenerated: true });
+    const models = f.calls.map(call => JSON.parse(call.init.body).model);
+    expect(models.filter(model => model === 'gpt-primary')).toHaveLength(1);
+    expect(models.filter(model => model === 'gpt-fallback').length).toBeGreaterThanOrEqual(2);
   });
 
   it('retries pass 2 once with the validation errors when the plan is unusable', async () => {

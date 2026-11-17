@@ -18,7 +18,7 @@ import {
 import { loadMarketSeries } from '../data/marketSeries';
 import { calculateAllIndicators } from '../backtest/indicators';
 import { evaluateCondition } from '../backtest/rules';
-import { AI_LIMITS, callProvider, resolveVisionConfig, type AIRuntimeConfig, type EnvLike, type FetchLike, type RequestBudget } from './provider';
+import { AI_LIMITS, callProvider, resolveVisionConfig, type AIRuntimeConfig, type EnvLike, type FetchLike, type ProviderCallResult, type ProviderDeps, type ProviderRequest, type RequestBudget } from './provider';
 import { parseModelJson, sanitizeText } from './validation';
 import { STRATEGY_JSON_RULES, strategyExample } from './strategyPrompt';
 import { renderRuleInPlainLanguage } from '../../shared/strategy/renderPlainLanguage';
@@ -27,22 +27,66 @@ import { describeConfigState } from './proposals';
 import { chartReadingCacheKey, readChartReading, writeChartReading } from './chartReadingCache';
 
 const CHART_READ_FAILURE_MESSAGE = "I couldn't read this chart. The AI models didn't return a reading. Try again, or describe the setup in words.";
-/** Keeps two passes plus one repair inside the client's 180 s chart deadline. */
-export const VISION_ATTEMPT_TIMEOUT_MS = 25_000;
+/** Reasoning vision models can need most of a minute; this is the per-model ceiling. */
+export const VISION_ATTEMPT_TIMEOUT_MS = 55_000;
+/** Keep the whole chart request inside the client's 180 s deadline, with margin. */
+export const VISION_TOTAL_BUDGET_MS = 170_000;
+
+/** Split what is left of the chart budget across the models still to try. */
+export function visionAttemptTimeout(remainingMs: number, attempts: number, cap = VISION_ATTEMPT_TIMEOUT_MS): number {
+  const safeAttempts = Math.max(1, Math.floor(attempts));
+  const remaining = Math.max(0, Math.floor(remainingMs));
+  return Math.max(0, Math.min(cap, Math.floor(remaining / safeAttempts)));
+}
 
 /** Clone a provider config with a shorter per-attempt timeout, preserving the non-enumerable key. */
-export function withVisionTimeout(config: AIRuntimeConfig): AIRuntimeConfig {
-  const timeoutMs = Math.min(config.timeoutMs, VISION_ATTEMPT_TIMEOUT_MS);
-  if (timeoutMs === config.timeoutMs) return config;
-  const clone: AIRuntimeConfig = { ...config, timeoutMs };
+export function withVisionTimeout(config: AIRuntimeConfig, timeoutMs = VISION_ATTEMPT_TIMEOUT_MS): AIRuntimeConfig {
+  const cap = Math.max(1, Math.floor(timeoutMs));
+  const timeout = Math.min(config.timeoutMs, cap);
+  if (timeout === config.timeoutMs) return config;
+  const clone: AIRuntimeConfig = { ...config, timeoutMs: timeout };
   const key = (config as AIRuntimeConfig & { apiKey?: string }).apiKey;
   if (key) Object.defineProperty(clone, 'apiKey', { value: key, enumerable: false });
   if (config.fallbackTargets) {
     clone.fallbackTargets = config.fallbackTargets.map(target => target.config
-      ? { ...target, config: withVisionTimeout(target.config) }
+      ? { ...target, config: withVisionTimeout(target.config, timeout) }
       : target);
   }
   return clone;
+}
+
+interface ChartModelAttempt {
+  config: AIRuntimeConfig;
+  provider: string;
+  model: string;
+  fallback: boolean;
+  approvedPaid: boolean;
+}
+
+/** One model per call so a bad response can fall through to the next model. */
+function chartModelAttempts(config: AIRuntimeConfig, images: boolean): ChartModelAttempt[] {
+  const out: ChartModelAttempt[] = [{
+    config: singleModelConfig(config), provider: config.provider, model: config.model ?? '',
+    fallback: false, approvedPaid: config.approvedPaid ?? false,
+  }];
+  for (const target of config.fallbackTargets ?? []) {
+    if (!target.configured || target.status !== 'ready' || !target.config) continue;
+    const imageCapable = target.supportsImages || (target.approvedPaid && target.configured);
+    if (images && !imageCapable) continue;
+    out.push({
+      config: singleModelConfig(target.config), provider: target.provider, model: target.model,
+      fallback: true, approvedPaid: target.approvedPaid,
+    });
+  }
+  return out;
+}
+
+/** Keep the model that produced pass 1 first, then the remaining approved chain. */
+function orderWithAnswer(attempts: ChartModelAttempt[], answer: { provider: string; model: string }): ChartModelAttempt[] {
+  let index = attempts.findIndex(item => item.provider === answer.provider && item.model === answer.model);
+  if (index < 0) index = attempts.findIndex(item => item.provider === answer.provider);
+  if (index <= 0) return attempts;
+  return [attempts[index], ...attempts.filter((_, i) => i !== index)];
 }
 
 /** One model only, so a retry/repair pass cannot restart the whole fallback chain. */
@@ -59,6 +103,39 @@ function configForAnswer(base: AIRuntimeConfig, provider: string, model: string)
   const target = base.fallbackTargets?.find(item => item.config && item.provider === provider && item.model === model)
     ?? base.fallbackTargets?.find(item => item.config && item.provider === provider);
   return target?.config ? singleModelConfig(target.config) : singleModelConfig(base);
+}
+
+/** Call one model with its share of the remaining chart budget and log the attempt. */
+async function callChartModel(
+  attempt: ChartModelAttempt,
+  request: ProviderRequest,
+  deps: ProviderDeps,
+  deadlineAt: number,
+  attemptsLeft: number,
+  pass: 'observations' | 'plan' | 'repair',
+  attemptNumber: number,
+  allowAllRemaining = false,
+): Promise<ProviderCallResult> {
+  const remaining = Math.max(0, deadlineAt - Date.now());
+  if (remaining <= 0) return { ok: false, code: 'timeout', message: 'Chart analysis budget exhausted.' };
+  const timeoutMs = allowAllRemaining
+    ? Math.min(VISION_ATTEMPT_TIMEOUT_MS, remaining)
+    : visionAttemptTimeout(remaining, attemptsLeft);
+  if (timeoutMs <= 0) return { ok: false, code: 'timeout', message: 'Chart analysis budget exhausted.' };
+  const cfg = withVisionTimeout(attempt.config, timeoutMs);
+  if (attempt.approvedPaid && cfg.costPolicy === 'free-only') {
+    console.info(JSON.stringify({ event: 'ai_paid_fallback', provider: attempt.provider, model: attempt.model, at: new Date().toISOString() }));
+  }
+  const started = Date.now();
+  const result = await callProvider(cfg, request, deps);
+  console.info(JSON.stringify({
+    event: 'chart_model_attempt', pass, attempt: attemptNumber,
+    provider: attempt.provider, model: attempt.model, fallback: attempt.fallback,
+    timeoutMs, elapsedMs: Date.now() - started,
+    ok: result.ok, code: result.ok ? undefined : result.code,
+    at: new Date().toISOString(),
+  }));
+  return result;
 }
 export const CHART_IMAGE_LIMITS = {
   maxDataUrlChars: 7_000_000,
@@ -705,7 +782,8 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
   if (!input.currentStrategy || !currentValidation?.success || !currentValidation.data) return unavailable('A valid executable workspace strategy is required to preserve exits, risk, sizing, execution and costs. No chart reading was fabricated.');
   const current = currentValidation.data;
   const providerDeps = { fetch: deps.fetch, budget: deps.budget };
-  const visionCfg = withVisionTimeout(cfg);
+  const budgetDeadlineAt = Date.now() + VISION_TOTAL_BUDGET_MS;
+  const answerBaseCfg = withVisionTimeout(cfg);
   const pass2System = [
     PASS2_SYSTEM,
     STRATEGY_JSON_RULES,
@@ -713,8 +791,9 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     JSON.stringify(strategyExample(current)),
   ].join('\n');
 
-  // Pass 1: observations only.
-  const pass1 = await callProvider(visionCfg, {
+  // Pass 1: observations only. A timeout, provider error or unusable JSON all
+  // fall through to the next model; the last model is the approved paid one.
+  const pass1Request: ProviderRequest = {
     system: PASS1_SYSTEM,
     user: JSON.stringify({ hint: hint || null }),
     json: true,
@@ -725,52 +804,69 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     // the JSON; the observation pass gets the full bounded output allowance.
     maxOutputTokens: visionOutputTokens,
     reasoningEffort: 'low',
-  }, providerDeps);
-  if (!pass1.ok) return unavailable(CHART_READ_FAILURE_MESSAGE);
-  const parsed1 = safeParseJson(pass1.text);
-  if (!parsed1.ok) return unavailable(CHART_READ_FAILURE_MESSAGE);
-  const rawObservations = parsed1.value && typeof parsed1.value === 'object' && 'observations' in parsed1.value
-    ? (parsed1.value as Record<string, unknown>).observations
-    : parsed1.value;
-  const observations = ChartObservationsSchema.safeParse(rawObservations);
-  if (!observations.success) {
-    const issue = observations.error.issues[0];
-    return unavailable(CHART_READ_FAILURE_MESSAGE);
+  };
+  const pass1Attempts = chartModelAttempts(cfg, true);
+  let pass1Answer: { provider: string; model: string } | null = null;
+  let observations: ChartObservations | null = null;
+  for (let index = 0; index < pass1Attempts.length; index++) {
+    const result = await callChartModel(pass1Attempts[index], pass1Request, providerDeps, budgetDeadlineAt, pass1Attempts.length - index, 'observations', index + 1);
+    if (!result.ok) continue;
+    const parsed = safeParseJson(result.text);
+    if (!parsed.ok) continue;
+    const raw = parsed.value && typeof parsed.value === 'object' && 'observations' in parsed.value
+      ? (parsed.value as Record<string, unknown>).observations
+      : parsed.value;
+    const checked = ChartObservationsSchema.safeParse(raw);
+    if (!checked.success) continue;
+    pass1Answer = { provider: result.provider, model: result.model };
+    observations = checked.data;
+    break;
   }
+  if (!pass1Answer || !observations) return unavailable(CHART_READ_FAILURE_MESSAGE);
 
-  // Pass 2: catalog conditions only, with one repair attempt driven by validation errors.
+  // Pass 2: catalog conditions only, with one repair attempt driven by validation
+  // errors. Start with the model that answered pass 1, then keep falling through.
+  const pass2Attempts = orderWithAnswer(chartModelAttempts(cfg, false), pass1Answer);
   let lastErrors: string[] = [];
   let previousRaw = '';
   let accepted: { plan: ChartPlan; strategy: StrategyAST; assumptions: string[] } | null = null;
   let answering: { provider: string; model: string } | null = null;
-  let pass2Cfg = visionCfg;
-  for (let attempt = 0; attempt < 2 && !accepted; attempt++) {
-    const retry = attempt > 0;
-    const pass2 = await callProvider(visionCfg, {
-      system: pass2System + (retry ? RETRY_SUFFIX + JSON.stringify(lastErrors.slice(0, 8)) : ''),
-      user: JSON.stringify({ observations: normalizeObservations(observations.data), hint: hint || null, ...(retry ? { rejected: previousRaw.slice(0, 6_000), errors: lastErrors.slice(0, 8) } : {}) }),
-      json: true,
-      temperature: 0,
-      maxRequestBodyBytes: AI_LIMITS.maxRequestBodyBytes,
-      maxOutputTokens: visionOutputTokens,
-      reasoningEffort: 'low',
-    }, providerDeps);
-    if (!pass2.ok) { lastErrors = [pass2.message]; break; }
-    previousRaw = pass2.text;
-    const pass2Answer = { provider: pass2.provider, model: pass2.model };
-    const parsed2 = safeParseJson(pass2.text);
-    if (!parsed2.ok) { lastErrors = [parsed2.message]; continue; }
-    const plan = ChartPlanSchema.safeParse(parsed2.value);
-    if (!plan.success) { lastErrors = plan.error.issues.map(i => `${i.path.join('.') || 'plan'}: ${i.message}`); continue; }
-    try {
-      const built = buildStrategy(plan.data, current, observations.data);
-      const validated = validateStrategy(built.strategy);
-      if (!validated.success || !validated.data) { lastErrors = validated.errors ?? ['strategy: is not executable']; continue; }
-      accepted = { plan: plan.data, strategy: validated.data, assumptions: built.assumptions };
-      answering = pass2Answer;
-      pass2Cfg = configForAnswer(visionCfg, pass2.provider, pass2.model);
-    } catch (error) {
-      lastErrors = [error instanceof Error ? error.message : 'The plan could not be mapped to the catalog'];
+  let repairBaseCfg = answerBaseCfg;
+  planLoop:
+  for (let planAttempt = 0; planAttempt < 2 && !accepted; planAttempt++) {
+    const retry = planAttempt > 0;
+    for (let index = 0; index < pass2Attempts.length; index++) {
+      const request: ProviderRequest = {
+        system: pass2System + (retry ? RETRY_SUFFIX + JSON.stringify(lastErrors.slice(0, 8)) : ''),
+        user: JSON.stringify({ observations: normalizeObservations(observations), hint: hint || null, ...(retry ? { rejected: previousRaw.slice(0, 6_000), errors: lastErrors.slice(0, 8) } : {}) }),
+        json: true,
+        temperature: 0,
+        maxRequestBodyBytes: AI_LIMITS.maxRequestBodyBytes,
+        maxOutputTokens: visionOutputTokens,
+        reasoningEffort: 'low',
+      };
+      const result = await callChartModel(
+        pass2Attempts[index], request, providerDeps, budgetDeadlineAt,
+        pass2Attempts.length - index, 'plan', index + 1,
+        planAttempt === 0 && index === 0,
+      );
+      if (!result.ok) { lastErrors = [result.message]; continue; }
+      previousRaw = result.text;
+      const parsed = safeParseJson(result.text);
+      if (!parsed.ok) { lastErrors = [parsed.message]; continue; }
+      const plan = ChartPlanSchema.safeParse(parsed.value);
+      if (!plan.success) { lastErrors = plan.error.issues.map(i => `${i.path.join('.') || 'plan'}: ${i.message}`); continue; }
+      try {
+        const built = buildStrategy(plan.data, current, observations);
+        const validated = validateStrategy(built.strategy);
+        if (!validated.success || !validated.data) { lastErrors = validated.errors ?? ['strategy: is not executable']; continue; }
+        accepted = { plan: plan.data, strategy: validated.data, assumptions: built.assumptions };
+        answering = { provider: result.provider, model: result.model };
+        repairBaseCfg = configForAnswer(answerBaseCfg, result.provider, result.model);
+        break planLoop;
+      } catch (error) {
+        lastErrors = [error instanceof Error ? error.message : 'The plan could not be mapped to the catalog'];
+      }
     }
   }
   if (!accepted) {
@@ -784,7 +880,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
   let finalAssumptions = accepted.assumptions;
   let selfRepairApplied = false;
   let selfCheck: ChartSelfCheck;
-  const chartedSymbol = resolveChartSymbol(observations.data.header);
+  const chartedSymbol = resolveChartSymbol(observations.header);
   if (!chartedSymbol) {
     selfCheck = { status: 'unknown_symbol', line: "Couldn't check against the charted stock" };
   } else {
@@ -792,10 +888,14 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     try {
       let evaluation = await evaluator({ symbol: chartedSymbol, strategy: finalStrategy });
       if (evaluation.matched < evaluation.total) {
-        const repair = await callProvider(pass2Cfg, {
+        const repairAttempt: ChartModelAttempt = {
+          config: repairBaseCfg, provider: repairBaseCfg.provider, model: repairBaseCfg.model ?? '',
+          fallback: false, approvedPaid: repairBaseCfg.approvedPaid ?? false,
+        };
+        const repair = await callChartModel(repairAttempt, {
           system: REPAIR_SYSTEM,
           user: JSON.stringify({
-            observations: normalizeObservations(observations.data),
+            observations: normalizeObservations(observations),
             plan: finalPlan,
             failing: evaluation.failures.slice(0, 8),
             chartedSymbol: chartedSymbol.ticker,
@@ -805,13 +905,13 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
           maxRequestBodyBytes: AI_LIMITS.maxRequestBodyBytes,
           maxOutputTokens: visionOutputTokens,
           reasoningEffort: 'low',
-        }, providerDeps);
+        }, providerDeps, budgetDeadlineAt, 1, 'repair', 1, true);
         if (repair.ok) {
           const parsedRepair = safeParseJson(repair.text);
           const repairedPlan = parsedRepair.ok ? ChartPlanSchema.safeParse(parsedRepair.value) : null;
           if (parsedRepair.ok && repairedPlan?.success) {
             try {
-              const built = buildStrategy(repairedPlan.data, current, observations.data, 'repair');
+              const built = buildStrategy(repairedPlan.data, current, observations, 'repair');
               const validated = validateStrategy(built.strategy);
               if (validated.success && validated.data) {
                 const repairedEvaluation = await evaluator({ symbol: chartedSymbol, strategy: validated.data });
@@ -865,7 +965,7 @@ async function analyzeChartUncached(input: ChartAnalysisInput, deps: ChartVision
     assumptions,
     missingBacktestRules: ['exits', 'positionSizing', 'executionAndCosts'],
     backtestReady: false,
-    observations: normalizeObservations(observations.data),
+    observations: normalizeObservations(observations),
     confidence,
     summary,
     source: 'chart_image',
