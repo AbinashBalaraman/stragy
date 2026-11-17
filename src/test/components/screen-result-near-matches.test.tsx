@@ -150,4 +150,23 @@ describe('screen near matches', () => {
     expect(screen.getByText('1 match')).toBeTruthy();
     expect(screen.queryByText(/1 matches/)).toBeNull();
   });
+
+  it('keeps the close price and the Backtest action in two columns on a phone', () => {
+    render(<ScreenResultCard plan={plan()} result={result()} pending={false} error="" onPrepareBacktest={vi.fn()} />);
+    const near = screen.getByLabelText('Close matches');
+    const table = within(near).getByRole('table');
+    const headers = within(table).getAllByRole('columnheader');
+    // jsdom applies no media queries: assert the phone classes, not the layout.
+    const phoneColumns = headers.filter(header => !header.className.includes('max-sm:hidden'));
+    expect(phoneColumns.map(header => header.textContent)).toEqual(['Symbol', 'Action']);
+    expect(headers.find(header => header.textContent === 'Close')?.className).toContain('max-sm:hidden');
+
+    const symbolCell = within(table).getAllByRole('rowheader')[0];
+    expect(symbolCell.textContent).toContain('RELIANCEPOWER');
+    expect(symbolCell.textContent).toContain('₹2,900.00');
+    const actionCell = within(table).getAllByRole('cell').at(-1);
+    expect(actionCell?.className).toContain('max-sm:sticky');
+    expect(actionCell?.className).toContain('max-sm:right-0');
+    expect(within(actionCell as HTMLElement).getByRole('button', { name: 'Prepare backtest for RELIANCEPOWER' })).toBeTruthy();
+  });
 });

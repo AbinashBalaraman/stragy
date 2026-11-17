@@ -146,27 +146,32 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiti
               : 'Read-only';
 
   const showConditions = totalConditions > 1;
+  /** The first cell: ticker and name, plus what the wide columns hold below 640px. */
+  const symbolCell = (match: ScanMatch, withPrice: boolean) => (
+    <span className="flex min-w-0 flex-col">
+      <span className="font-semibold text-[var(--text-1)]">{match.ticker}</span>
+      <span className="st-meta block max-w-[9rem] truncate text-[var(--text-3)] max-sm:max-w-[7rem]">{match.name}</span>
+      {/* A close price in the second column would be squeezed out on a phone. */}
+      {withPrice && <span className="st-tnum mt-0.5 block text-[13px] leading-5 text-[var(--text-2)] sm:hidden">{closeText(match.lastClose)}</span>}
+      {/* Below 640px the indicator and condition columns collapse into this line. */}
+      <span className="st-meta mt-0.5 block break-words text-[var(--text-2)] sm:hidden">
+        {indicatorLine(indicatorEntries(plan, match))}
+        {showConditions && (
+          <>
+            {' · '}
+            {result?.matches.includes(match) ? totalConditions + '/' + totalConditions : scoreLabel(match, totalConditions)}
+          </>
+        )}
+      </span>
+    </span>
+  );
+
   const columns: DataColumn<ScanMatch>[] = [
     {
       key: 'symbol',
       header: 'Symbol',
       sticky: true,
-      render: match => (
-        <span className="flex min-w-0 flex-col">
-          <span className="font-semibold text-[var(--text-1)]">{match.ticker}</span>
-          <span className="st-meta block max-w-[9rem] truncate text-[var(--text-3)] max-sm:max-w-[7rem]">{match.name}</span>
-          {/* Below 640px the indicator and condition columns collapse into this line. */}
-          <span className="st-meta mt-0.5 block text-[var(--text-2)] sm:hidden">
-            {indicatorLine(indicatorEntries(plan, match))}
-            {showConditions && (
-              <>
-                {' · '}
-                {result?.matches.includes(match) ? totalConditions + '/' + totalConditions : scoreLabel(match, totalConditions)}
-              </>
-            )}
-          </span>
-        </span>
-      ),
+      render: match => symbolCell(match, false),
     },
     { key: 'close', header: 'Close', align: 'right', render: match => closeText(match.lastClose) },
     { key: 'indicators', header: 'Indicators', hideOnMobile: true, render: match => <span className="st-meta text-[var(--text-2)]">{indicatorLine(indicatorEntries(plan, match))}</span> },
@@ -198,6 +203,16 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiti
   ];
 
   const rowKey = (match: ScanMatch) => String(match.symbolId);
+  /**
+   * On a phone the close-matches row is Symbol (+ price) and Backtest. The
+   * separate close column was clipped behind the sticky symbol column.
+   */
+  const nearColumns: DataColumn<ScanMatch>[] = columns.map(column =>
+    column.key === 'close'
+      ? { ...column, hideOnMobile: true }
+      : column.key === 'symbol'
+        ? { ...column, render: (match: ScanMatch) => symbolCell(match, true) }
+        : column);
 
   const footer = pending && onCancelScan ? (
     <button
@@ -329,7 +344,7 @@ export const ScreenResultCard: React.FC<Props> = ({ plan, result, pending, waiti
                 </div>
                 <DataTable
                   caption={'Close matches, ' + nearMatches.length + (nearMatches.length === 1 ? ' row' : ' rows')}
-                  columns={columns}
+                  columns={nearColumns}
                   rows={nearMatches}
                   rowKey={rowKey}
                   initialLimit={5}
