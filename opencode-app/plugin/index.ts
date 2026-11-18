@@ -69,6 +69,21 @@ function outputOf(result: unknown): ToolEnvelope {
   return (result ?? {}) as ToolEnvelope
 }
 
+interface SessionFile { data: string; mime: string; name?: string }
+
+/** The newest image the user attached to this session, if any. */
+function newestImage(messages: unknown[]): SessionFile | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as { files?: SessionFile[] }
+    const files = Array.isArray(message?.files) ? message.files : []
+    for (let j = files.length - 1; j >= 0; j--) {
+      const file = files[j]
+      if (file && typeof file.data === "string" && /^image\/(png|jpeg|webp)$/.test(String(file.mime))) return file
+    }
+  }
+  return null
+}
+
 async function settle(started: string, first: ToolEnvelope, sessionID: string, signal?: AbortSignal): Promise<ToolEnvelope> {
   const resultTool = RESULT_TOOL[first.kind ?? ""]
   const jobId = first.jobId
@@ -103,7 +118,29 @@ export default Plugin.define({
           input: tool.input,
           options: { codemode: false },
           execute: async (input: unknown, context: { sessionID: string; signal?: AbortSignal }) => {
-            const result = outputOf(await callTool(tool.name, input, context.sessionID, context.signal))
+            let args = input
+            // read_chart reads an image from Stragy's session context; the
+            // OpenCode UI attaches images to the message instead, so hand the
+            // newest one over before the tool runs.
+            if (tool.name === "read_chart" && !(input && typeof input === "object" && (input as { imageId?: unknown }).imageId)) {
+              try {
+                const messages = await ctx.session.context({ sessionID: context.sessionID })
+                const image = newestImage(messages as unknown[])
+                if (image) {
+                  const uploaded = await fetch(BRIDGE + "/api/v2/engine/attachments", {
+                    method: "POST",
+                    headers: headers(context.sessionID),
+                    body: JSON.stringify({ sessionId: context.sessionID, data: image.data, mime: image.mime, name: image.name }),
+                    signal: context.signal,
+                  })
+                  if (uploaded.ok) {
+                    const { imageId } = (await uploaded.json()) as { imageId?: string }
+                    if (imageId) args = { ...(input as Record<string, unknown>), imageId }
+                  }
+                }
+              } catch { /* the tool reports IMAGE_REQUIRED honestly */ }
+            }
+            const result = outputOf(await callTool(tool.name, args, context.sessionID, context.signal))
             const final = await settle(tool.name, result, context.sessionID, context.signal)
             return { content: JSON.stringify(final, null, 1) }
           },

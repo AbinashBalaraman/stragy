@@ -245,6 +245,25 @@ export async function createApp(deps: AppDependencies = {}) {
     if (!localToolRequest(req)) throw new ApiFailure(403, 'TOOL_BRIDGE_LOCAL_ONLY', 'The tool bridge is only reachable from this machine.');
     res.json({ tools: await toolBridge.list() });
   }));
+  app.post('/api/v2/engine/attachments', express.json({ limit: '12mb' }), wrap(async (req, res) => {
+    if (!localToolRequest(req)) throw new ApiFailure(403, 'TOOL_BRIDGE_LOCAL_ONLY', 'The tool bridge is only reachable from this machine.');
+    const body = (req.body ?? {}) as { sessionId?: unknown; data?: unknown; mime?: unknown; name?: unknown; hint?: unknown };
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId.slice(0, 120) : '';
+    if (!sessionId) throw new ApiFailure(400, 'ATTACHMENT_SESSION_REQUIRED', 'A session id is required.');
+    const mime = body.mime === 'image/png' || body.mime === 'image/jpeg' || body.mime === 'image/webp' ? body.mime : null;
+    if (!mime) throw new ApiFailure(415, 'ATTACHMENT_TYPE_UNSUPPORTED', 'Only PNG, JPEG and WebP chart images are accepted.');
+    const data = typeof body.data === 'string' ? body.data : '';
+    if (!data || !/^[A-Za-z0-9+/=]+$/.test(data)) throw new ApiFailure(400, 'ATTACHMENT_DATA_INVALID', 'The image data is missing or not base64.');
+    try { parseChartImageDataUrl('data:' + mime + ';base64,' + data); }
+    catch (error) { if (error instanceof ChartImageError) throw new ApiFailure(error.status, error.code, error.message); throw error; }
+    const attachment = bridgeContexts.addAttachment(sessionId, {
+      dataUrl: 'data:' + mime + ';base64,' + data,
+      mimeType: mime,
+      name: typeof body.name === 'string' ? body.name : 'chart',
+      ...(typeof body.hint === 'string' ? { hint: body.hint } : {}),
+    });
+    res.status(201).json({ imageId: attachment.id });
+  }));
   app.post('/api/v2/engine/tools/:name', express.json({ limit: '2mb' }), wrap(async (req, res) => {
     if (!localToolRequest(req)) throw new ApiFailure(403, 'TOOL_BRIDGE_LOCAL_ONLY', 'The tool bridge is only reachable from this machine.');
     const name = String(req.params.name ?? '');

@@ -695,8 +695,7 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             if (!jobs) return { output: typedFailure('JOB_RUNNER_UNAVAILABLE', 'Chart jobs are unavailable on this server.') };
             const image = deps.contexts.attachment(toolContext.sessionID, input.imageId);
             if (!image) return { output: typedFailure('IMAGE_REQUIRED', 'No chart image is attached to this session. Attach a PNG/JPEG/WebP screenshot and send it with a message.') };
-            const contextValue = deps.contexts.get(toolContext.sessionID);
-            const picked = strategyFrom(input.currentStrategy ?? image.currentStrategy, contextValue?.currentStrategy);
+            const picked = strategyFrom(input.currentStrategy ?? image.currentStrategy, sessionStrategy(deps, toolContext.sessionID)?.strategy);
             if (!picked.strategy) return { output: typedFailure('STRATEGY_REQUIRED', picked.error ?? 'A current workspace strategy is required.') };
             try {
               const job = jobs.enqueue({ kind: 'chart', image: image.dataUrl, hint: input.hint ?? image.hint, currentStrategy: picked.strategy });
