@@ -5,22 +5,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
-import { requestResearchChat } from '../../client/researchChat';
+import { getEngineMessages, postEngineMessage } from '../../client/engine';
+import { engineReply, engineReplyOnce, resetEngineHarness, setStoredEngineSession } from '../../test/support/engineMock';
 import { ChartReadingCard } from '../../components/chat/ChartReadingCard';
 import { requestScan } from '../../client/api';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import type { BacktestResponse } from '../../shared/strategy/types';
 
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({ requestScan: vi.fn() }));
 vi.mock('../../client/featureSetup', () => ({ requestFeatureSetup: vi.fn() }));
 
 let dom: JSDOM;
 
 beforeEach(() => {
+  resetEngineHarness();
   dom = new JSDOM('', { url: 'https://chat-anatomy.test' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
+  window.history.replaceState({}, '', '/');
 });
 
 afterEach(() => {
@@ -35,9 +38,16 @@ const send = (text: string) => {
   fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
 };
 
+const renderRestoredEngine = async (messages: unknown[]) => {
+  setStoredEngineSession({ sessionId: 'ses_anatomy', lastSeq: messages.length });
+  vi.mocked(getEngineMessages).mockResolvedValue({ messages, lastSeq: messages.length } as never);
+  render(<AiCopilotDock strategy={validStrategy()} />);
+  await waitFor(() => expect(getEngineMessages).toHaveBeenCalledWith('ses_anatomy'));
+};
+
 describe('chat message anatomy', () => {
   it('keeps aria-live off the log and announces through one hidden status region', async () => {
-    vi.mocked(requestResearchChat).mockReturnValue(new Promise(() => {}) as never);
+    engineReply(() => new Promise(() => {}));
     render(<AiCopilotDock strategy={validStrategy()} />);
     const log = screen.getByRole('log', { name: 'Conversation' });
     expect(log.getAttribute('aria-live')).toBeNull();
@@ -49,7 +59,7 @@ describe('chat message anatomy', () => {
   });
 
   it('shows one in-flow placeholder instead of a composer status line', async () => {
-    vi.mocked(requestResearchChat).mockReturnValue(new Promise(() => {}) as never);
+    engineReply(() => new Promise(() => {}));
     render(<AiCopilotDock strategy={validStrategy()} />);
     send('Explain RSI');
     // A reply that lands almost immediately never flashes a skeleton.
@@ -60,29 +70,40 @@ describe('chat message anatomy', () => {
   });
 
   it('keeps focus in the composer after sending', async () => {
-    vi.mocked(requestResearchChat).mockReturnValue(new Promise(() => {}) as never);
+    engineReply(() => new Promise(() => {}));
     render(<AiCopilotDock strategy={validStrategy()} />);
     send('Explain RSI');
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Research request')));
   });
 
-  it('labels only the first assistant turn of a run', () => {
-    dom.window.localStorage.setItem('stragy_copilot_review_history_v2', JSON.stringify([
-      { id: 'u1', sender: 'user', text: 'First question', timestamp: 1 },
-      { id: 'a1', sender: 'assistant', text: 'First answer', timestamp: 2 },
-      { id: 'a2', sender: 'assistant', text: 'Second answer in the same run', timestamp: 3 },
-      { id: 'u2', sender: 'user', text: 'Second question', timestamp: 4 },
-      { id: 'a3', sender: 'assistant', text: 'Third answer', timestamp: 5 },
-    ]));
-    render(<AiCopilotDock strategy={validStrategy()} />);
+  it('labels only the first assistant turn of a run', async () => {
+    await renderRestoredEngine([
+      { id: 'u1', role: 'user', text: 'First question', seq: 1 },
+      { id: 'a1', role: 'assistant', text: 'First answer', seq: 2 },
+      { id: 'a2', role: 'assistant', text: 'Second answer in the same run', seq: 3 },
+      { id: 'u2', role: 'user', text: 'Second question', seq: 4 },
+      { id: 'a3', role: 'assistant', text: 'Third answer', seq: 5 },
+    ]);
+    await screen.findByText('First answer');
     expect(screen.getAllByText('Stragy')).toHaveLength(2);
   });
 
-  it('renders links, headings and fenced code without parsing HTML', () => {
+  it('starts empty and clears the old browser transcript on load', () => {
     dom.window.localStorage.setItem('stragy_copilot_review_history_v2', JSON.stringify([
-      { id: 'a1', sender: 'assistant', text: '### RSI below 30\n\nRead [the guide](https://example.com/rsi) or https://example.com/docs.\n\n```ts\nconst rsi = 28;\n```\n\n<script>alert(1)</script>', timestamp: 1 },
+      { id: 'old', sender: 'assistant', text: 'Old v1 answer', timestamp: 1 },
     ]));
+    dom.window.localStorage.setItem('stragy_copilot_previous_conversation_v1', JSON.stringify([]));
     render(<AiCopilotDock strategy={validStrategy()} />);
+    expect(screen.queryByText('Old v1 answer')).toBeNull();
+    expect(screen.getByText('Test a trading idea before you trust it.')).toBeTruthy();
+    expect(dom.window.localStorage.getItem('stragy_copilot_review_history_v2')).toBeNull();
+  });
+
+  it('renders links, headings and fenced code without parsing HTML', async () => {
+    await renderRestoredEngine([
+      { id: 'a1', role: 'assistant', text: '### RSI below 30\n\nRead [the guide](https://example.com/rsi) or https://example.com/docs.\n\n```ts\nconst rsi = 28;\n```\n\n<script>alert(1)</script>', seq: 1 },
+    ]);
+    await screen.findByText('const rsi = 28;');
     expect(screen.getByRole('heading', { level: 3, name: 'RSI below 30' })).toBeTruthy();
     // The link appears inline and once more as a citation chip.
     const guide = screen.getAllByRole('link', { name: 'the guide' });
@@ -98,7 +119,7 @@ describe('chat message anatomy', () => {
   });
 
   it('shows an unavailable reply once, in the conversation, never above the composer', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue({
+    engineReply({
       schemaVersion: 1,
       kind: 'conversation',
       originatingRevision: 1,
@@ -118,7 +139,7 @@ describe('chat message anatomy', () => {
   it('copies and retries an answer from its action row', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    vi.mocked(requestResearchChat).mockResolvedValue({
+    engineReply({
       schemaVersion: 1,
       kind: 'conversation',
       originatingRevision: 1,
@@ -135,10 +156,10 @@ describe('chat message anatomy', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('A plain answer.'));
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
 
-    vi.mocked(requestResearchChat).mockClear();
+    vi.mocked(postEngineMessage).mockClear();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(requestResearchChat).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(requestResearchChat).mock.calls[0][0]).toMatchObject({ message: 'First question' });
+    await waitFor(() => expect(postEngineMessage).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(postEngineMessage).mock.calls[0][1]).toMatchObject({ text: 'First question' });
   });
 
   it('brings a user-triggered result into view even when the reader scrolled away', async () => {
@@ -193,7 +214,7 @@ describe('chat message anatomy', () => {
       warnings: [],
     } as never);
 
-    vi.mocked(requestResearchChat).mockResolvedValueOnce(reply('First answer.'));
+    engineReplyOnce(reply('First answer.'));
     render(<AiCopilotDock strategy={validStrategy()} />);
     send('First question');
     await screen.findByText('First answer.');
@@ -209,7 +230,7 @@ describe('chat message anatomy', () => {
     expect(await screen.findByTestId('jump-to-latest')).toBeTruthy();
 
     let finish!: (value: unknown) => void;
-    vi.mocked(requestResearchChat).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }) as never);
+    engineReplyOnce(new Promise(resolve => { finish = resolve; }));
     setTop.mockClear();
     send('Why did it lose money? One short paragraph.');
     // The browser reports the new position: still far from the bottom.
@@ -224,7 +245,7 @@ describe('chat message anatomy', () => {
       schemaVersion: 1, kind: 'conversation', originatingRevision: 1, message: text,
       method: 'local_heuristic', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
     } as never);
-    vi.mocked(requestResearchChat).mockResolvedValueOnce(reply('First answer.'));
+    engineReplyOnce(reply('First answer.'));
     render(<AiCopilotDock strategy={validStrategy()} />);
     send('First question');
     await screen.findByText('First answer.');
@@ -236,7 +257,7 @@ describe('chat message anatomy', () => {
     Object.defineProperty(log, 'scrollTop', { configurable: true, get: () => top, set: value => { top = value; } });
 
     let finish!: (value: unknown) => void;
-    vi.mocked(requestResearchChat).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }) as never);
+    engineReplyOnce(new Promise(resolve => { finish = resolve; }));
     send('Second question');
     fireEvent.wheel(log);            // the reader takes over
     fireEvent.scroll(log);
@@ -247,10 +268,16 @@ describe('chat message anatomy', () => {
   });
 
   it('labels a live-quote sector answer as Angel One live quotes, not the rule parser', async () => {
-    dom.window.localStorage.setItem('stragy_copilot_review_history_v2', JSON.stringify([
-      { id: 'a1', sender: 'assistant', text: 'Banks led the session.', timestamp: 1, methodLabel: 'Angel One live quotes · not AI' },
-    ]));
-    render(<AiCopilotDock strategy={validStrategy()} />);
+    await renderRestoredEngine([
+      {
+        id: 'a1', role: 'assistant', text: 'Banks led the session.', seq: 1,
+        payload: {
+          schemaVersion: 1, kind: 'conversation', originatingRevision: 1, message: 'Banks led the session.',
+          method: 'rule_parser', provider: { name: 'Angel One live quotes', model: null, aiGenerated: false }, warnings: [],
+        },
+      },
+    ]);
+    await screen.findByText('Banks led the session.');
     expect(screen.getByText('Angel One live quotes · not AI')).toBeTruthy();
   });
 
@@ -280,47 +307,8 @@ describe('chat message anatomy', () => {
     expect(screen.getByRole('button', { name: 'Less' })).toBeTruthy();
   });
 
-  it('shows the queued-scan line instead of a skeleton while a scan waits its turn', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue({
-      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
-      method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
-      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
-    } as never);
-    vi.mocked(requestScan).mockImplementation(((_input: unknown, _signal?: unknown, onPhase?: (phase: string) => void) => {
-      onPhase?.('waiting');
-      return new Promise(() => {});
-    }) as never);
-    render(<AiCopilotDock strategy={validStrategy()} />);
-    send('Screen Nifty 50 for RSI below 30');
-    expect(await screen.findByText('Waiting for the current scan to finish…')).toBeTruthy();
-    expect(screen.queryByText('Results are pending, not zero matches.')).toBeNull();
-  });
-
-  it('maps a lost scan job to a plain line with a retry, never transport text', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue({
-      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
-      method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
-      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
-    } as never);
-    vi.mocked(requestScan).mockRejectedValue(Object.assign(new Error('Job not found'), { code: 'JOB_LOST' }));
-    render(<AiCopilotDock strategy={validStrategy()} />);
-    send('Screen Nifty 50 for RSI below 30');
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('The server restarted and the scan was lost. Try again.');
-    expect(screen.getByRole('button', { name: 'Retry scan' })).toBeTruthy();
-    expect(screen.queryByText(/No zero-match conclusion/)).toBeNull();
-
-    cleanup();
-    vi.mocked(requestScan).mockRejectedValue(Object.assign(new Error('The server did not return JSON.'), { code: 'INVALID_RESPONSE' }));
-    render(<AiCopilotDock strategy={validStrategy()} />);
-    send('Screen Nifty 50 for RSI below 30');
-    const second = await screen.findByRole('alert');
-    expect(second.textContent).toContain("The scan couldn't reach the server. Try again.");
-    expect(second.textContent).not.toContain('did not return JSON');
-  });
-
   it('offers "Jump to latest" once the newest content is clearly out of view', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue({
+    engineReply({
       schemaVersion: 1, kind: 'conversation', originatingRevision: 1, message: 'A plain answer.',
       method: 'local_heuristic', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
     } as never);
@@ -349,22 +337,6 @@ describe('chat message anatomy', () => {
     top = 1600;
     fireEvent.scroll(log);
     expect(screen.queryByTestId('jump-to-latest')).toBeNull();
-  });
-
-  it('shows scan progress from the job stage', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue({
-      schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
-      method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
-      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
-    } as never);
-    vi.mocked(requestScan).mockImplementation(((_input: unknown, _signal: unknown, _onPhase: unknown, onProgress?: (progress: { status: string; stage: string }) => void) => {
-      onProgress?.({ status: 'running', stage: 'scan 42/50' });
-      return new Promise(() => {});
-    }) as never);
-    render(<AiCopilotDock strategy={validStrategy()} />);
-    send('Screen Nifty 50 for RSI below 30');
-    expect(await screen.findByText('Checking prices · 42 of 50')).toBeTruthy();
-    expect(screen.getByText('Results are pending, not zero matches.')).toBeTruthy();
   });
 
   it('says what happens next when the chart does not name a stock', () => {

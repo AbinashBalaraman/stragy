@@ -8,26 +8,30 @@ import { ALL_SYMBOLS, NSE_SYMBOLS, UNIVERSE_OPTIONS, filterSymbolsByUniverse, ge
 import { loadMarketSeries, getAvailableTradingDates, findNearestTradingDate, MarketDataError } from './data/realMarketData';
 import { calculateStockTrends, calculateMarketMovers, getSmartApiStatus, getSmartApiRateLimitsAndSpecs, getOptionChainData, getVolumeProfileAndVWAP, calculateGttBracketOrder, getBasisAndCalendarSpreads } from './data/smartApi';
 import { getLiveQuotes } from './data/liveQuotes';
-import { ANGEL_RATE_LIMIT_MESSAGE } from './data/angelClient';
+import { getMarketCacheStats } from './data/candleStore';
+import { ANGEL_RATE_LIMIT_MESSAGE, getAngelCredentialStatus, getAngelSessionInfo, getAngelDebugMetrics } from './data/angelClient';
 import { scanUniverse } from './backtest/scanner';
 import { runBacktest } from './backtest/engine';
 import { STRATEGY_TEMPLATES } from '../shared/strategy/templates';
-import { validateStrategy } from '../shared/strategy/schema';
+import { canonicalStrategyJSON, validateStrategy } from '../shared/strategy/schema';
 import { PATTERN_LIBRARY } from './ai/patterns';
-import { createProposal, getAIStatus, handleAIChat, parseStrategyPrompt, applyStrategyEdit, optimizeStrategyForProfitability } from './ai/copilot';
+import { createProposal, getAIStatus, parseStrategyPrompt, applyStrategyEdit, optimizeStrategyForProfitability } from './ai/copilot';
 import { ResearchRepository, StorageError } from './storage/repository';
-import { JobError, SCAN_HARD_CAP_MS, type ResearchPayload } from './jobs/manager';
+import { JobError, SCAN_HARD_CAP_MS, type ResearchPayload, type JobStatus, type JobSummary } from './jobs/manager';
 import { plainScanFailure } from '../shared/contracts/scan-availability';
 import { buildMarketSnapshot, type MarketSnapshot } from './backtest/marketSnapshot';
 import { scanUniverseAsync } from './backtest/scanner';
 import { parseBacktestResult } from '../shared/contracts/research';
 import { SimulationInputError } from './backtest/engine';
 import type { BacktestResponse, StrategyAST } from '../shared/strategy/types';
-import { researchChat } from './ai/researchChat';
 import { resolveFeatureSetup } from './ai/featureSetup';
 import { analyzeChart, ChartImageError, parseChartImageDataUrl } from './ai/chartVision';
+import { isVoiceConfigured, transcribeAudio, VoiceError, VOICE_MODEL } from './voice/transcribe';
+import { createVoiceRateLimiter } from './voice/rateLimit';
 import { resolveObservedUniverse } from './data/observedUniverse';
 import { getProvidersResponse, upsertProvider, deleteProvider, setChain, resetProviders, listProviderModels, testProvider, ProviderError, initializeProviderRegistry } from './ai/providerRegistry';
+import { initializeEngine, configureEngine, createSession as createEngineSession, getSession as getEngineSession, listSessions as listEngineSessions, renameSession as renameEngineSession, deleteSession as deleteEngineSession, switchSessionModel as switchEngineSessionModel, exportSession as exportEngineSession, availableModels as listEngineModels, usageReport as engineUsageReport, configuredModels as configuredEngineModels, prompt as promptEngineSession, messages as engineMessages, openSessionStream, interrupt as interruptEngineSession, stageContext, engineStatus, EngineError } from './ai/engine';
+import { engineApprovals, ApprovalError } from './ai/engineApprovals';
 import { initializeDatabase, getDbStatus } from './db/pool';
 
 export class ApiFailure extends Error {
@@ -38,7 +42,7 @@ const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 const BacktestRequest = z.object({ strategy: z.unknown(), initialCapital: z.number().finite().min(100).max(1e9).optional(), start: DateSchema, end: DateSchema, asOf: DateSchema, seed: z.number().int().min(0).max(0xffffffff).optional(), robustness: z.boolean().optional() });
 const ScanRequest = z.object({ universe: z.string().max(40).default('NIFTY_50'), strategyJson: z.unknown().optional(), strategy: z.unknown().optional(), limit: z.number().int().min(1).max(100).default(35), date: DateSchema, asOf: DateSchema });
 export interface JobView { id: string; status: string; kind?: string; stage?: string; queuedBehind?: number; createdAt?: string; startedAt?: string; finishedAt?: string; progress?: { processed: number; total: number }; result?: unknown; error?: unknown; }
-export interface AppJobService { enqueue: (payload: ResearchPayload, key?: string) => JobView; get: (id: string) => JobView | undefined; cancel: (id: string) => unknown; shutdown?: () => Promise<void>; }
+export interface AppJobService { enqueue: (payload: ResearchPayload, key?: string) => JobView; get: (id: string) => JobView | undefined; cancel: (id: string) => unknown; resume?: (id: string) => JobView; listSummaries?: (input: { limit?: number; status?: JobStatus }) => JobSummary[]; shutdown?: () => Promise<void>; }
 export interface AppDependencies { config?: RuntimeConfig; enableVite?: boolean; jobs?: AppJobService; repository?: ResearchRepository; }
 function parse<T>(schema: z.ZodType<T>, input: unknown): T { const r = schema.safeParse(input); if (!r.success) throw new ApiFailure(422, 'VALIDATION_FAILED', 'Input validation failed', r.error.issues.map(i => ({ path: i.path.join('.'), message: i.message }))); return r.data; }
 function executable(raw: unknown): StrategyAST { const r = validateStrategy(raw); if (!r.success || !r.data) throw new ApiFailure(422, 'INVALID_STRATEGY', 'Strategy is invalid or unsupported', r.errors); return r.data; }
@@ -171,6 +175,308 @@ export async function createApp(deps: AppDependencies = {}) {
     const job = deps.jobs.enqueue({ kind: 'chart', image: image.dataUrl, hint: p.hint, currentStrategy: current }, req.get('Idempotency-Key'));
     res.status(202).json({ schemaVersion: 2, jobId: job.id, status: job.status });
   }));
+  // === Voice: server-side speech-to-text fallback (Agent D) =====================
+  // Browser SpeechRecognition is the primary path; this route is the server
+  // fallback (Firefox, or when the browser API fails). Body parsing is
+  // route-scoped because a 4 MB clip is ~5.4 MB of base64, far above the global
+  // 256 KB API limit. The app-wide /api budget still applies; this adds a tighter
+  // 10 requests/minute/IP budget around the free OpenRouter omni model.
+  const voiceLimiter = createVoiceRateLimiter({ limit: 10, windowMs: 60_000 });
+  app.get('/api/v2/voice/status', (_req, res) => {
+    res.json({ configured: isVoiceConfigured(), model: VOICE_MODEL, free: true });
+  });
+  app.post('/api/v2/voice/transcribe', express.json({ limit: '10mb' }), wrap(async (req, res) => {
+    if (!voiceLimiter.take(req.socket.remoteAddress ?? 'unknown')) {
+      throw new ApiFailure(429, 'VOICE_RATE_LIMITED', 'Voice transcription is limited to 10 clips per minute. Wait a moment and try again.');
+    }
+    try { res.json(await transcribeAudio(req.body ?? {})); }
+    catch (error) {
+      if (error instanceof VoiceError) throw new ApiFailure(error.status, error.code, error.message, error.details);
+      throw error;
+    }
+  }));
+  // === end Voice ================================================================
+  // === OpenCode engine (Agent B) ==============================================
+  // The embedded OpenCode host is Stragy's chat backend: one SQLite database
+  // under .data/opencode, one empty workspace, our provider registry as the
+  // model catalog, and only our plugin tools. The origin/auth/rate middleware
+  // above applies to every route here. Long work is 202 + SSE, never a blocking
+  // request. See src/server/ai/engine*.ts.
+  configureEngine({
+    rootDir: process.env.STRAGY_ENGINE_DIR || path.join(process.cwd(), config.NODE_ENV === 'test' ? 'src/test/.tmp/engine-data' : '.data/opencode'),
+    env: process.env,
+    dataMode: config.DATA_MODE,
+    jobs: deps.jobs,
+    prepareBacktest: prepareRun,
+    rememberRun: async result => { await remember(parseBacktestResult(result)); },
+    repository,
+  });
+  // Writes .data/opencode/config/opencode.json at boot, never throws. A missing
+  // provider key is reported by the routes as the typed ENGINE_UNAVAILABLE.
+  await initializeEngine();
+  const engineRoute = (handler: (req: Request, res: Response) => Promise<void> | void) => wrap(async (req, res) => {
+    try { await handler(req, res); }
+    catch (error) {
+      if (error instanceof EngineError) throw new ApiFailure(error.status, error.code, error.message);
+      if (error instanceof ApprovalError) throw new ApiFailure(error.status, error.code, error.message);
+      if (error instanceof ChartImageError) throw new ApiFailure(error.status, error.code, error.message);
+      throw error;
+    }
+  });
+  const EngineSessionCreate = z.object({
+    title: z.string().trim().max(200).optional(),
+    model: z.object({ providerID: z.string().min(1).max(80), model: z.string().min(1).max(160) }).strict().optional(),
+  }).strict();
+  app.post('/api/v2/engine/sessions', express.json({ limit: '64kb' }), engineRoute(async (req, res) => {
+    const body = parse(EngineSessionCreate, req.body ?? {});
+    res.status(201).json(await createEngineSession(body));
+  }));
+  const EngineSessionListQuery = z.object({
+    q: z.string().trim().max(200).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  });
+  app.get('/api/v2/engine/sessions', engineRoute(async (req, res) => {
+    const query = parse(EngineSessionListQuery, req.query ?? {});
+    res.json({ sessions: await listEngineSessions({ search: query.q, limit: query.limit }) });
+  }));
+  app.get('/api/v2/engine/status', (_req, res) => res.json({ ...engineStatus() }));
+  // Session management. Every route uses the same auth/origin/rate middleware
+  // above and the shared {success:false,error} envelope below.
+  const EngineSessionId = z.string().trim().min(1).max(200);
+  const EngineSessionRename = z.object({ title: z.string().trim().min(1).max(200) }).strict();
+  app.patch('/api/v2/engine/sessions/:id', express.json({ limit: '16kb' }), engineRoute(async (req, res) => {
+    const sessionId = parse(EngineSessionId, req.params.id);
+    const body = parse(EngineSessionRename, req.body ?? {});
+    res.json({ session: await renameEngineSession(sessionId, body.title) });
+  }));
+  app.delete('/api/v2/engine/sessions/:id', engineRoute(async (req, res) => {
+    await deleteEngineSession(parse(EngineSessionId, req.params.id));
+    res.json({ deleted: true });
+  }));
+  const EngineSessionModel = z.object({
+    providerID: z.string().trim().min(1).max(80),
+    model: z.string().trim().min(1).max(160),
+  }).strict();
+  app.post('/api/v2/engine/sessions/:id/model', express.json({ limit: '16kb' }), engineRoute(async (req, res) => {
+    const sessionId = parse(EngineSessionId, req.params.id);
+    const body = parse(EngineSessionModel, req.body ?? {});
+    res.json({ session: await switchEngineSessionModel(sessionId, body) });
+  }));
+  const EngineExportQuery = z.object({ format: z.enum(['md', 'json']).default('md') });
+  app.get('/api/v2/engine/sessions/:id/export', engineRoute(async (req, res) => {
+    const sessionId = parse(EngineSessionId, req.params.id);
+    const query = parse(EngineExportQuery, req.query ?? {});
+    res.json(await exportEngineSession(sessionId, query.format));
+  }));
+  app.get('/api/v2/engine/models', engineRoute(async (_req, res) => {
+    res.json(await listEngineModels());
+  }));
+  app.get('/api/v2/engine/usage', engineRoute(async (_req, res) => {
+    res.json(await engineUsageReport());
+  }));
+  const EnginePromptBody = z.object({
+    text: z.string().max(12_000).optional(),
+    // A raw data URL (legacy) or the chat client's { dataUrl, mimeType, name }.
+    image: z.union([
+      z.string().min(1),
+      z.object({ dataUrl: z.string().min(1), mimeType: z.string().max(100).optional(), name: z.string().max(200).optional() }).strict(),
+    ]).optional(),
+    hint: z.string().max(1_000).optional(),
+    currentStrategy: z.unknown().optional(),
+    screenContext: z.unknown().optional(),
+    // The engine session already stores history; the field is accepted so the
+    // existing client can send it, but it is never replayed twice.
+    history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(6_000) })).max(20).optional(),
+  }).strict();
+  app.post('/api/v2/engine/sessions/:id/messages', express.json({ limit: '8mb' }), engineRoute(async (req, res) => {
+    const body = parse(EnginePromptBody, req.body ?? {});
+    const sessionId = String(req.params.id);
+    const text = (body.text ?? '').trim();
+    if (!text && !body.image) throw new ApiFailure(422, 'ENGINE_EMPTY_MESSAGE', 'A message needs text or a chart image.');
+    let currentStrategy;
+    if (body.currentStrategy !== undefined) {
+      const validated = validateStrategy(body.currentStrategy);
+      if (!validated.success || !validated.data) throw new ApiFailure(422, 'INVALID_STRATEGY', 'The current strategy is invalid.', validated.errors);
+      currentStrategy = validated.data;
+    }
+    let image;
+    if (body.image) {
+      const raw = typeof body.image === 'string' ? body.image : body.image.dataUrl;
+      const imageName = typeof body.image === 'string' ? 'chart' : (body.image.name ?? 'chart');
+      try { image = { ...parseChartImageDataUrl(raw), name: imageName, hint: body.hint, currentStrategy }; }
+      catch (error) { if (error instanceof ChartImageError) throw new ApiFailure(error.status, error.code, error.message); throw error; }
+    }
+    await getEngineSession(sessionId);
+    if (currentStrategy !== undefined || body.screenContext !== undefined) {
+      stageContext(sessionId, { currentStrategy, screenContext: body.screenContext });
+    }
+    const receipt = await promptEngineSession(sessionId, { text: text || 'Analyze the attached chart.', ...(image ? { image } : {}) });
+    res.status(202).json({ accepted: true, sessionId, ...(receipt.receiptId ? { receiptId: receipt.receiptId } : {}) });
+  }));
+  app.get('/api/v2/engine/sessions/:id/messages', engineRoute(async (req, res) => {
+    res.json(await engineMessages(String(req.params.id)));
+  }));
+  app.get('/api/v2/engine/sessions/:id/events', engineRoute(async (req, res) => {
+    const after = parse(z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER), req.query.after ?? 0);
+    const sessionId = String(req.params.id);
+    // Validate before writing SSE headers so a missing session is a JSON 404.
+    await getEngineSession(sessionId);
+    res.status(200).set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+    res.write(': connected\n\n');
+    let unsubscribe: () => void = () => undefined;
+    const heartbeat = setInterval(() => { try { res.write(': ping\n\n'); } catch { /* closed */ } }, 15_000);
+    heartbeat.unref?.();
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+    req.on('close', cleanup);
+    req.on('aborted', cleanup);
+    try {
+      unsubscribe = await openSessionStream(sessionId, after, event => {
+        res.write('id: ' + event.seq + '\ndata: ' + JSON.stringify(event) + '\n\n');
+      });
+    } catch (error) {
+      const message = error instanceof EngineError ? error.message : 'The engine event stream could not start.';
+      try { res.write('event: error\ndata: ' + JSON.stringify({ seq: 0, type: 'error', error: message }) + '\n\n'); } catch { /* closed */ }
+      cleanup();
+      res.end();
+    }
+  }));
+  app.post('/api/v2/engine/sessions/:id/interrupt', express.json({ limit: '16kb' }), engineRoute(async (req, res) => {
+    res.json(await interruptEngineSession(String(req.params.id)));
+  }));
+  // Only this operator route mints a one-time approval token. The UI posts
+  // either a gate id it reviewed or the reviewed assumptions themselves.
+  const EngineApprovalBody = z.object({
+    sessionId: z.string().min(1).max(200),
+    approvalId: z.string().min(1).max(120).optional(),
+    decision: z.enum(['approve', 'reject']).optional(),
+    note: z.string().max(1_000).optional(),
+    title: z.string().max(300).optional(),
+    summary: z.array(z.string().max(500)).max(20).optional(),
+    assumptions: z.object({
+      strategy: z.unknown(),
+      asOf: DateSchema,
+      start: DateSchema,
+      end: DateSchema,
+      initialCapital: z.number().finite().min(100).max(1e9).optional(),
+      summary: z.array(z.string().max(500)).max(20).optional(),
+      title: z.string().max(300).optional(),
+    }).passthrough().optional(),
+  }).strict();
+  app.post('/api/v2/engine/approvals', express.json({ limit: '128kb' }), engineRoute(async (req, res) => {
+    const body = parse(EngineApprovalBody, req.body ?? {});
+    await getEngineSession(body.sessionId);
+    if (body.approvalId) {
+      const existing = engineApprovals.get(body.approvalId);
+      if (!existing) throw new ApiFailure(404, 'APPROVAL_NOT_FOUND', 'This approval request no longer exists. Ask the assistant to prepare it again.');
+      if (existing.sessionId !== body.sessionId) throw new ApiFailure(403, 'APPROVAL_SESSION_MISMATCH', 'This approval belongs to a different session.');
+      const decided = engineApprovals.decide(body.approvalId, body.decision ?? 'approve', body.note);
+      res.json({
+        approval: decided.approval,
+        ...(decided.token ? { token: decided.token.token, expiresAt: new Date(decided.token.expiresAt).toISOString(), approvalId: decided.approval.id } : {}),
+      });
+      return;
+    }
+    if (body.assumptions) {
+      if (body.decision === 'reject') throw new ApiFailure(422, 'APPROVAL_INPUT_REQUIRED', 'Rejections need the approval id from the engine gate.');
+      const validated = validateStrategy(body.assumptions.strategy);
+      if (!validated.success || !validated.data) throw new ApiFailure(422, 'INVALID_STRATEGY', 'The reviewed strategy is invalid.', validated.errors);
+      const canonical = validated.canonicalData ? canonicalStrategyJSON(validated.canonicalData) : canonicalStrategyJSON(validated.data);
+      const approved = engineApprovals.approveAssumptions({
+        sessionId: body.sessionId,
+        tool: 'run_backtest',
+        assumptions: {
+          strategy: canonical,
+          ...(body.assumptions.asOf ? { asOf: body.assumptions.asOf } : {}),
+          ...(body.assumptions.start ? { start: body.assumptions.start } : {}),
+          ...(body.assumptions.end ? { end: body.assumptions.end } : {}),
+          ...(body.assumptions.initialCapital !== undefined ? { initialCapital: body.assumptions.initialCapital } : {}),
+        },
+        title: body.assumptions.title ?? body.title,
+        summary: body.assumptions.summary ?? body.summary,
+        note: body.note,
+      });
+      res.json({
+        approval: approved.approval,
+        token: approved.token.token,
+        expiresAt: new Date(approved.token.expiresAt).toISOString(),
+        approvalId: approved.approval.id,
+      });
+      return;
+    }
+    throw new ApiFailure(422, 'APPROVAL_INPUT_REQUIRED', 'Provide an approvalId or the reviewed backtest assumptions.');
+  }));
+  // === end OpenCode engine =====================================================
+
+  // === Provider status (auth required; no login calls, no secrets) ============
+  // The System panel reads this. engine.modelChain is the exact configured
+  // allow-list; market.rate is the process-local Angel pacing/backoff counters.
+  app.get('/api/v2/providers', wrap(async (_req, res) => {
+    const status = engineStatus();
+    const catalog = configuredEngineModels();
+    const engine = {
+      ready: status.ready,
+      hostStarted: status.hostStarted,
+      defaultModel: status.defaultModel,
+      models: catalog.models,
+      modelChain: catalog.models,
+      warnings: status.warnings,
+      ...(status.error ? { error: status.error } : {}),
+    };
+    const credentials = getAngelCredentialStatus();
+    const session = getAngelSessionInfo();
+    res.json({
+      ai: engine,
+      engine,
+      market: {
+        configured: credentials.configured,
+        connected: session.connected,
+        credentials,
+        session: { ...session, ...(session.lastError ? { lastError: redact(session.lastError) } : {}) },
+        rate: getAngelDebugMetrics(),
+      },
+      voice: { configured: isVoiceConfigured(), model: VOICE_MODEL, free: true },
+    });
+  }));
+
+  // === Market candle cache (Agent F data layer; routes wired by E) ============
+  // GET is a pure read: stats come from SQLite, no provider call. The refresh
+  // route queues the cache-first job; the worker calls runMarketCacheRefresh so
+  // the API never blocks on a cold download.
+  app.get('/api/v2/market/cache', wrap(async (_req, res) => {
+    res.json({ stats: getMarketCacheStats() });
+  }));
+  const CacheRefreshBody = z.object({
+    universe: z.string().trim().max(40).optional(),
+    symbolIds: z.array(z.number().int().positive().max(1_000_000_000)).max(500).optional(),
+    maxSymbols: z.number().int().min(1).max(500).optional(),
+  }).strict();
+  app.post('/api/v2/market/cache/refresh', express.json({ limit: '64kb' }), wrap(async (req, res) => {
+    if (!deps.jobs) throw new ApiFailure(503, 'JOB_RUNNER_UNAVAILABLE', 'The bounded job runner is required to refresh market data.');
+    const body = parse(CacheRefreshBody, req.body ?? {});
+    // The manager dedupes an identical active cache job by payload hash, so a
+    // double-click can never start a second cold download.
+    const job = deps.jobs.enqueue({
+      kind: 'cache',
+      ...(body.universe ? { universe: body.universe } : {}),
+      ...(body.symbolIds?.length ? { symbolIds: body.symbolIds } : {}),
+      ...(body.maxSymbols !== undefined ? { maxSymbols: body.maxSymbols } : {}),
+    }, req.get('Idempotency-Key'));
+    res.status(202).json({ jobId: job.id, status: job.status });
+  }));
+  // === end market candle cache ===============================================
+
   app.use(express.json({ limit: config.MAX_BODY_BYTES }));  app.get('/api/v2/capabilities', wrap(async (_req, res) => res.json({ schemaVersion: 2, mode: config.DATA_MODE, demo: config.DATA_MODE === 'demo', engineVersion: 'stragy-next-open-v2', executionPolicy: 'next_open_long_cash_v1', timeframes: ['1D'], directions: ['LONG'], orders: ['MARKET'], liveTrading: false, realDataConfigured: ['yahoo', 'angel'].includes(config.MARKET_PROVIDER), marketProvider: config.MARKET_PROVIDER, quotesProvider: config.QUOTES_PROVIDER, liveQuotes: config.QUOTES_PROVIDER === 'angel', dataDescription: config.DATA_MODE === 'real' ? (config.MARKET_PROVIDER === 'angel' ? 'Angel One SmartAPI broker daily candles and live quotes (read-only), with provenance' : config.QUOTES_PROVIDER === 'angel' ? 'Delayed/end-of-day observed daily bars plus live Angel One quotes, labeled separately' : 'Observed public daily OHLCV, delayed/end-of-day, not exchange tick streaming') : 'Generated demo data', persistence: config.STORAGE_MODE, jobs: !!deps.jobs, ai: getAIStatus(), limitations: ['Real data entitlement, instrument metadata, calendars, and fee schedules require verification.', 'Research only. No broker orders are submitted.', 'Angel One redistribution terms apply to any public display of broker data.'] })));
   app.get('/api/symbols', wrap(async (_req, res) => {
     if (config.DATA_MODE === 'demo') return res.json({ success: true, symbols: ALL_SYMBOLS, mode: 'demo', membershipBasis: 'illustrative' });
@@ -279,8 +585,27 @@ export async function createApp(deps: AppDependencies = {}) {
   }
   app.post('/api/backtests', wrap(async (req, res) => { const result = await runPrepared(await prepareRun(req.body), req.get('Idempotency-Key')); res.json({ success: true, backtestId: result.backtestId, metrics: result.metrics, tradesCount: result.trades.length, result }); }));
   app.post('/api/v2/backtests', wrap(async (req, res) => { if (!deps.jobs) throw new ApiFailure(503, 'JOB_RUNNER_UNAVAILABLE', 'Job runner is unavailable.'); const payload = await prepareRun(req.body); const job = deps.jobs.enqueue(payload, req.get('Idempotency-Key')); res.status(202).json({ schemaVersion: 2, jobId: job.id, status: job.status }); }));
+  const JobListQuery = z.object({
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+    status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted']).optional(),
+  });
+  // History only: summaries never include a result payload. GET /:id below
+  // remains the full (bounded) record for a single job.
+  app.get('/api/v2/jobs', wrap(async (req, res) => {
+    if (!deps.jobs?.listSummaries) throw new ApiFailure(503, 'JOB_RUNNER_UNAVAILABLE', 'Job history is unavailable.');
+    const query = parse(JobListQuery, req.query ?? {});
+    res.json({ jobs: deps.jobs.listSummaries({ limit: query.limit, status: query.status }) });
+  }));
   app.get('/api/v2/jobs/:id', wrap(async (req, res) => { const job = deps.jobs?.get(req.params.id); if (!job) throw new ApiFailure(404, 'JOB_NOT_FOUND', 'Job not found.'); if (job.status === 'succeeded' && !job.result) throw new ApiFailure(500, 'INTERNAL_ERROR', 'The computation worker did not return a result.'); if (job.status === 'succeeded' && job.result && (!job.kind || job.kind === 'backtest')) await remember(parseBacktestResult(job.result)); res.json(job); }));
   app.delete('/api/v2/jobs/:id', wrap(async (req, res) => { if (!deps.jobs?.get(req.params.id)) throw new ApiFailure(404, 'JOB_NOT_FOUND', 'Job not found.'); res.json(deps.jobs.cancel(req.params.id)); }));
+  // --- Durable job resume (Agent A) ----------------------------------------
+  // A job interrupted by a restart keeps its id and stored payload. Resume
+  // re-enqueues it in its own lane; only `interrupted` jobs qualify (409).
+  // The origin/auth/rate middleware above applies to this POST like any other.
+  app.post('/api/v2/jobs/:id/resume', wrap(async (req, res) => {
+    if (!deps.jobs?.resume) throw new ApiFailure(503, 'JOB_RUNNER_UNAVAILABLE', 'Job resume is unavailable.');
+    res.json(deps.jobs.resume(req.params.id));
+  }));
   const getRun = wrap(async (req, res) => { const result = repository.getRun(req.params.id); if (!result) throw new ApiFailure(404, 'BACKTEST_NOT_FOUND', 'Backtest not found or expired.'); res.json({ success: true, result }); }); app.get('/api/backtests/:id', getRun); app.get('/api/v2/backtests/:id', getRun);
   async function scanPayload(body:unknown) { const p=parse(ScanRequest,body);return {kind:'scan' as const,strategy:executable(p.strategy??p.strategyJson??STRATEGY_TEMPLATES[0].strategy),universe:checkedUniverse(p.universe),asOf:p.asOf??p.date,mode:config.DATA_MODE,limit:p.limit}; }
   const scan = wrap(async(req,res)=>{const payload=await scanPayload(req.body);const result=deps.jobs?await waitResult(deps.jobs.enqueue(payload,req.get('Idempotency-Key')).id, SCAN_HARD_CAP_MS + 5_000):config.NODE_ENV==='test'?await scanUniverseAsync(payload.strategy,payload.universe,{asOf:payload.asOf,mode:payload.mode,limit:payload.limit}):undefined;if(!result)throw new ApiFailure(503,'JOB_RUNNER_UNAVAILABLE','Bounded scan worker required.');res.json({success:true,...result as object});});app.post('/api/scan',scan);app.post('/api/market/scan',scan);
@@ -288,12 +613,11 @@ export async function createApp(deps: AppDependencies = {}) {
   app.get('/api/ai/status', (_req, res) => res.json({ success: true, ...getAIStatus() }));
   const promptInput = z.object({ prompt: z.string().min(1).max(4000), symbolId: IdSchema.optional() });
   app.post('/api/ai/parse-strategy', wrap(async (req, res) => { const p = parse(promptInput, req.body); res.json({ success: true, ...await parseStrategyPrompt(p.prompt, p.symbolId ?? 1) }); }));
-  app.post('/api/ai/chat', wrap(async (req, res) => { const p = parse(z.object({ message: z.string().min(1).max(4000), history: z.array(z.unknown()).max(24).default([]), currentStrategy: z.unknown().optional() }), req.body); if (p.currentStrategy) executable(p.currentStrategy); res.json({ success: true, ...await handleAIChat(p as Parameters<typeof handleAIChat>[0]) }); }));
   app.post('/api/ai/apply-edit', wrap(async (req, res) => { const p = parse(z.object({ strategy: z.unknown(), instruction: z.string().min(1).max(4000) }), req.body); res.json({ success: true, ...applyStrategyEdit(executable(p.strategy), p.instruction) }); }));
   app.post('/api/ai/optimize', (_req, _res, next) => next(new ApiFailure(503, 'OPTIMIZER_WORKER_REQUIRED', 'Legacy optimization is disabled. Review a draft proposal and run bounded research explicitly.')));
   app.post('/api/v2/ai/proposals', wrap(async (req, res) => { const p = parse(z.object({ prompt: z.string().min(1).max(4000), currentStrategy: z.unknown().optional(), originatingRevision: z.union([z.number().int().nonnegative(), z.string().max(100)]).optional(), allowLocalFallback: z.boolean().default(false), history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(4000) })).max(20).optional() }), req.body); const input = { ...p, currentStrategy: p.currentStrategy ? executable(p.currentStrategy) : undefined }; const result = await createProposal(input); res.status(result.ok ? 200 : 422).json(result); }));
-  app.post('/api/v2/research-chat', wrap(async (req, res) => res.json(await researchChat(req.body))));
   app.post('/api/v2/feature-setup', wrap(async (req, res) => res.json(resolveFeatureSetup(req.body))));
+
 
   const providerRoute = (handler: (req: Request, res: Response) => Promise<void> | void) => wrap(async (req, res) => {
     try { await handler(req, res); }

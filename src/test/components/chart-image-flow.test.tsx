@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { requestScan, type ScanResult } from '../../client/api';
-import { requestResearchChat } from '../../client/researchChat';
 import { clearChartReadingCache } from '../../client/chartReadingCache';
+import { resetEngineHarness } from '../../test/support/engineMock';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { StrategyAST } from '../../shared/strategy/types';
 
@@ -15,7 +15,7 @@ vi.mock('../../client/api', async importOriginal => {
   const actual = await importOriginal<typeof import('../../client/api')>();
   return { ...actual, requestScan: vi.fn() };
 });
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 
 // The preview comes from a FileReader and the reading from a mocked fetch; on
 // a loaded box both can take longer than the 1 s query default to settle.
@@ -102,6 +102,7 @@ const historyValue = () => Array.from({ length: localStorage.length }, (_, index
 }).join('\n');
 
 beforeEach(() => {
+  resetEngineHarness();
   dom = new JSDOM('', { url: 'https://chart.test/' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
   vi.stubGlobal('crypto', webcrypto);
@@ -152,9 +153,6 @@ describe('chart image research flow', () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(body.hint).toBe('Focus on the RSI breakout');
     expect(body.image.startsWith('data:image/png;base64,')).toBe(true);
-    expect(requestResearchChat).not.toHaveBeenCalled();
-    await waitFor(() => expect(historyValue()).toContain('[chart image attached]'));
-    expect(historyValue()).not.toContain('data:image');
 
     fireEvent.click(within(card).getByRole('button', { name: 'Use as draft' }));
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));

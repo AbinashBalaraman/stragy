@@ -6,6 +6,30 @@ import { parseMarketSnapshotResult, parseScanResult, type MarketSnapshotResult, 
 export type { MarketSnapshotResult, ScanResult } from '../shared/contracts/scanner-results';
 /** Real milestones from the job lifecycle; never a simulated percentage. */
 export type ResearchPhase = 'waiting' | 'preparing' | 'running';
+/**
+ * `interrupted` means the server restarted while the job was unfinished. The
+ * job keeps its id and payload; POST /api/v2/jobs/:id/resume continues it.
+ */
+export type ResearchJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+export interface ResearchJobView {
+  id: string;
+  kind?: 'backtest' | 'scan' | 'market' | 'chart';
+  status: ResearchJobStatus;
+  stage?: string;
+  queuedBehind?: number;
+  createdAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  resumedAt?: string;
+  resumeCount?: number;
+  progress?: { processed: number; total: number };
+  result?: unknown;
+  error?: { code: string; message: string; retryable?: boolean };
+  /** Present only when a durable write failed; the live result is still in memory. */
+  persistence?: { durable: boolean; reason?: string };
+}
+/** A poll that found an interrupted job: the UI can offer Resume for this id. */
+export interface InterruptedJobError extends ApiError { jobId: string; resumable: true }
 export interface ResearchJobProgress { status: 'queued' | 'running'; stage?: string; queuedBehind?: number; progress?: { processed: number; total: number }; }
 /**
  * Execution deadlines start only when the job leaves the queue. The server caps a
@@ -31,6 +55,13 @@ const jobLostMessage = (kind: 'backtest' | 'scan' | 'market') => kind === 'backt
   : kind === 'scan'
     ? 'The server restarted and the scan was lost. Try again.'
     : 'The server restarted and the market load was lost. Try again.';
+/** A restarted server keeps unfinished work as `interrupted`; the id can be resumed. */
+const interruptedError = (jobId: string, error?: { code?: string; message?: string }): InterruptedJobError => {
+  const failure = new ApiError(error?.message ?? 'The server restarted before this job finished. Resume it to continue.', error?.code ?? 'JOB_INTERRUPTED') as InterruptedJobError;
+  failure.jobId = jobId;
+  failure.resumable = true;
+  return failure;
+};
 const POLL_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
 export interface RunRequestOptions { initialCapital?: number; start?: string; end?: string; asOf?: string; seed?: number; robustness?: boolean; }
 export class ApiError extends Error { constructor(message: string, public code = 'API_FAILED', public status = 0) { super(message); } }
@@ -118,8 +149,14 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
   };
   try {
     const accepted = await json(routes[kind], { method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body) });
-    if (accepted.schemaVersion !== 2 || typeof accepted.jobId !== 'string' || !/^[A-Za-z0-9-]{1,100}$/.test(accepted.jobId) || !['queued', 'running', 'succeeded'].includes(String(accepted.status))) throw new ApiError('Invalid job receipt.', 'INVALID_RESPONSE');
+    if (accepted.schemaVersion !== 2 || typeof accepted.jobId !== 'string' || !/^[A-Za-z0-9-]{1,100}$/.test(accepted.jobId) || !['queued', 'running', 'succeeded', 'interrupted'].includes(String(accepted.status))) throw new ApiError('Invalid job receipt.', 'INVALID_RESPONSE');
     jobId = accepted.jobId;
+    // A repeated idempotency key after a restart returns the interrupted job
+    // itself: surface it as resumable instead of polling a job that cannot move.
+    if (accepted.status === 'interrupted') {
+      terminal = true;
+      throw interruptedError(jobId, accepted.error as { code?: string; message?: string } | undefined);
+    }
     if (accepted.status === 'queued' || accepted.status === 'running') onProgress?.({ status: accepted.status });
     if (accepted.status === 'queued') onPhase?.('waiting');
     else {
@@ -133,6 +170,11 @@ async function researchJob<T>(kind: 'backtest' | 'scan' | 'market', body: unknow
         terminal = true;
         try { return parseResult(job.result); }
         catch (error) { if (error instanceof ApiError) throw error; throw new ApiError('The computation worker returned an invalid result. Results are unavailable.', 'INVALID_RESPONSE'); }
+      }
+      if (job.status === 'interrupted') {
+        // The job is durable and keeps its payload: do not DELETE it in finally.
+        terminal = true;
+        throw interruptedError(jobId!, job.error as { code?: string; message?: string } | undefined);
       }
       if (onProgress && (job.status === 'queued' || job.status === 'running')) {
         const counts = job.progress as { processed?: unknown; total?: unknown } | undefined;
@@ -176,7 +218,18 @@ export async function requestBacktest(strategy: StrategyAST, signal?: AbortSigna
   }, signal, onPhase);
 }
 /** What a re-poll of an existing job found. */
-export type ResumedJob<T> = { state: 'running'; stage?: string; queuedBehind?: number } | { state: 'done'; result: T };
+export type ResumedJob<T> = { state: 'running'; stage?: string; queuedBehind?: number; status?: ResearchJobStatus; message?: string } | { state: 'done'; result: T };
+
+/** Interrupted is still non-terminal for existing callers; the typed status says how to continue. */
+function interruptedResume(job: Record<string, unknown>): ResumedJob<never> {
+  const error = job.error as { message?: string } | undefined;
+  return {
+    state: 'running',
+    status: 'interrupted',
+    stage: 'interrupted',
+    ...(typeof error?.message === 'string' ? { message: error.message } : {}),
+  };
+}
 
 async function readJob(jobId: string, kind: 'backtest' | 'scan' | 'market', signal?: AbortSignal): Promise<Record<string, unknown>> {
   const response = await fetch('/api/v2/jobs/' + encodeURIComponent(jobId), { signal });
@@ -189,6 +242,7 @@ async function readJob(jobId: string, kind: 'backtest' | 'scan' | 'market', sign
 export async function checkScanJob(jobId: string, signal?: AbortSignal): Promise<ResumedJob<ScanResult>> {
   const job = await readJob(jobId, 'scan', signal);
   if (job.status === 'succeeded') return { state: 'done', result: parseScanResult(job.result) };
+  if (job.status === 'interrupted') return interruptedResume(job);
   if (job.status === 'failed' || job.status === 'cancelled') {
     const error = job.error as { message?: string; code?: string } | undefined;
     throw new ApiError(error?.message ?? 'Research job did not complete.', error?.code ?? 'JOB_FAILED');
@@ -204,6 +258,7 @@ export async function checkScanJob(jobId: string, signal?: AbortSignal): Promise
 export async function checkBacktestJob(jobId: string, signal?: AbortSignal): Promise<ResumedJob<BacktestResponse>> {
   const job = await readJob(jobId, 'backtest', signal);
   if (job.status === 'succeeded') return { state: 'done', result: parseBacktestResult(job.result) };
+  if (job.status === 'interrupted') return interruptedResume(job);
   if (job.status === 'failed' || job.status === 'cancelled') {
     const error = job.error as { message?: string; code?: string } | undefined;
     throw new ApiError(error?.message ?? 'Research job did not complete.', error?.code ?? 'JOB_FAILED');
@@ -220,10 +275,24 @@ export async function cancelResearchJob(jobId: string): Promise<void> {
   await cancelJob(jobId);
 }
 
+/**
+ * Resume a job the server marked interrupted. The manager re-enqueues the SAME
+ * id with its stored payload, so scans/market loads reuse cached observations
+ * and chart jobs re-run the bounded vision call. A non-interrupted job answers
+ * with a typed 409 (JOB_NOT_RESUMABLE).
+ */
+export async function resumeResearchJob(jobId: string, signal?: AbortSignal): Promise<ResearchJobView> {
+  const response = await fetch('/api/v2/jobs/' + encodeURIComponent(jobId) + '/resume', { method: 'POST', signal });
+  const job = await readJson(response);
+  if (job.id !== jobId) throw new ApiError('The response belongs to a different research job.', 'RESULT_IDENTITY_MISMATCH');
+  return job as unknown as ResearchJobView;
+}
+
 /** Re-poll a market snapshot the client gave up waiting for. */
 export async function checkMarketJob(jobId: string, signal?: AbortSignal): Promise<ResumedJob<MarketSnapshotResult>> {
   const job = await readJob(jobId, 'market', signal);
   if (job.status === 'succeeded') return { state: 'done', result: parseMarketSnapshotResult(job.result) };
+  if (job.status === 'interrupted') return interruptedResume(job);
   if (job.status === 'failed' || job.status === 'cancelled') {
     const error = job.error as { message?: string; code?: string } | undefined;
     throw new ApiError(error?.message ?? 'Research job did not complete.', error?.code ?? 'JOB_FAILED');

@@ -64,7 +64,7 @@ async function setup(overrides: Partial<RuntimeConfig> = {}, injectedJobs?: AppJ
   const repository = await ResearchRepository.open({ maxRuns: 3 });
   repositories.push(repository);
   const executor = vi.fn(async (payload: ResearchPayload) => {
-    if (payload.kind === 'scan' || payload.kind === 'market') throw new Error('Unexpected fixture job kind');
+    if (payload.kind === 'scan' || payload.kind === 'market' || payload.kind === 'cache') throw new Error('Unexpected fixture job kind');
     // No vision provider is configured in this suite, so the real worker path
     // returns its explicit unavailable reading without any external call.
     if (payload.kind === 'chart') return analyzeChart({ image: parseChartImageDataUrl(payload.image), hint: payload.hint, currentStrategy: payload.currentStrategy });

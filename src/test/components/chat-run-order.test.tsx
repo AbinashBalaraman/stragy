@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
-import { requestResearchChat } from '../../client/researchChat';
+import { resetEngineHarness, engineReply } from '../../test/support/engineMock';
 import { requestScan } from '../../client/api';
 import type { BacktestResponse } from '../../shared/strategy/types';
 
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({ requestScan: vi.fn() }));
 vi.mock('../../client/featureSetup', () => ({ requestFeatureSetup: vi.fn() }));
 
@@ -35,6 +35,7 @@ const conversation = (text: string) => ({
 let dom: JSDOM;
 
 beforeEach(() => {
+  resetEngineHarness();
   dom = new JSDOM('', { url: 'https://run-order.test' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
 });
@@ -64,7 +65,7 @@ async function completedRun() {
 
 describe('a run that has already completed', () => {
   it('is not set aside when the next question arrives', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue(conversation('A trailing stop follows the price and closes the position when it falls.'));
+    engineReply(conversation('A trailing stop follows the price and closes the position when it falls.'));
     await completedRun();
 
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'What is a trailing stop? One sentence.' } });
@@ -77,7 +78,7 @@ describe('a run that has already completed', () => {
   });
 
   it('keeps its result card right after the completion line, above later messages', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue(conversation('A trailing stop follows the price and closes the position when it falls.'));
+    engineReply(conversation('A trailing stop follows the price and closes the position when it falls.'));
     await completedRun();
 
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'What is a trailing stop? One sentence.' } });
@@ -94,7 +95,7 @@ describe('a run that has already completed', () => {
   });
 
   it('still sets aside a review that is only waiting for approval', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue(conversation('Sure.'));
+    engineReply(conversation('Sure.'));
     render(<AiCopilotDock strategy={validStrategy()} symbols={[symbol]} onResearchBacktest={async candidate => resultFor(candidate)} />);
     fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'Backtest RELIANCE with my current strategy' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
@@ -107,7 +108,7 @@ describe('a run that has already completed', () => {
   });
 
   it('shows a plain failure line with Retry and never sets a failed run aside', async () => {
-    vi.mocked(requestResearchChat).mockResolvedValue(conversation('A trailing stop follows the price and closes the position when it falls.'));
+    engineReply(conversation('A trailing stop follows the price and closes the position when it falls.'));
     const rateLimit = Object.assign(new Error('Angel One rate limit reached; the request will be retried after a short backoff'), { code: 'RATE_LIMITED', status: 429 });
     const run = vi.fn().mockRejectedValue(rateLimit);
     render(<AiCopilotDock strategy={validStrategy()} symbols={[symbol]} onResearchBacktest={run} />);
@@ -178,10 +179,14 @@ describe('a run that has already completed', () => {
       }],
       nearMatches: [],
     } as never);
-    vi.mocked(requestResearchChat).mockResolvedValue({
+    engineReply({
       schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Screen planned.',
       method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
-      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
+      universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: ['exits'], backtestReady: false,
+      __engineTool: {
+        name: 'scan_market',
+        run: async () => ({ result: await vi.mocked(requestScan)({ universe: 'NIFTY_50', strategy: validStrategy() }) }),
+      },
     } as never);
 
     const withYesterday = (candidate: unknown) => ({

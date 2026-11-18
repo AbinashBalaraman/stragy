@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cancelResearchJob, requestBacktest, requestMarketSnapshot, requestScan, RESEARCH_DEADLINE_MS, RESEARCH_QUEUE_LIMIT_MS } from '../../client/api';
+import { cancelResearchJob, checkScanJob, requestBacktest, requestMarketSnapshot, requestScan, resumeResearchJob, RESEARCH_DEADLINE_MS, RESEARCH_QUEUE_LIMIT_MS } from '../../client/api';
 import { strategy } from '../fixtures/research';
 
 const receipt = { schemaVersion: 2, jobId: 'fixture-job', status: 'queued' };
@@ -257,4 +257,46 @@ describe('bounded asynchronous research job client', () => {
 it('rejects observation dates beyond the requested cutoff even when no stock matches',async()=>{
   fetchMock.mockResolvedValueOnce(response(receipt,202)).mockResolvedValueOnce(response(done('scan',scan({asOf:'2026-09-29',observationDates:{earliest:'2026-09-30',latest:'2026-09-30',staleSymbols:0}}))));
   await expect(requestScan({...input(),asOf:'2026-09-29'})).rejects.toMatchObject({code:'RESULT_IDENTITY_MISMATCH'});
+});
+
+describe('interrupted jobs and resume', () => {
+  it('surfaces an interrupted poll as a typed, resumable error and keeps the job', async () => {
+    fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      if (String(url) === '/api/v2/scans') return response(receipt, 202);
+      if (init.method === 'DELETE') return response({});
+      return response({ id: receipt.jobId, kind: 'scan', status: 'interrupted', stage: 'interrupted', error: { code: 'SERVER_RESTARTED', message: 'The server restarted before this job finished. Resume it to continue.', retryable: true } });
+    });
+    await expect(requestScan(input())).rejects.toMatchObject({
+      code: 'SERVER_RESTARTED',
+      jobId: receipt.jobId,
+      resumable: true,
+      message: 'The server restarted before this job finished. Resume it to continue.',
+    });
+    // An interrupted job is durable by definition; never DELETE it.
+    expect(fetchMock.mock.calls.some(call => call[1]?.method === 'DELETE')).toBe(false);
+  });
+
+  it('reports an interrupted idempotent receipt without polling or deleting', async () => {
+    fetchMock.mockResolvedValueOnce(response({ ...receipt, status: 'interrupted', error: { code: 'SERVER_RESTARTED', message: 'The server restarted before this job finished. Resume it to continue.' } }, 202));
+    await expect(requestScan(input())).rejects.toMatchObject({ code: 'SERVER_RESTARTED', jobId: receipt.jobId, resumable: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes interrupted on a re-poll and resumes the same id', async () => {
+    fetchMock.mockResolvedValueOnce(response({ id: 'stalled-scan', kind: 'scan', status: 'interrupted', error: { code: 'SERVER_RESTARTED', message: 'The server restarted before this job finished. Resume it to continue.' } }));
+    const check = await checkScanJob('stalled-scan');
+    expect(check).toMatchObject({ state: 'running', status: 'interrupted', stage: 'interrupted' });
+    expect(check.state === 'running' ? check.message : undefined).toMatch(/Resume it/);
+
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(response({ id: 'stalled-scan', kind: 'scan', status: 'running', stage: 'queued', resumeCount: 1 }));
+    const resumed = await resumeResearchJob('stalled-scan');
+    expect(resumed).toMatchObject({ id: 'stalled-scan', status: 'running', resumeCount: 1 });
+    expect(fetchMock).toHaveBeenCalledWith('/api/v2/jobs/stalled-scan/resume', { method: 'POST', signal: undefined });
+  });
+
+  it('preserves the typed 409 when a job is not resumable', async () => {
+    fetchMock.mockResolvedValueOnce(response({ success: false, error: { code: 'JOB_NOT_RESUMABLE', message: 'Only interrupted jobs can be resumed.' } }, 409));
+    await expect(resumeResearchJob('finished-job')).rejects.toMatchObject({ code: 'JOB_NOT_RESUMABLE', message: 'Only interrupted jobs can be resumed.', status: 409 });
+  });
 });

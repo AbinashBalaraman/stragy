@@ -5,12 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { requestScan, type ScanResult } from '../../client/api';
-import { requestResearchChat } from '../../client/researchChat';
-import { researchChat } from '../../server/ai/researchChat';
+import { resetEngineHarness, engineReplyDefault } from '../../test/support/engineMock';
 import { validStrategy } from '../../server/ai/testFixtures';
 import type { StrategyAST } from '../../shared/strategy/types';
 
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({ requestScan: vi.fn() }));
 vi.mock('../../client/featureSetup', () => ({ requestFeatureSetup: vi.fn() }));
 
@@ -39,10 +38,39 @@ const send = (text: string) => {
   fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
 };
 
+const screenPlan = () => ({
+  schemaVersion: 1,
+  kind: 'screen',
+  originatingRevision: 1,
+  message: 'Scanning Nifty 50 for RSI above 60. Nothing is changed or run.',
+  method: 'rule_parser',
+  provider: { name: 'none', model: null, aiGenerated: false },
+  warnings: [],
+  universe: 'NIFTY_50',
+  strategy: validStrategy(),
+  assumptions: [],
+  missingBacktestRules: ['exits'],
+  backtestReady: false,
+});
+
 beforeEach(() => {
+  resetEngineHarness();
   dom = new JSDOM('', { url: 'https://top-match.test' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
-  vi.mocked(requestResearchChat).mockImplementation(input => researchChat(input, { env: { AI_PROVIDER: 'none' } }));
+  window.history.replaceState({}, '', '/');
+  engineReplyDefault(() => {
+    const plan = screenPlan();
+    return {
+      ...plan,
+      __engineTool: {
+        name: 'scan_market',
+        run: async () => {
+          try { return { result: await vi.mocked(requestScan)({ universe: 'NIFTY_50', strategy: plan.strategy }) }; }
+          catch (error) { return { error: { message: (error as Error).message } }; }
+        },
+      },
+    };
+  });
 });
 
 afterEach(() => {

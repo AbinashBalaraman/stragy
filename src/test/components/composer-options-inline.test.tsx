@@ -6,7 +6,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
 
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({ requestScan: vi.fn() }));
 vi.mock('../../client/featureSetup', () => ({ requestFeatureSetup: vi.fn() }));
 

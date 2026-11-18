@@ -19,7 +19,7 @@ vi.mock('../../components/strategy/StrategyBuilder', () => ({
 vi.mock('../../components/results/ResultsDashboard', () => ({ ResultsDashboard: () => <div>Results view</div> }));
 vi.mock('../../components/scanner/MarketScannerView', () => ({ MarketScannerView: () => <div>Scanner view</div> }));
 vi.mock('../../components/library/StrategyLibraryView', () => ({ StrategyLibraryView: () => <div>Library view</div> }));
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({ requestScan: vi.fn(), requestBacktest: vi.fn() }));
 
 let storageDom: JSDOM | undefined;

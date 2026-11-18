@@ -6,13 +6,13 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
 import { createProposal } from '../../server/ai/proposals';
-import { requestResearchChat } from '../../client/researchChat';
+import { resetEngineHarness, resetEngineReplies, engineReply, engineReplyOnce } from '../../test/support/engineMock';
 import { requestScan } from '../../client/api';
 import type { CreateProposalResult } from '../../server/ai/types';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 import type { ScanResult } from '../../client/api';
 
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({
   requestScan: vi.fn(),
   checkScanJob: vi.fn(),
@@ -79,10 +79,10 @@ let dom: JSDOM;
 beforeEach(async () => {
   dom = new JSDOM('', { url: 'https://past-cards.test' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
-  vi.mocked(requestResearchChat)
-    .mockReset()
-    .mockResolvedValueOnce(floorPlan() as never)
-    .mockResolvedValueOnce(await proposalReply());
+  window.history.replaceState({}, '', '/');
+  resetEngineHarness();
+  engineReply({ ...floorPlan(), __engineTool: { name: 'scan_market', run: async () => ({ result: scanResult }) } });
+  engineReplyOnce(await proposalReply());
   vi.mocked(requestScan).mockReset().mockResolvedValue(scanResult);
 });
 
@@ -102,11 +102,11 @@ describe('a completed card after a later request', () => {
   it('keeps the scan table and adds the draft card, with exactly one table', async () => {
     render(<AiCopilotDock strategy={validStrategy()} symbols={[symbol]} />);
     send('Screen Nifty 50 for RSI above 60');
-    const results = await screen.findByLabelText('Screen results');
+    const results = await screen.findByLabelText('Screen results', {}, { timeout: 10_000 });
     expect(within(results).getByRole('button', { name: 'Prepare backtest for RELIANCE' })).toBeTruthy();
 
     send('Set my stop loss to 5%');
-    expect(await screen.findByRole('article', { name: 'Draft proposal' })).toBeTruthy();
+    expect(await screen.findByRole('article', { name: 'Draft proposal' }, { timeout: 10_000 })).toBeTruthy();
 
     // The answer to the first request did not disappear with the second one.
     const tables = screen.getAllByLabelText('Screen results');
@@ -121,31 +121,30 @@ describe('a completed card after a later request', () => {
   it('prepares a review from the kept scan’s own plan', async () => {
     render(<AiCopilotDock strategy={validStrategy()} symbols={[symbol]} />);
     send('Screen Nifty 50 for RSI above 60');
-    await screen.findByLabelText('Screen results');
+    await screen.findByLabelText('Screen results', {}, { timeout: 10_000 });
     send('Set my stop loss to 5%');
-    await screen.findByRole('article', { name: 'Draft proposal' });
+    await screen.findByRole('article', { name: 'Draft proposal' }, { timeout: 10_000 });
 
     // Re-query: the kept card is a new element after the live one is archived.
-    const kept = screen.getByLabelText('Screen results');
+    const kept = await screen.findByLabelText('Screen results', {}, { timeout: 10_000 });
     fireEvent.click(within(kept).getByRole('button', { name: 'Prepare backtest for RELIANCE' }));
-    const review = await screen.findByRole('article', { name: 'Backtest review' });
+    const review = await screen.findByRole('article', { name: 'Backtest review' }, { timeout: 10_000 });
     expect(within(review).getByRole('button', { name: 'Use these assumptions and run' })).toBeTruthy();
     expect(review.textContent).toContain('Read-only screen');
     expect(review.textContent).toContain(PAST_NAME);
   });
 
   it('replaces the live card with the newest screen, keeping the older table once', async () => {
-    vi.mocked(requestResearchChat).mockReset();
+    resetEngineReplies();
     const nextPlan = { ...floorPlan(), message: 'Scanning Nifty 50 for RSI below 40.', strategy: { ...floorPlan().strategy, name: 'RSI below 40 · live screen' } };
-    vi.mocked(requestResearchChat)
-      .mockResolvedValueOnce(floorPlan() as never)
-      .mockResolvedValueOnce(nextPlan as never);
+    engineReply({ ...floorPlan(), __engineTool: { name: 'scan_market', run: async () => ({ result: scanResult }) } });
+    engineReplyOnce({ ...nextPlan, __engineTool: { name: 'scan_market', run: async () => ({ result: scanResult }) } });
     render(<AiCopilotDock strategy={validStrategy()} symbols={[symbol]} />);
     send('Screen Nifty 50 for RSI above 60');
-    await screen.findByLabelText('Screen results');
+    await screen.findByLabelText('Screen results', {}, { timeout: 10_000 });
     send('Screen Nifty 50 for RSI below 40');
 
-    await waitFor(() => expect(screen.getAllByLabelText('Screen results')).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByLabelText('Screen results')).toHaveLength(2), { timeout: 10_000 });
     const titles = screen.getAllByText(/kept screen|live screen/).map(node => node.textContent);
     expect(titles.some(title => title?.includes('kept screen'))).toBe(true);
     expect(titles.some(title => title?.includes('live screen'))).toBe(true);

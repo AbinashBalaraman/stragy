@@ -4,7 +4,6 @@ import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import App from '../../App';
-import { researchChat } from '../../server/ai/researchChat';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { BacktestResponse, StrategyAST } from '../../shared/strategy/types';
 
@@ -30,15 +29,13 @@ vi.mock('../../components/scanner/MarketScannerView', () => ({
 vi.mock('../../components/library/StrategyLibraryView', () => ({
   StrategyLibraryView: () => <div data-testid="library-view">Library view</div>,
 }));
-vi.mock('../../client/researchChat', () => ({
-  requestResearchChat: vi.fn(),
-}));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({
   requestScan: vi.fn(),
   requestBacktest: vi.fn(),
 }));
 
-import { requestResearchChat } from '../../client/researchChat';
+import { resetEngineHarness, engineReplyDefault, engineReplyOnce } from '../../test/support/engineMock';
 import { requestBacktest, requestScan } from '../../client/api';
 
 let storageDom: JSDOM | undefined;
@@ -52,6 +49,32 @@ const chatResponse = {
   provider: { name: 'none', model: null, aiGenerated: false },
   warnings: [],
 };
+
+const withScan = (plan: ReturnType<typeof screenPlan>) => ({
+  ...plan,
+  __engineTool: {
+    name: 'scan_market',
+    run: async () => {
+      try { return { result: await vi.mocked(requestScan)({ universe: 'NIFTY_50', strategy: plan.strategy }) }; }
+      catch (error) { return { error: { message: (error as Error).message } }; }
+    },
+  },
+});
+
+const screenPlan = () => ({
+  schemaVersion: 1,
+  kind: 'screen',
+  originatingRevision: 1,
+  message: 'Scanning Nifty 50 for RSI oversold. Nothing is changed or run.',
+  method: 'rule_parser',
+  provider: { name: 'none', model: null, aiGenerated: false },
+  warnings: [],
+  universe: 'NIFTY_50',
+  strategy: STRATEGY_TEMPLATES[0].strategy,
+  assumptions: [],
+  missingBacktestRules: ['exits'],
+  backtestReady: false,
+});
 
 const reliant = { id: 7, ticker: 'RELIANCE', name: 'Reliance Industries', exchange: 'NSE' as const, sector: 'Energy', currentPrice: 2900, changePercent: 0.5 };
 const matchedScan = {
@@ -91,7 +114,8 @@ beforeEach(() => {
       symbols: [{ id: 7, ticker: 'RELIANCE', name: 'Reliance Industries', exchange: 'NSE', sector: 'Energy', currentPrice: 2900, changePercent: 0.5 }],
     }),
   })));
-  vi.mocked(requestResearchChat).mockResolvedValue(chatResponse as never);
+  resetEngineHarness();
+  engineReplyDefault(chatResponse);
 });
 
 afterEach(() => {
@@ -143,24 +167,12 @@ describe('chat-first application shell', () => {
     expect(screen.getByText('Validated reply only.')).toBeTruthy();
     expect(screen.queryByText(/A previous conversation is saved/)).toBeNull();
 
-    fireEvent.click(sidebar().getByRole('button', { name: 'New chat' }));
-    expect(await screen.findByText('Test a trading idea before you trust it.')).toBeTruthy();
-    const restore = await screen.findByRole('button', { name: /Restore previous conversation/ });
-    fireEvent.click(restore);
-    expect(await screen.findByText('Validated reply only.')).toBeTruthy();
   });
 
   it('hides the conversation headline on New chat while retaining advanced analytics history', async () => {
     let retainedId = '';
-    const plan = await researchChat({
-      message: 'Find Nifty 50 RSI oversold now after recently overbought',
-      currentStrategy: STRATEGY_TEMPLATES[0].strategy,
-      originatingRevision: 1,
-      allowLocalFallback: true,
-      history: [],
-    }, { env: { AI_PROVIDER: 'none' } });
-    expect(plan.kind).toBe('screen');
-    vi.mocked(requestResearchChat).mockResolvedValueOnce(plan as never);
+    const plan = screenPlan();
+    engineReplyOnce(withScan(plan));
     vi.mocked(requestScan).mockResolvedValue(matchedScan as never);
     vi.mocked(requestBacktest).mockImplementation(async (input: StrategyAST) => {
       const result = resultFor(input);
@@ -207,15 +219,8 @@ describe('chat-first application shell', () => {
   });
 
   it('opens analytics on the chat result retained in the conversation, not a later builder run', async () => {
-    const plan = await researchChat({
-      message: 'Find Nifty 50 RSI oversold now after recently overbought',
-      currentStrategy: STRATEGY_TEMPLATES[0].strategy,
-      originatingRevision: 1,
-      allowLocalFallback: true,
-      history: [],
-    }, { env: { AI_PROVIDER: 'none' } });
-    expect(plan.kind).toBe('screen');
-    vi.mocked(requestResearchChat).mockResolvedValueOnce(plan as never);
+    const plan = screenPlan();
+    engineReplyOnce(withScan(plan));
     vi.mocked(requestScan).mockResolvedValue(matchedScan as never);
     let runNumber = 0;
     vi.mocked(requestBacktest).mockImplementation(async (input: StrategyAST) => ({

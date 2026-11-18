@@ -23,18 +23,24 @@ const ENDPOINTS = {
 const ALLOWED_HOSTS = new Set(['apiconnect.angelbroking.com']);
 const ALLOWED_ENDPOINTS = new Set<string>(Object.values(ENDPOINTS));
 
-// Documented limits (docs/RateLimit, observed 2026-11-16):
-//   loginByPassword        1/s
-//   market/v1/quote       10/s, 500/min, 5000/hour
-//   historical/getCandleData 2/s, 80/min, 5000/hour
-// Stay just under each documented ceiling.
+// Documented limits (docs/RateLimit, retrieved 2026-11-18 from the live docs app):
+//   loginByPassword            1/s
+//   market/v1/quote           10/s, 500/min, 5000/hour (50 tokens per request)
+//   historical/getCandleData   2/s, 40/min, 2000/hour (ONE_DAY: max 2000 days/request)
+// The docs also state the limit is calculated per client code, so the server,
+// every worker and any second process share one budget. The previous 76/min
+// candle pacing was nearly double the documented 40/min; a live 200-symbol scan
+// on 2026-11-18 collected 23 HTTP 403 "exceeding access rate" responses. Pace
+// candles at 30/min (~0.5/s) with an hourly ceiling, and cool down after a 403.
 const LIMITS = {
   login: [{ limit: 1, windowMs: 1_000, minIntervalMs: 1_000 }],
-  quote: [{ limit: 9, windowMs: 1_000, minIntervalMs: 120 }, { limit: 480, windowMs: 60_000 }],
-  candles: [{ limit: 2, windowMs: 1_000, minIntervalMs: 500 }, { limit: 76, windowMs: 60_000 }]
+  quote: [{ limit: 9, windowMs: 1_000, minIntervalMs: 120 }, { limit: 480, windowMs: 60_000 }, { limit: 4500, windowMs: 3_600_000 }],
+  candles: [{ limit: 1, windowMs: 1_000, minIntervalMs: 2_000 }, { limit: 30, windowMs: 60_000 }, { limit: 1800, windowMs: 3_600_000 }]
 } as const satisfies Record<string, readonly { limit: number; windowMs: number; minIntervalMs?: number }[]>;
-// Angel also answers bursts with HTTP 403 "Access denied because of exceeding access rate",
-// so requests are smoothly spaced (500 ms for candles) rather than fired two-at-once.;
+// Angel answers bursts with HTTP 403 "Access denied because of exceeding access rate".
+// Candles are smoothly spaced 2 s apart rather than fired at the 2/s ceiling.
+// One 403 starts a shared cooldown for candle requests; without it every retry
+// (and every other lane) hammers the same window and turns one throttle into a cascade.
 
 // Angel One kills the previous JWT when the same client logs in again, so the whole
 // process (HTTP server thread plus every scan/backtest worker thread) must share exactly
@@ -100,9 +106,13 @@ let loginFailureBackoffMs = LOGIN_FAILURE_BACKOFF_MS;
 let reloginCooldownMs = RELOGIN_COOLDOWN_MS;
 let rateLimitBaseMs = 1_000;
 let rateLimitBudgetMs = 30_000;
-const debugMetrics = { requests: 0, candleRequests: 0, quoteRequests: 0, loginRequests: 0, throttles: 0, retrySleepMs: 0, relogins: 0 };
+const THROTTLE_COOLDOWN_MS = 20_000;
+const MAX_THROTTLE_COOLDOWN_MS = 60_000;
+let throttleCooldownMs = THROTTLE_COOLDOWN_MS;
+const cooldowns = new Map<'quote' | 'candles', { until: number; strikes: number }>();
+const debugMetrics = { requests: 0, candleRequests: 0, quoteRequests: 0, loginRequests: 0, throttles: 0, retrySleepMs: 0, cooldownSleepMs: 0, relogins: 0 };
 export function getAngelDebugMetrics(): typeof debugMetrics { return { ...debugMetrics }; }
-export function resetAngelDebugMetrics(): void { Object.assign(debugMetrics, { requests: 0, candleRequests: 0, quoteRequests: 0, loginRequests: 0, throttles: 0, retrySleepMs: 0, relogins: 0 }); }
+export function resetAngelDebugMetrics(): void { Object.assign(debugMetrics, { requests: 0, candleRequests: 0, quoteRequests: 0, loginRequests: 0, throttles: 0, retrySleepMs: 0, cooldownSleepMs: 0, relogins: 0 }); }
 const brokerEnabled = process.env.NODE_ENV !== 'test';
 const sessionAuthority = isMainThread || !brokerEnabled;
 let brokerChannel: BroadcastChannel | null = null;
@@ -120,6 +130,8 @@ export function configureAngelTransport(options: {
   /** Test seam: shorten the bounded rate-limit wait. */
   rateLimitBaseMs?: number;
   rateLimitBudgetMs?: number;
+  /** Test seam: shared candle cooldown after a 403. Pacing-off tests get 0 unless set. */
+  throttleCooldownMs?: number;
 }): void {
   if (options.fetch) fetchImpl = options.fetch;
   if (options.now) nowImpl = options.now;
@@ -128,6 +140,8 @@ export function configureAngelTransport(options: {
   if (options.reloginCooldownMs !== undefined) reloginCooldownMs = options.reloginCooldownMs;
   if (options.rateLimitBaseMs !== undefined) rateLimitBaseMs = options.rateLimitBaseMs;
   if (options.rateLimitBudgetMs !== undefined) rateLimitBudgetMs = options.rateLimitBudgetMs;
+  if (options.throttleCooldownMs !== undefined) throttleCooldownMs = options.throttleCooldownMs;
+  else if (options.pacing === false) throttleCooldownMs = 0;
   if (options.resetSession) {
     cachedSession = null;
     loginPromise = null;
@@ -151,6 +165,8 @@ export function resetAngelTransportForTests(): void {
   reloginCooldownMs = RELOGIN_COOLDOWN_MS;
   rateLimitBaseMs = 1_000;
   rateLimitBudgetMs = 30_000;
+  throttleCooldownMs = THROTTLE_COOLDOWN_MS;
+  cooldowns.clear();
   resetAngelDebugMetrics();
   buckets.clear();
   lastSlotAt.clear();
@@ -424,7 +440,38 @@ let rateGate: Promise<unknown> = Promise.resolve();
 const buckets = new Map<string, number[]>();
 const lastSlotAt = new Map<string, number>();
 
+function candleCooldownUntil(): number {
+  return cooldowns.get('candles')?.until ?? 0;
+}
+
+/**
+ * A 403 is a shared signal, not a per-call one: pause every candle request for a
+ * cooldown instead of letting four lanes retry the same window independently.
+ * Repeated throttles back off exponentially, capped at one minute.
+ */
+function noteThrottle(kind: 'quote' | 'candles', retryAfterMs?: number): number {
+  if (kind !== 'candles' || !pacingEnabled || throttleCooldownMs <= 0) return 0;
+  const previous = cooldowns.get('candles') ?? { until: 0, strikes: 0 };
+  const wait = Math.min(MAX_THROTTLE_COOLDOWN_MS, Math.max(throttleCooldownMs * 2 ** Math.min(previous.strikes, 2), retryAfterMs ?? 0));
+  const until = Math.max(previous.until, Date.now() + wait);
+  cooldowns.set('candles', { until, strikes: Math.min(previous.strikes + 1, 3) });
+  return until;
+}
+
+function noteCandleSuccess(): void {
+  const current = cooldowns.get('candles');
+  if (current && Date.now() >= current.until) cooldowns.delete('candles');
+}
+
+async function waitForCandleCooldown(signal?: AbortSignal): Promise<void> {
+  const wait = candleCooldownUntil() - Date.now();
+  if (wait <= 0) return;
+  debugMetrics.cooldownSleepMs += wait;
+  await sleep(wait + 2, signal);
+}
+
 async function reserveSlot(kind: keyof typeof LIMITS, signal?: AbortSignal): Promise<void> {
+  if (kind === 'candles') await waitForCandleCooldown(signal);
   const spacing = Math.max(...LIMITS[kind].map(rule => rule.minIntervalMs ?? 0));
   if (spacing > 0) {
     const last = lastSlotAt.get(kind) ?? 0;
@@ -575,6 +622,7 @@ async function angelPost<T>(kind: keyof typeof LIMITS, url: string, body: unknow
       throw new AngelRequestError(response.status, errorCode || 'HTTP_' + response.status, `Angel One market-data request failed (${errorCode || 'HTTP ' + response.status})`, false, false, 'PROVIDER_UNAVAILABLE');
     }
     if (payload.data === undefined) throw new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel One returned an empty payload');
+    if (kind === 'candles') noteCandleSuccess();
     return payload.data;
   });
 }
@@ -773,7 +821,7 @@ export async function getAngelQuotes(requests: AngelQuoteRequest[], options: { s
       const batch = tokens.slice(i, i + 50);
       const data = await withAuthRetry(session => angelPost<{ fetched?: Record<string, unknown>[] }>(
         'quote', ENDPOINTS.quote, { mode: 'FULL', exchangeTokens: { [exchange]: batch } }, session.jwt, options.signal, options.fetch
-      ), options.signal, options.fetch);
+      ), options.signal, options.fetch, {}, 'quote');
       for (const row of data.fetched ?? []) {
         const ltp = Number(row.ltp);
         const close = Number(row.close);
@@ -810,6 +858,7 @@ async function withAuthRetry<T>(
   signal?: AbortSignal,
   fetcher?: typeof fetch,
   budget: RateLimitBudget = {},
+  kind: 'quote' | 'candles' = 'candles',
 ): Promise<T> {
   const session = await getSession(signal, fetcher);
   try {
@@ -822,11 +871,14 @@ async function withAuthRetry<T>(
       const maxRetries = budget.maxRetries ?? 2;
       const baseMs = Math.max(1, budget.baseMs ?? rateLimitBaseMs);
       const deadlineAt = budget.deadlineAt ?? Date.now() + rateLimitBudgetMs;
+      const cooldownUntil = noteThrottle(kind, error.retryAfterMs);
       let current = error;
+      let cooldown = cooldownUntil;
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         const remaining = deadlineAt - Date.now();
         if (remaining <= 0) throw current;
-        const wait = current.retryAfterMs ?? Math.min(rateLimitBudgetMs, baseMs * 2 ** attempt + Math.floor(Math.random() * baseMs * 0.2));
+        const backoff = current.retryAfterMs ?? Math.min(rateLimitBudgetMs, baseMs * 2 ** attempt + Math.floor(Math.random() * baseMs * 0.2));
+        const wait = Math.max(backoff, cooldown - Date.now());
         if (wait > remaining) throw current;
         debugMetrics.retrySleepMs += wait;
         await sleep(wait, signal);
@@ -834,6 +886,7 @@ async function withAuthRetry<T>(
         catch (retryError) {
           if (!(retryError instanceof AngelRequestError && retryError.rateLimited)) throw retryError;
           current = retryError;
+          cooldown = noteThrottle(kind, retryError.retryAfterMs);
         }
       }
       throw current;
@@ -855,7 +908,7 @@ export async function getAngelCandles(request: AngelCandleRequest, options: { si
   };
   const rows = await withAuthRetry(session => angelPost<unknown[][]>(
     'candles', ENDPOINTS.candles, body, session.jwt, options.signal, options.fetch
-  ), options.signal, options.fetch, { deadlineAt: options.retryDeadlineAt, maxRetries: 6 });
+  ), options.signal, options.fetch, { deadlineAt: options.retryDeadlineAt, maxRetries: 6 }, 'candles');
   if (!Array.isArray(rows)) throw new MarketDataError('PROVIDER_UNAVAILABLE', 'Angel One returned no candle series');
   const candles: AngelCandle[] = [];
   for (const row of rows) {

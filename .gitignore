@@ -19,3 +19,6 @@ src/test/.tmp/
 data/ai-providers.json
 data/.provider-secrets-key
 .neon
+
+# Durable job records and engine state (SQLite, local only)
+.data/

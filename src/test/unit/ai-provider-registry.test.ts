@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { handleAIChat } from '../../server/ai/copilot';
-import { createProposal } from '../../server/ai/proposals';
+import { createProposal, describeConfigState } from '../../server/ai/proposals';
 import { createRequestBudget, OPENCODE_GO_USER_AGENT } from '../../server/ai/provider';
 import { decryptSecret, encryptSecret, resetSecretsCache } from '../../server/ai/providerSecrets';
 import {
@@ -104,11 +103,10 @@ describe('provider registry', () => {
     expect(cfg.state).toBe('disabled');
     expect(cfg.providerLabel).toBe('OpenCode Go');
     expect(cfg.keyPresent).toBe(true);
-    const out = await handleAIChat({ message: 'Hello there' }, { env: env(), fetch: vi.fn(), budget: createRequestBudget() });
-    expect(out.aiConnected).toBe(false);
-    expect(out.reply).toContain('OpenCode Go is turned off in Settings → AI providers.');
-    expect(out.reply).toContain('No answer was invented.');
-    expect(out.reply).not.toContain('no API key');
+    const message = describeConfigState(cfg);
+    expect(message).toContain('OpenCode Go is turned off in Settings → AI providers.');
+    expect(message).toContain('No answer was invented.');
+    expect(message).not.toContain('no API key');
   });
 
   it('still says a genuinely keyless provider has no API key', async () => {
@@ -118,8 +116,7 @@ describe('provider registry', () => {
     expect(cfg.state).toBe('missing_key');
     expect(cfg.providerLabel).toBe('OpenRouter');
     expect(cfg.keyPresent).toBe(false);
-    const out = await handleAIChat({ message: 'Hello there' }, { env: keyless, fetch: vi.fn(), budget: createRequestBudget() });
-    expect(out.reply).toContain('no API key set for provider "OpenRouter"');
+    expect(describeConfigState(cfg)).toContain('no API key set for provider "OpenRouter"');
   });
 
   it('skips a disabled fallback with a warning instead of crashing', async () => {
@@ -164,19 +161,14 @@ describe('provider registry', () => {
     expect(body!.max_tokens).toBe(64);
   });
 
-  it('applies a saved chain without a restart and labels the OpenRouter routed model', async () => {
+  it('applies a saved chain without a restart', async () => {
     await setChain({ entries: [
       { providerId: 'opencode-go', model: 'beam-free', vision: false, paidApproved: false },
       { providerId: 'openrouter', model: 'openrouter/free', vision: true, paidApproved: false },
     ] }, env());
-    const fetchMock = recordingFetch((url: string) => {
-      if (url.includes('/models')) return fakeResponse({ body: { data: [{ id: 'openrouter/free', pricing: { prompt: '0', completion: '0' } }] } });
-      if (url.includes('opencode.ai')) return { ok: false, status: 403, headers: { get: () => null }, text: async () => '{}' };
-      return fakeResponse({ body: { model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', choices: [{ message: { content: 'Routed answer' }, finish_reason: 'stop' }] } });
-    });
-    const out = await handleAIChat({ message: 'Hello, what can you help me with?' }, { env: env(), fetch: fetchMock, budget: createRequestBudget() });
-    expect(out.reply).toBe('Routed answer');
-    expect(out.providerUsed).toBe('openrouter:nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free');
+    const cfg = resolveActiveConfig(env());
+    expect(cfg).toMatchObject({ provider: 'opencode-go', model: 'beam-free', ready: true });
+    expect(cfg.fallbackTargets?.[0]).toMatchObject({ provider: 'openrouter', model: 'openrouter/free' });
   });
 });
 

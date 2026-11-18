@@ -6,11 +6,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
 import { createProposal } from '../../server/ai/proposals';
-import { requestResearchChat } from '../../client/researchChat';
+import { resetEngineHarness, engineReplyDefault } from '../../test/support/engineMock';
 import type { CreateProposalResult } from '../../server/ai/types';
 import type { StrategyAST } from '../../shared/strategy/types';
 
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({
   requestScan: vi.fn(),
   checkScanJob: vi.fn(),
@@ -26,11 +26,12 @@ const symbol = { id: universeId, ticker: 'RELIANCE', name: 'Reliance Industries'
 let dom: JSDOM;
 
 beforeEach(async () => {
+  resetEngineHarness();
   dom = new JSDOM('', { url: 'https://apply-backtest.test' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
-  vi.mocked(requestResearchChat).mockReset().mockImplementation(async (input: { message: string; currentStrategy: StrategyAST; originatingRevision: number }) => {
+  engineReplyDefault(async (input: { text?: string }) => {
     const draft = await createProposal(
-      { prompt: input.message, currentStrategy: input.currentStrategy, originatingRevision: input.originatingRevision },
+      { prompt: input.text ?? '', currentStrategy: validStrategy(), originatingRevision: 1 },
       { env: { AI_PROVIDER: 'none' }, idFactory: () => 'apply-backtest-fixture', now: () => new Date('2026-01-01T00:00:00Z') },
     ) as CreateProposalResult;
     if (!draft.ok) throw new Error('Fixture proposal failed');

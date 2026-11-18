@@ -1,12 +1,25 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, X, Plus, ImagePlus, MoreHorizontal, Copy, Check, RefreshCw } from 'lucide-react';
+import { Send, X, ImagePlus, MoreHorizontal, Copy, Check, RefreshCw, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { z } from 'zod';
 import type { BacktestResponse, StrategyAST, SymbolMeta } from '../../shared/strategy/types';
 import { snapshotStrategy } from '../../client/workspace';
 import { canonicalStrategySignature, exitRuleCompatibility } from '../../shared/strategy/backtestReview';
 import { assertProposalCurrent, parseStrategyProposal, type StrategyProposal } from '../../shared/contracts/ai-proposal';
 import { cancelResearchJob, checkBacktestJob, checkScanJob, requestScan, type ResearchPhase, type RunRequestOptions, type ScanResult } from '../../client/api';
-import { requestResearchChat } from '../../client/researchChat';
+import {
+  createEngineSession, deleteEngineSession, exportEngineSession, getEngineMessages, getEngineUsage, getJobStatus,
+  interruptEngineSession, isEngineUnavailable, listEngineModels, listEngineSessions, postEngineApproval, postEngineMessage,
+  readStoredEngineSession, rememberEngineCursor, renameEngineSession, resumeInterruptedJob, subscribeEngineEvents,
+  switchEngineModel, writeStoredEngineSession, clearStoredEngineSession,
+  normalizeEngineTodos, normalizeToolActivities,
+  type EngineEvent, type EngineMessage, type EngineModel, type EngineSessionSummary, type EngineSubscription,
+  type EngineToolActivity, type EngineUsage,
+} from '../../client/engine';
+import {
+  cancelSpeech, createVoiceInput, mediaRecorderSupported, readVoicePreferences, speak,
+  speechRecognitionSupported, speechSynthesisSupported, writeVoicePreferences,
+  type VoiceInputController,
+} from '../../client/voice';
 import { requestFeatureSetup } from '../../client/featureSetup';
 import { FEATURE_PREFILL_EVENT, parseFeaturePrefill, publishFeaturePrefill } from '../../client/featureHandoff';
 import { readPreferences, rememberPreference } from '../../client/preferences';
@@ -14,15 +27,28 @@ import { getSymbolById } from '../../shared/data/symbols';
 import { prepareChartImage, requestChartAnalysis, CHART_IMAGE_ACCEPT, type ChartAnalysisResponse, type ChartImageAttachment, type ChartImageReading } from '../../client/chartAnalysis';
 import { chartImageHash, readCachedChartAnalysis, writeCachedChartAnalysis } from '../../client/chartReadingCache';
 import { validateStrategy } from '../../shared/strategy/schema';
-import type { ResearchChatResponse, ResearchScreenPlan } from '../../shared/contracts/research-chat';
+import { parseResearchChatResponse, type ResearchChatResponse, type ResearchScreenPlan } from '../../shared/contracts/research-chat';
+import { parseScanResult } from '../../shared/contracts/scanner-results';
+import { parseBacktestResult } from '../../shared/contracts/research';
 import { ScreenResultCard } from './ScreenResultCard';
 import { ChartReadingCard } from './ChartReadingCard';
 import { BacktestResultCard } from './BacktestResultCard';
 import { BacktestReviewCard } from './BacktestReviewCard';
 import { AssistantPending } from './AssistantPending';
 import { MessageText } from './MessageText';
+import { AgentActivity, type AgentToolEntry } from './AgentActivity';
+import { AgentTodoList, type AgentTodoItem } from './AgentTodoList';
+import { EngineErrorCard } from './EngineErrorCard';
+import { EngineScanResultCard } from './EngineScanResultCard';
+import { ChatHeader } from './ChatHeader';
+import { SessionHistoryPanel, sessionTitle } from './SessionHistoryPanel';
+import { SystemPanel } from './SystemPanel';
+import { DataCachePanel } from './DataCachePanel';
+import { downloadTextFile, SlideOver, useDebouncedValue } from './chatUi';
+import { toolLabel } from './agentToolLabels';
 import type { BacktestReview } from './types';
 import { summarizeRunData } from './runSummary';
+import { universeLabel } from './universeLabel';
 import { ActionRow } from '../common/ActionRow';
 import { Sources, type SourceItem } from '../common/Sources';
 import { CardShell } from '../common/CardShell';
@@ -48,6 +74,100 @@ export interface ChatMessage {
   retryPrompt?: string;
   /** An error that belongs in the conversation, announced once (role="alert"). */
   tone?: 'error';
+  /** Typed engine failure: code, status and whether Retry can resend the turn. */
+  errorCode?: string;
+  errorStatus?: number;
+  errorRetryable?: boolean;
+  /** Completed/restored tool timeline for this assistant turn. */
+  activity?: AgentToolEntry[];
+  /** Restored engine plan checklist for this turn. */
+  todos?: AgentTodoItem[];
+}
+
+type MessageExtras = Pick<ChatMessage, 'methodLabel' | 'methodTitle' | 'warnings' | 'retryPrompt' | 'tone' | 'errorCode' | 'errorStatus' | 'errorRetryable' | 'activity' | 'todos'>;
+
+/** The turn currently streaming from the engine (timeline + plan + Stop). */
+interface LiveActivity {
+  entries: AgentToolEntry[];
+  todos: AgentTodoItem[];
+  running: boolean;
+  currentStep?: string;
+  /** Assistant message this turn resolved to; null until its answer arrives. */
+  anchorId: string | null;
+}
+
+const EMPTY_ACTIVITY = (): LiveActivity => ({ entries: [], todos: [], running: false, anchorId: null });
+
+const TERMINAL_TOOL_STATUS = new Set(['success', 'failed']);
+
+/** A polling tool reports the same job repeatedly; one row is enough. */
+const POLLING_TOOL = /^(?:get_scan_result|get_scan_status|get_job_status|check_scan_job|check_backtest_job|check_market_job|scan_progress|get_scan|poll_job|get_job)$/i;
+
+/** One entry per tool call: a running entry is updated in place, done ones append. */
+function upsertToolEntry(entries: AgentToolEntry[], entry: AgentToolEntry): AgentToolEntry[] {
+  const polling = POLLING_TOOL.test(entry.name);
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const existing = entries[index];
+    if (existing.name !== entry.name) continue;
+    if (polling) {
+      // A scan poll repeated ten times is one step with an attempt count and
+      // the latest server summary, not ten identical lines.
+      const next = entries.slice();
+      next[index] = { ...entry, attempts: (existing.attempts ?? 1) + 1 };
+      return next;
+    }
+    if (!TERMINAL_TOOL_STATUS.has(existing.status) || !TERMINAL_TOOL_STATUS.has(entry.status)) {
+      const next = entries.slice();
+      next[index] = entry;
+      return next;
+    }
+    break;
+  }
+  return [...entries, entry].slice(-24);
+}
+
+function activityEntry(activity: EngineToolActivity): AgentToolEntry {
+  return {
+    type: 'tool',
+    name: activity.name,
+    status: activity.status,
+    ...(activity.summary ? { summary: activity.summary } : {}),
+    ...(activity.durationMs !== undefined ? { durationMs: activity.durationMs } : {}),
+    ...(activity.attempts !== undefined ? { attempts: activity.attempts } : {}),
+    ...(activity.error && (activity.error.code || activity.error.message)
+      ? { error: { code: activity.error.code ?? 'TOOL_FAILED', message: activity.error.message ?? 'This step could not finish.' } }
+      : {}),
+  };
+}
+
+/** Before Agent B streams normalized activity, a tool message still earns a line. */
+function activityFromToolMessage(message: EngineMessage): AgentToolEntry | null {
+  const name = message.tool?.trim();
+  if (!name) return null;
+  const jobStatus = message.job?.status;
+  const status: AgentToolEntry['status'] = message.error || jobStatus === 'failed' || jobStatus === 'cancelled'
+    ? 'failed'
+    : message.approval && message.approval.status !== 'approved' && message.approval.status !== 'rejected'
+      ? 'called'
+      : jobStatus === 'queued' ? 'called'
+        : jobStatus === 'running' ? 'running'
+          : jobStatus === 'succeeded' || message.result !== undefined ? 'success'
+            : 'running';
+  const summary = message.text?.trim();
+  return {
+    type: 'tool',
+    name,
+    status,
+    ...(summary ? { summary } : {}),
+    ...(message.durationMs !== undefined ? { durationMs: message.durationMs } : {}),
+    ...(message.error ? { error: { code: message.error.code ?? 'TOOL_FAILED', message: message.error.message ?? 'This step could not finish.' } } : {}),
+  };
+}
+
+function todosFromToolMessage(message: EngineMessage): AgentTodoItem[] {
+  const name = (message.tool ?? '').toLowerCase();
+  if (!/todo/.test(name)) return [];
+  return normalizeEngineTodos(message.result ?? message.todos);
 }
 
 export type CopilotVariant = 'full' | 'dock';
@@ -67,22 +187,13 @@ interface Props {
   runPhase?: ResearchPhase | null;
 }
 
-const MessageSchema = z.object({
-  id: z.string(),
-  sender: z.enum(['user', 'assistant']),
-  text: z.string().max(6000),
-  timestamp: z.number().finite(),
-  methodLabel: z.string().max(300).optional(),
-  methodTitle: z.string().max(300).optional(),
-  warnings: z.array(z.string().max(2000)).max(20).optional(),
-  retryPrompt: z.string().max(4000).optional(),
-  tone: z.enum(['error']).optional(),
-});
-const MessageListSchema = z.array(MessageSchema).max(40);
-const HISTORY_KEY = 'stragy_copilot_review_history_v2';
+/**
+ * The first-version chat kept its transcript in this browser. The engine owns
+ * history now; these two keys are cleared once on load and never written again.
+ */
+const LEGACY_HISTORY_KEYS = ['stragy_copilot_review_history_v2', 'stragy_copilot_previous_conversation_v1'] as const;
 /** The plan of a scan that was in flight when the page went away. */
 export const PENDING_SCAN_KEY = 'stragy_copilot_pending_scan_v1';
-const ARCHIVE_KEY = 'stragy_copilot_previous_conversation_v1';
 
 /** Only explicit rule sentences enter the async feature-setup call path. */
 function wantsFeatureSetup(text: string): boolean {
@@ -107,12 +218,27 @@ function wantsFeatureSetup(text: string): boolean {
   return rsiRule || averageRule || breakoutRule;
 }
 
-function loadMessages(key: string): ChatMessage[] {
-  try { return MessageListSchema.parse(JSON.parse(localStorage.getItem(key) ?? '[]')); } catch { return []; }
+const SESSION_QUERY = /^[A-Za-z0-9_-]{1,200}$/;
+
+/** The chat in the address bar wins over browser storage: links are shareable. */
+function sessionFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = new URL(window.location.href).searchParams.get('session');
+    return value && SESSION_QUERY.test(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
-function saveMessages(key: string, messages: ChatMessage[]): boolean {
-  try { localStorage.setItem(key, JSON.stringify(messages.slice(-40))); return true; } catch { return false; }
+function writeSessionUrl(sessionId: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    if (sessionId) url.searchParams.set('session', sessionId);
+    else url.searchParams.delete('session');
+    window.history.replaceState({}, '', url.toString());
+  } catch { /* an embed without history still works; only the link is missing */ }
 }
 
 type Proposal = StrategyProposal & { sourceSnapshot: string; validatedCandidate: StrategyAST };
@@ -126,6 +252,35 @@ interface PastCard {
   chartReading: ChartImageReading | null;
   imageUrl?: string;
   imageName?: string;
+}
+
+/**
+ * A card restored from an engine session: the engine's durable transcript only
+ * carries ids and payloads, so these render read-only through the same card
+ * components (scan table, chart reading, backtest result, draft summary).
+ */
+interface RestoredCard {
+  id: string;
+  messageId: string;
+  plan?: ResearchScreenPlan;
+  scanResult?: ScanResult | null;
+  chartReading?: ChartImageReading | null;
+  result?: BacktestResponse;
+  proposal?: { name: string; provider: string; changes: string[]; warnings: string[] };
+}
+
+/** A gated engine action waiting for the user's explicit approval. */
+interface EngineApproval {
+  messageId: string;
+  approvalId: string;
+  title: string;
+  summary: string[];
+}
+
+/** Parse an adapter payload without ever inventing a card from a broken one. */
+function parseEnginePayload(payload: unknown): ResearchChatResponse | null {
+  if (!payload || typeof payload !== 'object') return null;
+  try { return parseResearchChatResponse(payload); } catch { return null; }
 }
 
 type BaseContext = { strategy: StrategyAST; asOf?: string; sourceLabel: string; assumptions: string[] };
@@ -349,8 +504,7 @@ export const AiCopilotDock: React.FC<Props> = ({
   onSaveStrategy,
   runPhase = null,
 }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages(HISTORY_KEY));
-  const [archivedMessages, setArchivedMessages] = useState<ChatMessage[]>(() => loadMessages(ARCHIVE_KEY));
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState('');
   const [chartImage, setChartImage] = useState<ChartImageAttachment | null>(null);
   const [chartReading, setChartReading] = useState<ChartImageReading | null>(null);
@@ -404,14 +558,12 @@ export const AiCopilotDock: React.FC<Props> = ({
   const [awaitingChartConfirm, setAwaitingChartConfirm] = useState(false);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   /** Local keyword fallback is always available; the advanced toggle was removed to keep the composer simple. */
-  const allowLocal = true;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [applied, setApplied] = useState<string | null>(null);
   const [applyStatus, setApplyStatus] = useState('');
   const [clipboardStatus, setClipboardStatus] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
-  const [historyStatus, setHistoryStatus] = useState('History stays in this browser.');
   const [review, setReview] = useState<BacktestReview | null>(null);
   const [reviewStatus, setReviewStatus] = useState<'idle' | 'running' | 'complete' | 'cancelled'>('idle');
   const [reviewError, setReviewError] = useState('');
@@ -436,6 +588,64 @@ export const AiCopilotDock: React.FC<Props> = ({
   const pinnedRef = useRef(true);
   const draftMenuRef = useRef<HTMLDetailsElement | null>(null);
   const messageSeq = useRef(0);
+  /** Engine session state: the durable OpenCode chat (Agent B's REST block). */
+  const [engineStatus, setEngineStatus] = useState<'detecting' | 'ready' | 'unavailable'>('detecting');
+  const [engineSessionId, setEngineSessionId] = useState<string | null>(null);
+  const engineSessionRef = useRef<string | null>(null);
+  const engineSeqRef = useRef(0);
+  const engineSeenIds = useRef<Set<string>>(new Set());
+  const engineSubscription = useRef<EngineSubscription | null>(null);
+  const engineGeneration = useRef(0);
+  /** The optimistic user turn waiting for the engine to echo its durable id. */
+  const pendingUserText = useRef<string | null>(null);
+  const pendingUserMessageId = useRef<string | null>(null);
+  const [engineNote, setEngineNote] = useState('');
+  const [engineLink, setEngineLink] = useState<'connecting' | 'live' | 'reconnecting'>('connecting');
+  const [engineApproval, setEngineApproval] = useState<EngineApproval | null>(null);
+  const [interruptedJob, setInterruptedJob] = useState<{ jobId: string } | null>(null);
+  const [restoredCards, setRestoredCards] = useState<RestoredCard[]>([]);
+  /** Engine history: sessions, models, usage and the management panels. */
+  const [sessionList, setSessionList] = useState<EngineSessionSummary[] | null>(null);
+  const [sessionListStatus, setSessionListStatus] = useState('');
+  const [sessionListLoading, setSessionListLoading] = useState(false);
+  const [sessionListError, setSessionListError] = useState('');
+  const [activeSession, setActiveSession] = useState<EngineSessionSummary | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState('');
+  const historyQueryDebounced = useDebouncedValue(historyQuery, 250);
+  const [dataOpen, setDataOpen] = useState(false);
+  const [systemOpen, setSystemOpen] = useState(false);
+  const [models, setModels] = useState<EngineModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState('');
+  const [modelsBusy, setModelsBusy] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<{ providerID: string; id: string } | null>(null);
+  const [engineUsage, setEngineUsage] = useState<EngineUsage | null>(null);
+  /** Long turns: 90 s is a note, 20 min is "still running" without fake completion. */
+  const [turnLong, setTurnLong] = useState(false);
+  const [turnExpired, setTurnExpired] = useState(false);
+  const [retryingEngine, setRetryingEngine] = useState(false);
+  const lastEngineTurn = useRef<{ text: string; image: ChartImageAttachment | null }>({ text: '', image: null });
+  const turnTimers = useRef<{ long: number | null; expire: number | null }>({ long: null, expire: null });
+  const historyRequest = useRef(0);
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    try { return typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 767px)').matches : false; } catch { return false; }
+  });
+  /** The live engine turn's tool timeline and plan (per assistant turn). */
+  const [liveActivity, setLiveActivity] = useState<LiveActivity>(EMPTY_ACTIVITY);
+  const liveActivityRef = useRef<LiveActivity>(liveActivity);
+  const previousActivityAnchor = useRef<string | null>(null);
+  /** A scan result that arrived before the screen plan in the same engine turn. */
+  const turnScanResult = useRef<ScanResult | null>(null);
+  /** Voice composer state. Text always works; voice is additive and honest. */
+  const [voiceMode, setVoiceMode] = useState(() => readVoicePreferences().voiceMode);
+  const [listening, setListening] = useState(false);
+  const [voiceNote, setVoiceNote] = useState('');
+  const voiceController = useRef<VoiceInputController | null>(null);
+  const voiceBase = useRef('');
+  const spokenMessageId = useRef<string | null>(null);
+  const voiceInputSupported = speechRecognitionSupported() || mediaRecorderSupported();
+  const voiceOutputSupported = speechSynthesisSupported();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const imageGeneration = useRef(0);
@@ -451,6 +661,12 @@ export const AiCopilotDock: React.FC<Props> = ({
   }
   const full = variant === 'full';
   const busy = loading || scanPending || reviewStatus === 'running';
+  /** This conversation is durable on the server, not just in this browser. */
+  const engineConversation = engineStatus === 'ready' && !!engineSessionId;
+  /** An engine turn owns the busy slot; its Stop lives in the activity strip. */
+  const engineTurnInFlight = loading && engineConversation;
+  /** The timeline is the loading state once the engine reports a tool step. */
+  const turnHasActivity = liveActivity.entries.length > 0 || liveActivity.todos.length > 0;
   const canSubmit = !loading && reviewStatus !== 'running' && !preparingImage && !pendingApply.current && (!!prompt.trim() || !!chartImage);
 
   useEffect(() => {
@@ -518,10 +734,11 @@ export const AiCopilotDock: React.FC<Props> = ({
     abort.current?.abort();
   }, []);
 
+  // One-time cleanup of the first-version browser transcript. It is never
+  // read again: a fresh load with no engine session starts empty.
   useEffect(() => {
-    const saved = saveMessages(HISTORY_KEY, messages);
-    setHistoryStatus(saved ? 'History stays in this browser.' : 'History was not saved: browser storage is unavailable.');
-  }, [messages]);
+    try { for (const key of LEGACY_HISTORY_KEYS) localStorage.removeItem(key); } catch { /* storage may be unavailable */ }
+  }, []);
 
   // X-3: "Describe in chat" hands over a validated ChatDraft. Fill the composer
   // and focus it; never send automatically.
@@ -689,7 +906,7 @@ export const AiCopilotDock: React.FC<Props> = ({
     element.style.height = Math.min(Math.max(element.scrollHeight || 0, 44), 136) + 'px';
   }, [prompt]);
 
-  const append = (sender: ChatMessage['sender'], text: string, extras: Pick<ChatMessage, 'methodLabel' | 'methodTitle' | 'warnings' | 'retryPrompt' | 'tone'> = {}): string => {
+  const append = (sender: ChatMessage['sender'], text: string, extras: MessageExtras = {}): string => {
     const id = Date.now() + '-' + (messageSeq.current++);
     setMessages(old => [...old, {
       id,
@@ -700,6 +917,959 @@ export const AiCopilotDock: React.FC<Props> = ({
     }].slice(-40));
     return id;
   };
+
+  /**
+   * Append a message whose id the server chose. A message id is the dedupe key
+   * across reconnect and restore; an id seen before is never rendered twice.
+   */
+  const appendWithId = (id: string, sender: ChatMessage['sender'], text: string, extras: MessageExtras = {}, limit = 40): string => {
+    setMessages(old => old.some(message => message.id === id)
+      ? old
+      : [...old, { id, sender, text, timestamp: Date.now(), ...extras }].slice(-limit));
+    return id;
+  };
+
+  /** The engine turn's tool timeline lives in one place and is updated in order. */
+  const updateActivity = (update: (current: LiveActivity) => LiveActivity) => {
+    const next = update(liveActivityRef.current);
+    liveActivityRef.current = next;
+    setLiveActivity(next);
+  };
+
+  const resetActivity = (running = false) => {
+    previousActivityAnchor.current = null;
+    updateActivity(() => ({ ...EMPTY_ACTIVITY(), running }));
+  };
+
+  const addActivityEntries = (entries: AgentToolEntry[]) => {
+    if (!entries.length) return;
+    updateActivity(current => {
+      let next = current.entries;
+      for (const entry of entries) next = upsertToolEntry(next, entry);
+      const active = [...next].reverse().find(entry => entry.status === 'running' || entry.status === 'called');
+      return {
+        ...current,
+        entries: next,
+        running: current.running || active !== undefined,
+        ...(active ? { currentStep: active.summary ?? toolLabel(active.name) } : {}),
+      };
+    });
+  };
+
+  const addTodos = (todos: AgentTodoItem[]) => {
+    if (!todos.length) return;
+    updateActivity(current => ({ ...current, todos }));
+  };
+
+  /**
+   * A live engine event. Messages are deduped by id, the cursor by the engine
+   * client; status/idle events own the pending state, tool messages feed the
+   * same cards the legacy path uses.
+   */
+  const handleEngineEvent = (event: EngineEvent) => {
+    if (event.type === 'status') {
+      const working = /working|running|busy|retrying/i.test(event.status ?? '');
+      setLoading(working);
+      if (working) setTurnExpired(false);
+      updateActivity(current => ({ ...current, running: working }));
+      return;
+    }
+    if (event.type === 'idle') {
+      setLoading(false);
+      setTurnLong(false);
+      setTurnExpired(false);
+      updateActivity(current => ({ ...current, running: false, currentStep: undefined }));
+      void refreshSessionMeta();
+      return;
+    }
+    if (event.type === 'error') {
+      setLoading(false);
+      setTurnLong(false);
+      setTurnExpired(false);
+      updateActivity(current => ({ ...current, running: false, currentStep: undefined }));
+      if (event.error) append('assistant', event.error, { tone: 'error', methodLabel: 'Engine error' });
+      return;
+    }
+    if (event.type === 'tool' || event.type === 'todo') {
+      const activities = event.activities?.length ? event.activities : event.activity ? [event.activity] : [];
+      if (activities.length) addActivityEntries(activities.map(activityEntry));
+      if (event.todos?.length) addTodos(event.todos);
+      // A tool event may also carry the durable tool message itself.
+      if (event.message && !engineSeenIds.current.has(event.message.id)) {
+        engineSeenIds.current.add(event.message.id);
+        if (event.message.role === 'tool') applyEngineTool(event.message);
+        else if (event.message.role === 'assistant') applyEngineAssistant(event.message);
+        else appendWithId(event.message.id, 'user', event.message.text ?? '');
+      }
+      return;
+    }
+    const streamedActivities = event.activities?.length ? event.activities : event.activity ? [event.activity] : [];
+    if (streamedActivities.length) addActivityEntries(streamedActivities.map(activityEntry));
+    if (event.todos?.length) addTodos(event.todos);
+    if (event.job?.status === 'interrupted' && event.job.id) {
+      setInterruptedJob({ jobId: event.job.id });
+      setLoading(false);
+      updateActivity(current => ({ ...current, running: false, currentStep: undefined }));
+      return;
+    }
+    const message = event.message;
+    if (!message) return;
+    if (engineSeenIds.current.has(message.id)) return;
+    engineSeenIds.current.add(message.id);
+    if (message.role === 'user') {
+      const expected = pendingUserText.current;
+      const echoed = (message.text ?? '').trim();
+      // An image turn is echoed with the hint text (or none); it is the same turn.
+      const matches = !!expected && (echoed === expected.trim() || expected === '[chart image attached]');
+      if (matches) {
+        // The server's durable user message replaces the optimistic turn in place.
+        pendingUserText.current = null;
+        const localId = pendingUserMessageId.current;
+        pendingUserMessageId.current = null;
+        if (localId) setMessages(old => old.map(item => item.id === localId ? { ...item, id: message.id } : item));
+      } else {
+        appendWithId(message.id, 'user', message.text ?? '[chart image attached]');
+      }
+      return;
+    }
+    if (message.role === 'tool') { applyEngineTool(message); return; }
+    applyEngineAssistant(message);
+  };
+  const engineEventRef = useRef(handleEngineEvent);
+  engineEventRef.current = handleEngineEvent;
+
+  /** One assistant turn: text plus, when present, the adapter payload's card. */
+  const applyEngineAssistant = (message: EngineMessage) => {
+    const explicitActivities = normalizeToolActivities(message.activity);
+    if (explicitActivities.length) addActivityEntries(explicitActivities.map(activityEntry));
+    const explicitTodos = normalizeEngineTodos(message.todos);
+    if (explicitTodos.length) addTodos(explicitTodos);
+    const parsed = parseEnginePayload(message.payload);
+    const deterministic = parsed?.method === 'unavailable'
+      && parsed.warnings.some(warning => warning.startsWith('Deterministic answer'));
+    const providerFailure = parsed && parsed.method === 'unavailable' && !deterministic
+      ? providerFailureFor(parsed.message)
+      : null;
+    const text = providerFailure?.text
+      ?? ((message.text ?? '').trim() || parsed?.message || '');
+    if (!text && !parsed) return;
+    const warnings = [...(parsed?.warnings ?? []), ...(providerFailure ? [providerFailure.detail] : [])];
+    const id = appendWithId(message.id, 'assistant', text, {
+      ...(parsed ? { methodLabel: providerFailure ? 'AI unavailable' : methodLabel(parsed.method, parsed.provider) } : { methodLabel: 'AI engine' }),
+      ...(parsed?.provider.aiGenerated ? { methodTitle: 'Answered by ' + parsed.provider.name + '. Verify factual claims with data.' } : {}),
+      ...(warnings.length ? { warnings } : {}),
+      ...(parsed?.method === 'unavailable' && !providerFailure ? { tone: 'error' as const } : {}),
+    }, 80);
+    setLoading(false);
+    setTurnLong(false);
+    setTurnExpired(false);
+    // The latest answer of this turn carries the timeline. A later step's tool
+    // event reopens it; the finished answer keeps the same turn's entries.
+    updateActivity(current => ({ ...current, anchorId: id, running: false, currentStep: undefined }));
+    if (parsed) applyEnginePayload(id, parsed);
+  };
+
+  /**
+   * The engine carries the same payload shapes as the legacy chat. Screen plans
+   * own the existing ScreenResultCard; scan results arrive as a scan_market tool
+   * message and fill that card; drafts reuse the proposal card.
+   */
+  const applyEnginePayload = (messageId: string, parsed: ResearchChatResponse) => {
+    if (parsed.kind === 'proposal') {
+      try {
+        const proposal = parseStrategyProposal(parsed.proposal);
+        assertProposalCurrent(parsed, revision.current, JSON.stringify(strategy), JSON.stringify(strategy));
+        archiveCompletedCard();
+        // The draft card states the provider once; the message label is redundant.
+        setCardMessageId(messageId);
+        setWorkingAnchorId(messageId);
+        setProposal({ ...proposal, sourceSnapshot: JSON.stringify(strategy), validatedCandidate: proposal.candidate });
+        setScreenPlan(null);
+        setScanResult(null);
+        setScanError('');
+        setChartReading(null);
+        scanPendingRef.current = false;
+        setScanPending(false);
+        setReview(null);
+        setReviewStatus('idle');
+        setAwaitingSymbolFor(null);
+        setLastContext('draft');
+        setApplied(null);
+      } catch (error) {
+        append('assistant', 'The engine draft could not be validated: ' + (error as Error).message + ' Nothing is shown as a proposal.', { tone: 'error' });
+      }
+      return;
+    }
+    if (parsed.kind === 'screen') {
+      archiveCompletedCard();
+      setCardMessageId(null);
+      setWorkingAnchorId(messageId);
+      setScreenPlan(parsed);
+      setChartReading(chartReadingFromScreen(parsed));
+      setAwaitingChartConfirm(false);
+      // The engine plans a screen and then runs scan_market; the card shows
+      // the pending scan until that tool result (or error) arrives. If the tool
+      // result already arrived in this turn, show it immediately (no spinner).
+      const resultAlreadyHere = turnScanResult.current !== null;
+      scanPendingRef.current = !resultAlreadyHere;
+      setScanPending(!resultAlreadyHere);
+      setScanWaiting(false);
+      setScanProgress(null);
+      setApplied(null);
+      setProposal(null);
+      setReview(null);
+      setReviewStatus('idle');
+      setAwaitingSymbolFor(null);
+      setLastContext('screen');
+      // The adapter attaches the screen plan to the final assistant message,
+      // after the tool events. Keep a scan result that arrived earlier in this
+      // same turn instead of wiping the card the user just waited for.
+      setScanResult(turnScanResult.current);
+      setScanError('');
+    }
+  };
+
+  /** A tool result keeps its card: scan rows, a backtest result, or a gate. */
+  const applyEngineTool = (message: EngineMessage) => {
+    setLoading(false);
+    const explicitActivities = normalizeToolActivities(message.activity);
+    if (explicitActivities.length) {
+      addActivityEntries(explicitActivities.map(activityEntry));
+    } else {
+      const entry = activityFromToolMessage(message);
+      if (entry) addActivityEntries([entry]);
+    }
+    const explicitTodos = normalizeEngineTodos(message.todos);
+    if (explicitTodos.length) addTodos(explicitTodos);
+    else {
+      const toolTodos = todosFromToolMessage(message);
+      if (toolTodos.length) addTodos(toolTodos);
+    }
+    if (message.job?.status === 'interrupted' && message.job.id) setInterruptedJob({ jobId: message.job.id });
+    if (message.approval && (message.approval.status === undefined || message.approval.status === 'pending')) {
+      setEngineApproval({
+        messageId: message.id,
+        approvalId: message.approval.id,
+        title: message.approval.title ?? 'Approve this research step?',
+        summary: message.approval.summary ?? [],
+      });
+    }
+    const tool = (message.tool ?? '').toLowerCase();
+    if (message.error && /scan|market|screen/.test(tool)) {
+      scanPendingRef.current = false;
+      setScanPending(false);
+      setScanWaiting(false);
+      setScanProgress(null);
+      if (message.error.code === 'CLIENT_DEADLINE' && message.error.jobId) {
+        setScanError('');
+        setStalledScan(message.error.jobId);
+      } else {
+        setScanError(scanFailureLine({ code: message.error.code, message: message.error.message }));
+      }
+      setLoading(false);
+    }
+    let consumed = false;
+    if (message.result !== undefined) {
+      if (/scan|market|screen/.test(tool) || !/backtest|run/.test(tool)) {
+        try {
+          const result = parseScanResult(message.result);
+          if (result.mode !== 'real') {
+            setScanResult(null);
+            setScanError(result.mode === 'demo'
+              ? 'Real current data is unavailable right now. Nothing was presented as a match.'
+              : "The scan didn't confirm real observed data. Nothing was presented as a match.");
+            setScanPending(false);
+            setScanWaiting(false);
+            scanPendingRef.current = false;
+            setLoading(false);
+            consumed = true;
+          } else {
+          turnScanResult.current = result;
+          setScanResult(result);
+          setScanError('');
+          setScanPending(false);
+          setScanWaiting(false);
+          setScanProgress(null);
+          scanPendingRef.current = false;
+          rememberPendingScan(null);
+          consumed = true;
+          }
+        } catch { /* not a scan result */ }
+      }
+      if (!consumed) {
+        try {
+          const result = parseBacktestResult(message.result);
+          setValidatedResult(result);
+          setReview(null);
+          setReviewStatus('complete');
+          setResultAnchorId(message.id);
+          consumed = true;
+        } catch { /* not a backtest result */ }
+      }
+    }
+    if (!consumed && message.text) {
+      appendWithId(message.id, 'assistant', message.text, { methodLabel: 'Engine tool · ' + (message.tool ?? 'result') }, 80);
+    }
+  };
+
+  /**
+   * Restore a stored engine session into the existing chat: user/assistant
+   * turns become messages, screen and backtest tool results become read-only
+   * cards under the message that produced them. The newest assistant answer is
+   * marked as already spoken, so a reload never reads old answers aloud.
+   */
+  const applyRestoredMessages = (engineMessages: EngineMessage[]) => {
+    const mapped: ChatMessage[] = [];
+    const cards: RestoredCard[] = [];
+    let lastScreen: RestoredCard | null = null;
+    let lastAssistantTurn: ChatMessage | null = null;
+    // Tool results are listed before the assistant message that carries the
+    // screen payload, so hold the newest scan until its card is created.
+    let pendingScanResult: ScanResult | null = null;
+    for (const message of engineMessages) {
+      if (engineSeenIds.current.has(message.id)) continue;
+      engineSeenIds.current.add(message.id);
+      const timestamp = message.timestamp ?? Date.now();
+      if (message.role === 'user') {
+        mapped.push({ id: message.id, sender: 'user', text: message.text ?? '[chart image attached]', timestamp });
+        lastAssistantTurn = null;
+        lastScreen = null;
+        pendingScanResult = null;
+        continue;
+      }
+      if (message.role === 'tool') {
+        if (message.job?.status === 'interrupted' && message.job.id) setInterruptedJob({ jobId: message.job.id });
+        if (message.approval && (message.approval.status === undefined || message.approval.status === 'pending')) {
+          setEngineApproval({
+            messageId: message.id,
+            approvalId: message.approval.id,
+            title: message.approval.title ?? 'Approve this research step?',
+            summary: message.approval.summary ?? [],
+          });
+        }
+        // Tool activity without a dedicated assistant activity array is attached
+        // to the assistant turn that requested the tool.
+        if (lastAssistantTurn) {
+          const explicit = normalizeToolActivities(message.activity);
+          const entry = !explicit.length ? activityFromToolMessage(message) : null;
+          const activities = explicit.map(activityEntry);
+          if (entry) activities.push(entry);
+          if (activities.length) {
+            let merged = lastAssistantTurn.activity ?? [];
+            for (const item of activities) merged = upsertToolEntry(merged, item);
+            lastAssistantTurn.activity = merged;
+          }
+          const todoItems = normalizeEngineTodos(message.todos ?? todosFromToolMessage(message));
+          if (todoItems.length) lastAssistantTurn.todos = todoItems;
+        }
+        if (message.result !== undefined) {
+          const tool = (message.tool ?? '').toLowerCase();
+          let handled = false;
+          if (/scan|market|screen/.test(tool)) {
+            try {
+              const parsedScan = parseScanResult(message.result);
+              if (lastScreen) lastScreen.scanResult = parsedScan;
+              else pendingScanResult = parsedScan;
+              handled = true;
+            } catch { handled = false; }
+          }
+          if (!handled) {
+            try {
+              const result = parseBacktestResult(message.result);
+              cards.push({ id: 'restored-result-' + message.id, messageId: message.id, result });
+              handled = true;
+            } catch { /* not a backtest result */ }
+          }
+          if (!handled && message.text) mapped.push({ id: message.id, sender: 'assistant', text: message.text, timestamp, methodLabel: 'Engine tool · ' + (message.tool ?? 'result') });
+        }
+        continue;
+      }
+      const parsed = parseEnginePayload(message.payload);
+      const text = (message.text ?? '').trim() || parsed?.message || '';
+      const restoredActivity = normalizeToolActivities(message.activity).map(activityEntry);
+      const restoredTodos = normalizeEngineTodos(message.todos);
+      if (text || parsed) {
+        const mappedMessage: ChatMessage = {
+          id: message.id,
+          sender: 'assistant',
+          text,
+          timestamp,
+          ...(parsed ? { methodLabel: methodLabel(parsed.method, parsed.provider) } : { methodLabel: 'AI engine' }),
+          ...(parsed?.warnings?.length ? { warnings: parsed.warnings } : {}),
+          ...(restoredActivity.length ? { activity: restoredActivity } : {}),
+          ...(restoredTodos.length ? { todos: restoredTodos } : {}),
+        };
+        mapped.push(mappedMessage);
+        lastAssistantTurn = mappedMessage;
+      }
+      if (parsed?.kind === 'screen') {
+        const card: RestoredCard = {
+          id: 'restored-screen-' + message.id,
+          messageId: message.id,
+          plan: parsed,
+          chartReading: chartReadingFromScreen(parsed),
+          scanResult: pendingScanResult,
+        };
+        pendingScanResult = null;
+        cards.push(card);
+        lastScreen = card;
+      } else if (parsed?.kind === 'proposal') {
+        try {
+          const proposal = parseStrategyProposal(parsed.proposal);
+          cards.push({
+            id: 'restored-proposal-' + message.id,
+            messageId: message.id,
+            proposal: {
+              name: proposal.candidate.name,
+              provider: parsed.provider.aiGenerated ? 'AI · ' + parsed.provider.name : 'Local rules · not AI',
+              changes: proposal.changes,
+              warnings: proposal.warnings,
+            },
+          });
+        } catch { /* the answer text is still shown */ }
+      }
+    }
+    if (pendingScanResult) {
+      const anchor = [...mapped].reverse().find(message => message.sender === 'assistant') ?? mapped[mapped.length - 1];
+      cards.push({
+        id: 'restored-scan-' + (anchor?.id ?? 'only'),
+        messageId: anchor?.id ?? '',
+        scanResult: pendingScanResult,
+      });
+      pendingScanResult = null;
+    }
+    setMessages(mapped.slice(-80));
+    setRestoredCards(cards.slice(-20));
+    const lastAssistant = [...mapped].reverse().find(message => message.sender === 'assistant');
+    spokenMessageId.current = lastAssistant?.id ?? null;
+    setLoading(false);
+  };
+
+  /** Subscribe with the persisted cursor; the client owns reconnect/dedupe. */
+  const connectEngine = (sessionId: string, afterSeq: number) => {
+    engineSubscription.current?.close();
+    engineSeqRef.current = Math.max(engineSeqRef.current, afterSeq);
+    setEngineLink('connecting');
+    engineSubscription.current = subscribeEngineEvents(sessionId, engineSeqRef.current, {
+      onEvent: event => engineEventRef.current(event),
+      onState: state => setEngineLink(state === 'open' ? 'live' : state === 'reconnecting' ? 'reconnecting' : 'connecting'),
+      onCursor: seq => { engineSeqRef.current = seq; rememberEngineCursor(sessionId, seq); },
+    });
+  };
+
+  /** Load the model list once; only models the server reports are shown. */
+  const loadModels = async () => {
+    setModelsLoading(true);
+    try {
+      const result = await listEngineModels();
+      setModels(result.models);
+      setModelsError('');
+      setSelectedModel(current => {
+        if (current && result.models.some(model => model.providerID === current.providerID && model.id === current.id)) return current;
+        const preferred = result.models.find(model => model.default)
+          ?? (result.default ? result.models.find(model => model.providerID === result.default!.providerID && model.id === result.default!.model) : undefined)
+          ?? result.models[0];
+        return preferred ? { providerID: preferred.providerID, id: preferred.id } : null;
+      });
+    } catch (error) {
+      setModels([]);
+      const status = (error as { status?: number }).status;
+      setModelsError(isEngineUnavailable(error)
+        ? 'Models are not available on this server yet' + (status ? ' (' + status + ')' : '') + '.'
+        : 'Models could not be loaded. ' + (error instanceof Error ? error.message : 'Try again.'));
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadModels(); }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsMobile(query.matches);
+    update();
+    query.addEventListener?.('change', update);
+    return () => query.removeEventListener?.('change', update);
+  }, []);
+
+  /** Re-read the active session's title/model/cost once a turn settles. */
+  const refreshSessionMeta = async () => {
+    const sessionId = engineSessionRef.current;
+    if (!sessionId) return;
+    const [usageResult, sessionsResult] = await Promise.allSettled([getEngineUsage(), listEngineSessions()]);
+    if (usageResult.status === 'fulfilled') {
+      setEngineUsage(usageResult.value);
+      const match = usageResult.value.sessions.find(item => item.sessionId === sessionId);
+      if (match) {
+        setActiveSession(current => ({
+          ...(current ?? { sessionId }),
+          sessionId,
+          ...(match.title ? { title: match.title } : {}),
+          ...(match.cost !== undefined ? { cost: match.cost } : {}),
+          ...(match.tokens ? { tokens: match.tokens } : {}),
+        }));
+      }
+    }
+    if (sessionsResult.status === 'fulfilled') {
+      setSessionList(sessionsResult.value);
+      const match = sessionsResult.value.find(item => item.sessionId === sessionId);
+      if (match) {
+        setActiveSession(current => ({ ...(current ?? { sessionId }), ...match }));
+        if (match.model?.providerID && match.model.id) {
+          setSelectedModel({ providerID: match.model.providerID, id: match.model.id });
+        }
+      }
+    }
+  };
+
+  /** History list, server-filtered; a stale response can never replace a new one. */
+  const refreshHistory = async (query: string) => {
+    const request = ++historyRequest.current;
+    setSessionListLoading(true);
+    try {
+      const sessions = await listEngineSessions(query.trim() || undefined);
+      if (historyRequest.current !== request) return;
+      setSessionList(sessions);
+      setSessionListError('');
+      setSessionListStatus(sessions.length || query.trim() ? '' : 'No earlier conversations yet.');
+    } catch (error) {
+      if (historyRequest.current !== request) return;
+      setSessionList([]);
+      setSessionListError(isEngineUnavailable(error)
+        ? 'Saved conversations are not available on this server yet.'
+        : 'Conversations could not be loaded. ' + (error instanceof Error ? error.message : 'Try again.'));
+    } finally {
+      if (historyRequest.current === request) setSessionListLoading(false);
+    }
+  };
+
+  // Opening history loads it; typing searches the server after 250 ms. Changing
+  // the query never switches or reloads the active chat.
+  useEffect(() => {
+    if (!historyOpen) return;
+    void refreshHistory(historyQueryDebounced);
+  }, [historyOpen, historyQueryDebounced]);
+
+  const adoptSession = (sessionId: string) => {
+    engineSessionRef.current = sessionId;
+    setEngineSessionId(sessionId);
+    setEngineStatus('ready');
+    setActiveSession(current => current?.sessionId === sessionId ? current : { sessionId });
+    writeSessionUrl(sessionId);
+  };
+
+  // On load the address bar wins over browser storage, so a shared link opens
+  // the same durable chat. If the linked chat is gone, the last local chat is
+  // tried once and the note says what happened.
+  useEffect(() => {
+    let cancelled = false;
+    const linked = sessionFromUrl();
+    const stored = readStoredEngineSession();
+    const restore = async (sessionId: string, lastSeq: number): Promise<boolean> => {
+      const page = await getEngineMessages(sessionId);
+      if (cancelled) return true;
+      adoptSession(sessionId);
+      engineSeqRef.current = Math.max(lastSeq, page.lastSeq);
+      if (page.messages.length) applyRestoredMessages(page.messages);
+      writeStoredEngineSession({ sessionId, lastSeq: engineSeqRef.current });
+      connectEngine(sessionId, engineSeqRef.current);
+      void refreshSessionMeta();
+      return true;
+    };
+    const target = linked ?? stored?.sessionId ?? null;
+    if (!target) return;
+    void (async () => {
+      try {
+        await restore(target, linked ? 0 : stored?.lastSeq ?? 0);
+      } catch (error) {
+        if (cancelled) return;
+        if (linked && stored && stored.sessionId !== linked) {
+          try {
+            await restore(stored.sessionId, stored.lastSeq);
+            setEngineNote('That shared chat is no longer on the server. The last chat on this browser was opened instead.');
+            return;
+          } catch { /* fall through to the honest note */ }
+        }
+        setEngineNote(isEngineUnavailable(error)
+          ? 'Engine sessions are not available on this server yet. Nothing was hidden; retry when the server is updated.'
+          : 'The saved chat could not be loaded. ' + (error instanceof Error ? error.message : 'Try again.'));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      engineSubscription.current?.close();
+      engineSubscription.current = null;
+    };
+    // Mount-only: the subscription owns all later state.
+  }, []);
+
+  /**
+   * Send this turn through the engine. The engine is the only chat path: a
+   * failure appends a typed, retryable error card and never calls another
+   * route. Returns true when the engine accepted the turn.
+   */
+  const sendThroughEngine = async (text: string, image: ChartImageAttachment | null): Promise<boolean> => {
+    const owned = ++engineGeneration.current;
+    lastEngineTurn.current = { text, image };
+    try {
+      let sessionId = engineSessionRef.current;
+      if (!sessionId) {
+        const chosen = selectedModel ?? (() => {
+          const fallback = models.find(model => model.default) ?? models[0];
+          return fallback ? { providerID: fallback.providerID, id: fallback.id } : null;
+        })();
+        sessionId = await createEngineSession(
+          undefined,
+          chosen ? { providerID: chosen.providerID, model: chosen.id } : undefined,
+        );
+        if (engineGeneration.current !== owned) return true;
+        adoptSession(sessionId);
+        engineSeqRef.current = 0;
+        writeStoredEngineSession({ sessionId, lastSeq: 0 });
+        connectEngine(sessionId, 0);
+      }
+      setEngineStatus('ready');
+      setEngineNote('');
+      setTurnLong(false);
+      setTurnExpired(false);
+      resetActivity(true);
+      // Keep the previous turn's finished card before this turn replaces it.
+      archiveCompletedCard();
+      turnScanResult.current = null;
+      setScanResult(null);
+      setScanError('');
+      setLoading(true);
+      await postEngineMessage(sessionId, {
+        ...(text ? { text } : {}),
+        ...(image ? { image: { dataUrl: image.dataUrl, mimeType: image.mimeType, name: image.name }, hint: text } : {}),
+        currentStrategy: snapshotStrategy(strategy),
+        ...(screenPlan ? { screenContext: { strategy: screenPlan.strategy, universe: screenPlan.universe } } : {}),
+        ...(messages.length ? { history: messages.slice(-20).map(message => ({ role: message.sender, text: message.text })) } : {}),
+      });
+      return true;
+    } catch (error) {
+      if (engineGeneration.current !== owned) return true;
+      setLoading(false);
+      setTurnLong(false);
+      setTurnExpired(false);
+      const code = (error as { code?: string }).code ?? 'ENGINE_UNREACHABLE';
+      const status = (error as { status?: number }).status ?? 0;
+      const message = error instanceof Error ? error.message : 'The engine did not answer this turn.';
+      setEngineNote('The engine did not answer. Nothing was sent; the conversation is kept.');
+      append('assistant', message, {
+        tone: 'error',
+        errorCode: code,
+        ...(status ? { errorStatus: status } : {}),
+        errorRetryable: true,
+        retryPrompt: text,
+      });
+      pendingUserText.current = null;
+      pendingUserMessageId.current = null;
+      return false;
+    }
+  };
+
+  /** Retry the same turn after a typed engine failure; no duplicate user turn. */
+  const retryEngineTurn = async (failed: ChatMessage) => {
+    if (loading) return;
+    const turn = lastEngineTurn.current;
+    const text = failed.retryPrompt ?? turn.text;
+    const image = turn.text === text ? turn.image : null;
+    if (!text && !image) return;
+    const lastUser = [...messages].reverse().find(message => message.sender === 'user');
+    pendingUserText.current = image ? '[chart image attached]' : text.trim();
+    pendingUserMessageId.current = lastUser?.id ?? null;
+    setRetryingEngine(true);
+    const accepted = await sendThroughEngine(text, image);
+    setRetryingEngine(false);
+    if (accepted) setMessages(current => current.filter(message => message.id !== failed.id));
+  };
+
+  /** The activity Stop button interrupts the engine turn that owns the timeline. */
+  const stopEngineTurn = () => {
+    const sessionId = engineSessionRef.current;
+    updateActivity(current => ({ ...current, running: false, currentStep: undefined }));
+    setLoading(false);
+    setTurnLong(false);
+    setTurnExpired(false);
+    if (sessionId) void interruptEngineSession(sessionId).catch(() => {});
+    setEngineNote('Stop requested. The engine was asked to interrupt this turn.');
+  };
+
+  /** The engine approval gate: approve, then send the confirm message. */
+  const decideEngineApproval = async (decision: 'approve' | 'reject') => {
+    const approval = engineApproval;
+    const sessionId = engineSessionRef.current;
+    if (!approval || !sessionId) return;
+    setEngineApproval(null);
+    setLoading(true);
+    try {
+      await postEngineApproval({ sessionId, approvalId: approval.approvalId, decision });
+      await postEngineMessage(sessionId, { text: decision === 'approve' ? 'Use these assumptions and run' : 'Cancel this step — do not run it.' });
+      setEngineNote(decision === 'approve' ? 'Approval sent. The engine owns the run; nothing else changed.' : 'Cancellation sent. Nothing was run.');
+    } catch (error) {
+      setLoading(false);
+      setError(error instanceof Error ? error.message : 'The approval could not be sent.');
+    }
+  };
+
+  /** Resume a scan interrupted by a server restart (Agent A's durable job). */
+  const resumeInterrupted = async () => {
+    const job = interruptedJob;
+    if (!job) return;
+    setInterruptedJob(null);
+    setLoading(true);
+    try {
+      const status = await getJobStatus(job.jobId);
+      if (status.status === 'succeeded' || status.status === 'failed' || status.status === 'cancelled') {
+        setError('That scan is already finished and cannot be resumed. Open its saved result in the session.');
+        return;
+      }
+      await resumeInterruptedJob(job.jobId);
+      setEngineNote('Resume requested. The scan continues from its saved bars.');
+    } catch (error) {
+      const code = (error as { code?: string }).code ?? '';
+      setError(code === 'JOB_NOT_FOUND'
+        ? 'That scan is no longer on the server. Run the scan again.'
+        : 'The scan could not be resumed. ' + (error instanceof Error ? error.message : 'Try again.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Switch to a durable chat: load its transcript, then resubscribe. */
+  const loadEngineSession = async (sessionId: string) => {
+    if (sessionId === engineSessionRef.current) { setHistoryOpen(false); return; }
+    setSessionListStatus('');
+    setLoading(true);
+    try {
+      const page = await getEngineMessages(sessionId);
+      engineSubscription.current?.close();
+      engineGeneration.current++;
+      adoptSession(sessionId);
+      const summary = sessionList?.find(session => session.sessionId === sessionId);
+      if (summary) setActiveSession(summary);
+      engineSeqRef.current = page.lastSeq;
+      engineSeenIds.current = new Set();
+      setEngineApproval(null);
+      setInterruptedJob(null);
+      resetActivity();
+      applyRestoredMessages(page.messages);
+      writeStoredEngineSession({ sessionId, lastSeq: page.lastSeq });
+      connectEngine(sessionId, page.lastSeq);
+      setEngineNote('');
+      setHistoryOpen(false);
+      void refreshSessionMeta();
+    } catch (error) {
+      setSessionListError(isEngineUnavailable(error)
+        ? 'Saved conversations are not available on this server yet.'
+        : 'That conversation could not be loaded. ' + (error instanceof Error ? error.message : 'Try again.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renameSession = async (sessionId: string, title: string): Promise<boolean> => {
+    try {
+      const updated = await renameEngineSession(sessionId, title);
+      const next = updated ?? { sessionId, title };
+      setSessionList(current => current ? current.map(session => session.sessionId === sessionId ? { ...session, ...next } : session) : current);
+      setActiveSession(current => current && current.sessionId === sessionId ? { ...current, ...next } : current);
+      setSessionListStatus('Chat renamed.');
+      return true;
+    } catch (error) {
+      setSessionListStatus('');
+      setSessionListError('The chat could not be renamed. ' + (error instanceof Error ? error.message : 'Try again.'));
+      return false;
+    }
+  };
+
+  const deleteSession = async (sessionId: string): Promise<boolean> => {
+    try {
+      await deleteEngineSession(sessionId);
+      setSessionList(current => current ? current.filter(session => session.sessionId !== sessionId) : current);
+      setSessionListStatus('Chat deleted from the server.');
+      if (engineSessionRef.current === sessionId) clearConversation();
+      return true;
+    } catch (error) {
+      setSessionListStatus('');
+      setSessionListError('The chat could not be deleted. ' + (error instanceof Error ? error.message : 'Try again.'));
+      return false;
+    }
+  };
+
+  const exportSession = async (sessionId: string, format: 'md' | 'json') => {
+    setSessionListStatus('Preparing the export…');
+    try {
+      const file = await exportEngineSession(sessionId, format);
+      const saved = downloadTextFile(file.filename, file.content, format === 'json' ? 'application/json' : 'text/markdown');
+      setSessionListStatus(saved
+        ? 'Exported ' + file.filename + '.'
+        : 'The export was prepared but this browser blocked the download. Try again.');
+    } catch (error) {
+      setSessionListStatus('');
+      setSessionListError('The export could not be prepared. ' + (error instanceof Error ? error.message : 'Try again.'));
+    }
+  };
+
+  /** Model switching: POST the session route, or carry the choice into create. */
+  const chooseModel = async (model: EngineModel) => {
+    const choice = { providerID: model.providerID, id: model.id };
+    setSelectedModel(choice);
+    setModelsError('');
+    const sessionId = engineSessionRef.current;
+    if (!sessionId) return;
+    setModelsBusy(true);
+    try {
+      const updated = await switchEngineModel(sessionId, { providerID: model.providerID, model: model.id });
+      setEngineNote('Model changed to ' + model.label + ' for this chat.');
+      setActiveSession(current => current ? {
+        ...current,
+        model: updated?.model ?? { providerID: model.providerID, id: model.id },
+      } : { sessionId, model: { providerID: model.providerID, id: model.id } });
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      setModelsError('The model could not be changed' + (status ? ' (' + status + ')' : '') + '. ' + (error instanceof Error ? error.message : 'Try again.'));
+      await loadModels();
+    } finally {
+      setModelsBusy(false);
+    }
+  };
+
+  /** Push-to-talk: transcript goes into the textarea for review; never auto-sent. */
+  const ensureVoiceInput = (): VoiceInputController => {
+    if (voiceController.current) return voiceController.current;
+    const controller = createVoiceInput({
+      onTranscript: (text, final) => {
+        const base = voiceBase.current.trim();
+        setPrompt(base ? base + ' ' + text : text);
+        if (final) {
+          setListening(false);
+          voiceBase.current = '';
+          window.setTimeout(() => promptRef.current?.focus(), 0);
+        }
+      },
+      onState: state => {
+        setListening(state === 'listening');
+      },
+      onError: message => {
+        setListening(false);
+        setVoiceNote(message);
+      },
+    });
+    voiceController.current = controller;
+    return controller;
+  };
+
+  const toggleVoiceInput = async () => {
+    setVoiceNote('');
+    if (listening) {
+      voiceController.current?.stop();
+      setListening(false);
+      return;
+    }
+    if (!voiceInputSupported) {
+      setVoiceNote('Voice input is not available in this browser. Type your message instead.');
+      return;
+    }
+    cancelSpeech();
+    voiceBase.current = prompt;
+    const started = await ensureVoiceInput().start();
+    setListening(started);
+  };
+
+  const toggleVoiceMode = () => {
+    const next = !voiceMode;
+    setVoiceMode(next);
+    writeVoicePreferences({ voiceMode: next });
+    if (!next) {
+      cancelSpeech();
+      const last = messages[messages.length - 1];
+      spokenMessageId.current = last?.id ?? null;
+    }
+  };
+
+  // Speak a completed assistant answer once, only while voice mode is on.
+  useEffect(() => {
+    if (!voiceMode || !voiceOutputSupported || loading) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.sender !== 'assistant' || last.tone === 'error') return;
+    if (spokenMessageId.current === last.id) return;
+    spokenMessageId.current = last.id;
+    speak(last.text);
+  }, [messages, voiceMode, loading, voiceOutputSupported]);
+
+  useEffect(() => () => {
+    voiceController.current?.dispose();
+    voiceController.current = null;
+    cancelSpeech();
+  }, []);
+
+  // Persist the live turn's timeline onto its latest assistant message, and
+  // clear the copy from the previous anchor when an intermediate step's message
+  // is superseded by the turn's final answer.
+  useEffect(() => {
+    const anchor = liveActivity.anchorId;
+    if (!anchor) {
+      previousActivityAnchor.current = null;
+      return;
+    }
+    const previous = previousActivityAnchor.current;
+    previousActivityAnchor.current = anchor;
+    setMessages(old => {
+      let changed = false;
+      const next = old.map(message => {
+        if (message.id === anchor) {
+          if (message.activity === liveActivity.entries && message.todos === liveActivity.todos) return message;
+          changed = true;
+          return { ...message, activity: liveActivity.entries, todos: liveActivity.todos };
+        }
+        if (previous && previous !== anchor && message.id === previous && (message.activity || message.todos)) {
+          changed = true;
+          return { ...message, activity: undefined, todos: undefined };
+        }
+        return message;
+      });
+      return changed ? next : old;
+    });
+  }, [liveActivity]);
+
+  /**
+   * Long turns are real: an NSE scan can run for minutes. At 90 s the turn
+   * stays alive (cursor + Stop) with a calm note; at 20 min the spinner stops
+   * with "still running on the server" and the session/activity are kept.
+   * Completion is only ever reported by the engine.
+   */
+  useEffect(() => {
+    if (!loading) return undefined;
+    setTurnLong(false);
+    setTurnExpired(false);
+    const long = window.setTimeout(() => {
+      setTurnLong(true);
+      setEngineNote('Still working on the server · reconnecting');
+    }, 90_000);
+    const expire = window.setTimeout(() => {
+      setTurnExpired(true);
+      setTurnLong(false);
+      setLoading(false);
+      updateActivity(current => ({ ...current, running: false, currentStep: undefined }));
+      setEngineNote('Still running on the server — reload to resync');
+    }, 20 * 60_000);
+    turnTimers.current = { long, expire };
+    return () => {
+      window.clearTimeout(long);
+      window.clearTimeout(expire);
+      turnTimers.current = { long: null, expire: null };
+    };
+    // updateActivity is stable by closure over a ref; the timer is keyed to the turn.
+  }, [loading]);
+
+  useEffect(() => {
+    if (!turnLong && !turnExpired) return;
+    if (pinnedRef.current) scrollToLatest('auto');
+    // The note belongs to the reader only while they are at the bottom.
+  }, [turnLong, turnExpired]);
 
   const copyMessage = async (message: ChatMessage) => {
     try {
@@ -723,13 +1893,6 @@ export const AiCopilotDock: React.FC<Props> = ({
     return '';
   };
 
-  const rememberCurrentConversation = (current: ChatMessage[]) => {
-    if (!current.length) return;
-    const archived = current.slice(-40);
-    setArchivedMessages(archived);
-    saveMessages(ARCHIVE_KEY, archived);
-  };
-
   const discardChartImage = () => {
     imageGeneration.current++;
     setChartImage(null);
@@ -746,7 +1909,6 @@ export const AiCopilotDock: React.FC<Props> = ({
     abort.current?.abort();
     onCancelResearch?.();
     discardChartImage();
-    rememberCurrentConversation(messages);
     setMessages([]);
     setPrompt('');
     setLoading(false);
@@ -783,71 +1945,40 @@ export const AiCopilotDock: React.FC<Props> = ({
     followAnswer.current = false;
     setJumpVisible(false);
     pendingApply.current = null;
-  };
-
-  const restorePreviousConversation = () => {
-    rememberPendingScan(null);
-    const current = messages;
-    const previous = archivedMessages;
-    // Restoring is a conversation switch: any in-flight screen, draft, review or
-    // validated result belongs to the conversation being archived and must be
-    // discarded rather than attached to the restored one.
-    generation.current++;
-    runGeneration.current++;
-    clipboardGeneration.current++;
-    abort.current?.abort();
-    onCancelResearch?.();
-    discardChartImage();
-    reviewRef.current = null;
-    pendingApply.current = null;
-    setMessages(previous);
-    if (current.length) {
-      setArchivedMessages(current);
-      saveMessages(ARCHIVE_KEY, current);
-    } else {
-      setArchivedMessages([]);
-      try { localStorage.removeItem(ARCHIVE_KEY); } catch { /* Storage may be unavailable. */ }
-    }
-    setPrompt('');
-    setLoading(false);
-    scanPendingRef.current = false;
-    setScanPending(false);
-    setScanResult(null);
-    setScanError('');
-    setScreenPlan(null);
-    setChartReading(null);
-    setAwaitingChartConfirm(false);
-    setProposal(null);
-    setReview(null);
-    setReviewStatus('idle');
-    setReviewError('');
-    setValidatedResult(null);
-    setAwaitingSymbolFor(null);
-    setLastContext(null);
-    setBacktestChoice(null);
-    setError('');
-    setApplied(null);
-    setApplyStatus('');
-    setClipboardStatus('');
-    setSaveStatus('');
-    setSentChartImage(null);
-    setPendingDraftBacktest(null);
-    setCardMessageId(null);
-    setCopiedMessageId(null);
-    setPastCards([]);
-    setWorkingAnchorId(null);
-    setResultAnchorId(null);
-    setStalledScan(null);
-    setStalledRun(null);
-    revealIntent.current = null;
-    followAnswer.current = false;
-    setJumpVisible(false);
+    // A new chat starts a new engine session; the old cursor is not reused.
+    engineSubscription.current?.close();
+    engineSubscription.current = null;
+    engineGeneration.current++;
+    engineSessionRef.current = null;
+    setEngineSessionId(null);
+    engineSeqRef.current = 0;
+    engineSeenIds.current = new Set();
+    pendingUserText.current = null;
+    pendingUserMessageId.current = null;
+    clearStoredEngineSession();
+    writeSessionUrl(null);
+    setActiveSession(null);
+    setEngineUsage(null);
+    setTurnLong(false);
+    setTurnExpired(false);
+    setEngineApproval(null);
+    setInterruptedJob(null);
+    setRestoredCards([]);
+    setSessionListStatus('');
+    setEngineNote('');
+    setHistoryOpen(false);
+    resetActivity();
   };
 
   const cancelPendingRequest = () => {
     rememberPendingScan(null);
     generation.current++;
     abort.current?.abort();
+    if (engineSessionRef.current) {
+      // The engine owns a running turn; interrupt it rather than pretending it stopped.
+      void interruptEngineSession(engineSessionRef.current).catch(() => {});
+      setEngineNote('Stop requested. The engine was asked to interrupt this turn.');
+    }
     setLoading(false);
     scanPendingRef.current = false;
     setScanPending(false);
@@ -1458,8 +2589,10 @@ export const AiCopilotDock: React.FC<Props> = ({
   const submitText = async (raw: string, attachedImage: ChartImageAttachment | null = null) => {
     const text = raw.trim();
     if ((!text && !attachedImage) || loading || reviewStatus === 'running' || pendingApply.current) return;
+    // A new user turn stops any answer being read aloud.
+    cancelSpeech();
     setChartRetry(null);
-    append('user', attachedImage ? '[chart image attached]' : text);
+    const userMessageId = append('user', attachedImage ? '[chart image attached]' : text);
     setError('');
     setApplyStatus('');
     setSaveStatus('');
@@ -1497,6 +2630,27 @@ export const AiCopilotDock: React.FC<Props> = ({
     setBacktestChoice(null);
     }
 
+    // The OpenCode engine is the only chat path. A fresh chart upload stays on
+    // the dedicated chart-analysis job (202 + polling): probing an engine
+    // session first would change that route's ordering. Once a session exists,
+    // the image rides with the engine prompt.
+    if (!attachedImage || engineSessionRef.current) {
+      pendingUserText.current = attachedImage ? '[chart image attached]' : text;
+      pendingUserMessageId.current = userMessageId;
+      if (attachedImage) {
+        archiveCompletedCard();
+        setChartReading(null);
+        setScreenPlan(null);
+        setAwaitingChartConfirm(false);
+        setLastContext(null);
+        setBacktestChoice(null);
+      }
+      // A failure is shown as a typed, retryable card; it never falls through
+      // to another chat route.
+      await sendThroughEngine(text, attachedImage);
+      return;
+    }
+
     let current: StrategyAST;
     try { current = snapshotStrategy(strategy); } catch (caught) {
       append('assistant', 'Your workspace strategy cannot be validated: ' + (caught as Error).message + ' Nothing was sent.', { tone: 'error' });
@@ -1524,7 +2678,7 @@ export const AiCopilotDock: React.FC<Props> = ({
 
     try {
       let chartCacheUsed = false;
-      let data: ChartAnalysisResponse | ResearchChatResponse;
+      let data: ChartAnalysisResponse;
       if (attachedImage) {
         const hash = await chartImageHash(attachedImage.dataUrl);
         const cached = hash ? readCachedChartAnalysis(hash) : null;
@@ -1540,19 +2694,10 @@ export const AiCopilotDock: React.FC<Props> = ({
           if (hash) writeCachedChartAnalysis(hash, data);
         }
       } else {
-        data = await requestResearchChat({
-          message: text,
-          currentStrategy: current,
-          originatingRevision,
-          allowLocalFallback: allowLocal,
-          history: messages.slice(-20).map(message => ({ role: message.sender, text: message.text })),
-          ...(screenPlan ? { screenContext: { strategy: screenPlan.strategy, universe: screenPlan.universe } } : {}),
-        }, controller.signal);
+        // Unreachable: text turns returned through the engine above.
+        return;
       }
       if (generation.current !== owned) return;
-      // Chart analysis has no workspace revision handshake; its owner generation
-      // already discards results after a workspace change.
-      if (!attachedImage && data.originatingRevision !== originatingRevision) throw new Error('This research response is stale.');
       const receivedChartReading: ChartImageReading | null =
         (data as ChartAnalysisResponse).chartReading ?? (data.kind === 'screen' ? chartReadingFromScreen(data) : null);
       // A deterministic market answer is a successful local result, not a provider failure.
@@ -1860,7 +3005,6 @@ export const AiCopilotDock: React.FC<Props> = ({
       .map(change => withPercentSuffix(change, proposal.validatedCandidate))
     : [];
   const headlineChange = draftChanges.find(change => change.plain);
-  const historySaved = historyStatus === 'History stays in this browser.';
   // ONE polite announcement for the whole conversation: start and finish only.
   const statusMessage = loading
     ? 'Stragy is working on your request.'
@@ -2077,9 +3221,109 @@ export const AiCopilotDock: React.FC<Props> = ({
       )}
     </>
   );
+
+  /**
+   * A card from a restored engine session. Read-only: it shows the durable
+   * result but never offers apply/run on a stale draft from another session.
+   */
+  const restoredCardView = (card: RestoredCard) => (
+    <>
+      {!card.plan && card.scanResult && <EngineScanResultCard result={card.scanResult} />}
+      {card.plan && card.chartReading && (
+        <ChartReadingCard
+          plan={card.plan}
+          reading={card.chartReading}
+          past
+          applied={false}
+          canApply={false}
+          busy={false}
+          scanning={false}
+        />
+      )}
+      {card.plan && card.scanResult && (
+        <ScreenResultCard
+          plan={card.plan}
+          result={card.scanResult}
+          pending={false}
+          error=""
+          busy={false}
+          onPrepareBacktest={(symbolId, matchAsOf) => {
+            const symbol = symbols.find(candidate => candidate.id === symbolId);
+            if (symbol) {
+              prepareReview('screen', symbol, matchAsOf, {
+                strategy: card.plan!.strategy,
+                asOf: card.scanResult?.observationDates?.latest ?? card.plan!.asOf,
+                sourceLabel: 'Restored screen “' + card.plan!.strategy.name + '” from an earlier engine session',
+                assumptions: card.plan!.assumptions,
+              });
+            } else {
+              append('assistant', 'The symbol list is unavailable, so I cannot prepare a backtest for that match.');
+            }
+          }}
+        />
+      )}
+      {card.plan && !card.scanResult && (
+        <article aria-label="Restored screen plan">
+          <CardShell
+            density="compact"
+            title={card.plan.strategy.name}
+            meta={universeLabel(card.plan.universe) + ' · saved screen plan from an earlier engine session · rows were not kept in this transcript'}
+            status="Saved plan"
+            statusBelow
+          >
+            <p className="text-[13px] leading-5 text-[var(--text-2)]">Ask the engine to run this screen again if you want fresh rows.</p>
+          </CardShell>
+        </article>
+      )}
+      {card.result && (
+        <BacktestResultCard result={card.result} onOpenDetails={() => onOpenDetails?.(card.result!)} />
+      )}
+      {card.proposal && (
+        <article aria-label="Restored draft">
+          <CardShell
+            density="compact"
+            title={card.proposal.name}
+            meta={card.proposal.provider + ' · from an earlier engine session · not applied, not run'}
+            status="Restored draft"
+            statusBelow
+          >
+            {card.proposal.changes.length ? (
+              <ul className="list-disc space-y-1 pl-4">
+                {card.proposal.changes.slice(0, 8).map((change, index) => (
+                  <li key={index} className="text-[13px] leading-5 text-[var(--text-2)]">{change}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[13px] leading-5 text-[var(--text-2)]">No field changes were recorded for this draft.</p>
+            )}
+          </CardShell>
+        </article>
+      )}
+    </>
+  );
   const workingAnchored = workingAnchorId !== null && messages.some(message => message.id === workingAnchorId);
   const lastAssistantIndex = messages.reduce((last, message, index) => message.sender === 'assistant' ? index : last, -1);
   const resultAnchored = resultAnchorId !== null && messages.some(message => message.id === resultAnchorId);
+
+  const historyPanel = (
+    <SessionHistoryPanel
+      sessions={sessionList ?? (activeSession ? [activeSession] : [])}
+      activeSessionId={engineSessionId}
+      activeSession={activeSession}
+      loading={sessionListLoading}
+      error={sessionListError}
+      query={historyQuery}
+      onQueryChange={setHistoryQuery}
+      onRetry={() => void refreshHistory(historyQuery)}
+      onNewChat={() => { clearConversation(); }}
+      onSwitch={sessionId => void loadEngineSession(sessionId)}
+      onRename={renameSession}
+      onDelete={deleteSession}
+      onExport={(sessionId, format) => void exportSession(sessionId, format)}
+      status={sessionListStatus}
+    />
+  );
+  const dataUniverse = String(screenPlan?.universe ?? 'NIFTY_50');
 
   return (
     <section
@@ -2088,7 +3332,32 @@ export const AiCopilotDock: React.FC<Props> = ({
       onKeyDown={event => { if (event.key === 'Escape' && onClose) onClose(); }}
     >
       <p role="status" aria-live="polite" className="sr-only">{statusMessage}</p>
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <ChatHeader
+        session={activeSession}
+        sessionId={engineSessionId}
+        models={models}
+        modelsLoading={modelsLoading}
+        modelsError={modelsError}
+        selectedModel={activeSession?.model?.providerID && activeSession.model.id
+          ? { providerID: activeSession.model.providerID, id: activeSession.model.id }
+          : selectedModel}
+        onSelectModel={model => void chooseModel(model)}
+        onRetryModels={() => void loadModels()}
+        modelsBusy={modelsBusy}
+        link={engineLink}
+        loading={loading}
+        onOpenHistory={() => setHistoryOpen(true)}
+        onOpenData={() => setDataOpen(true)}
+        onOpenSystem={() => setSystemOpen(true)}
+        onNewChat={() => clearConversation()}
+      />
+      <div className="flex min-h-0 flex-1">
+        {historyOpen && !isMobile && (
+          <aside aria-label="Chat history" data-testid="history-panel" className="hidden w-[292px] shrink-0 flex-col border-r border-[var(--line)] bg-[#141416] md:flex">
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">{historyPanel}</div>
+          </aside>
+        )}
+        <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={logRef}
           role="log"
@@ -2103,11 +3372,14 @@ export const AiCopilotDock: React.FC<Props> = ({
           className="min-h-0 flex-1 overflow-y-auto px-4 py-6 [mask-image:linear-gradient(to_bottom,transparent,#000_8px)] sm:px-6"
         >
           <div className="mx-auto w-full max-w-[832px]">
-            {archivedMessages.length > 0 && (
-              <div className="st-meta mb-6 flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] bg-[var(--surface-2)] px-3 py-2 text-[var(--text-2)]">
-                <span>A previous conversation is saved in this browser.</span>
-                <button type="button" onClick={restorePreviousConversation} className="inline-flex min-h-11 items-center underline decoration-[var(--line-strong)] underline-offset-2 transition-colors hover:text-[var(--text-1)] sm:min-h-8">
-                  Restore previous conversation ({archivedMessages.length})
+            {engineSessionId && (
+              <div className="mb-6 flex flex-wrap items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(true)}
+                  className="st-meta inline-flex min-h-11 items-center underline decoration-[var(--line-strong)] underline-offset-2 text-[var(--text-2)] transition-colors hover:text-[var(--text-1)] sm:min-h-8"
+                >
+                  Chat history
                 </button>
               </div>
             )}
@@ -2148,6 +3420,20 @@ export const AiCopilotDock: React.FC<Props> = ({
                     {message.text}
                   </div>
                 </article>
+              ) : message.errorCode ? (
+                <article
+                  ref={index === messages.length - 1 ? lastMessageRef : undefined}
+                  className="w-full"
+                >
+                  <EngineErrorCard
+                    message={message.text}
+                    code={message.errorCode}
+                    {...(message.errorStatus ? { status: message.errorStatus } : {})}
+                    retryable={message.errorRetryable !== false}
+                    retrying={retryingEngine}
+                    onRetry={() => void retryEngineTurn(message)}
+                  />
+                </article>
               ) : (
                 <article
                   ref={index === messages.length - 1 ? lastMessageRef : undefined}
@@ -2177,6 +3463,22 @@ export const AiCopilotDock: React.FC<Props> = ({
                     const sources = sourcesFor(message.text);
                     return sources.length ? <Sources sources={sources} /> : null;
                   })()}
+                  {liveActivity.anchorId === message.id ? (
+                    <>
+                      <AgentActivity
+                        entries={liveActivity.entries}
+                        running={liveActivity.running}
+                        {...(liveActivity.currentStep ? { currentStep: liveActivity.currentStep } : {})}
+                        {...(liveActivity.running ? { onStop: stopEngineTurn } : {})}
+                      />
+                      <AgentTodoList items={liveActivity.todos} />
+                    </>
+                  ) : (message.activity?.length || message.todos?.length) ? (
+                    <>
+                      <AgentActivity entries={message.activity ?? []} running={false} />
+                      <AgentTodoList items={message.todos ?? []} />
+                    </>
+                  ) : null}
                   {(() => {
                     // Retry belongs to the latest answer only (older ones keep Copy),
                     // and an error reply's action is the card's own Retry.
@@ -2222,18 +3524,108 @@ export const AiCopilotDock: React.FC<Props> = ({
                 )}
                 {workingAnchorId === message.id && <div className="space-y-6">{workingCards}</div>}
                 {resultAnchorId === message.id && <div className="space-y-6">{resultCard}</div>}
+                {restoredCards.filter(card => card.messageId === message.id).map(card => (
+                  <div key={card.id} className="space-y-6">{restoredCardView(card)}</div>
+                ))}
                 {pastCards.filter(card => card.messageId === message.id).map(card => (
                   <div key={card.id} className="space-y-6">{pastCardView(card)}</div>
                 ))}
                 </React.Fragment>
               ))}
 
-              {showPending && !scanPending && <AssistantPending />}
+              {turnLong && loading && (
+                <div role="status" data-testid="long-turn-note" className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2">
+                  <p className="st-meta flex min-w-0 items-center gap-2 text-[var(--text-2)]">
+                    <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
+                    Still working on the server · reconnecting
+                  </p>
+                  <button type="button" onClick={stopEngineTurn} className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] sm:min-h-8">
+                    Stop
+                  </button>
+                </div>
+              )}
+              {turnExpired && (
+                <div role="status" data-testid="long-turn-note" className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--r-inner)] border border-[var(--warn)]/30 bg-[var(--warn)]/[0.05] px-3 py-2.5">
+                  <p className="st-meta min-w-0 text-[var(--text-2)]">Still running on the server — reload to resync. The chat is saved; nothing was discarded.</p>
+                  <button type="button" onClick={() => window.location.reload()} className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-1)] transition-colors hover:bg-[var(--surface-hover)] sm:min-h-8">
+                    Reload
+                  </button>
+                </div>
+              )}
+              {showPending && !scanPending && !turnHasActivity && !turnExpired && <AssistantPending />}
               {!workingAnchored && workingCards}
               {!resultAnchored && resultCard}
+              {scanResult && !screenPlan && <EngineScanResultCard result={scanResult} />}
               {pastCards
                 .filter(card => !card.messageId || !messages.some(message => message.id === card.messageId))
                 .map(card => <div key={card.id} className="space-y-6">{pastCardView(card)}</div>)}
+              {restoredCards
+                .filter(card => !messages.some(message => message.id === card.messageId))
+                .map(card => <div key={card.id} className="space-y-6">{restoredCardView(card)}</div>)}
+
+              {(liveActivity.entries.length > 0 || liveActivity.todos.length > 0) && !messages.some(message => message.id === liveActivity.anchorId) && (
+                <div className="space-y-0">
+                  <AgentActivity
+                    entries={liveActivity.entries}
+                    running={liveActivity.running}
+                    {...(liveActivity.currentStep ? { currentStep: liveActivity.currentStep } : {})}
+                    {...(liveActivity.running ? { onStop: stopEngineTurn } : {})}
+                  />
+                  <AgentTodoList items={liveActivity.todos} />
+                </div>
+              )}
+
+              {engineApproval && (
+                <article aria-label="Engine approval">
+                  <CardShell
+                    tone="review"
+                    density="compact"
+                    title={engineApproval.title}
+                    meta="The engine is waiting for your explicit approval. Nothing has run."
+                    status="Approval pending"
+                    statusBelow
+                    footer={(
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void decideEngineApproval('approve')}
+                          className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] bg-[var(--accent)] px-3.5 font-semibold text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-strong)] sm:min-h-9"
+                        >
+                          Use these assumptions and run
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void decideEngineApproval('reject')}
+                          className="st-meta inline-flex min-h-11 items-center rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 text-[var(--text-2)] transition-colors hover:bg-[var(--surface-hover)] sm:min-h-9"
+                        >
+                          Not now
+                        </button>
+                      </div>
+                    )}
+                  >
+                    {engineApproval.summary.length ? (
+                      <ul className="list-disc space-y-1 pl-4">
+                        {engineApproval.summary.map((item, index) => <li key={index} className="text-[13px] leading-5 text-[var(--text-2)]">{item}</li>)}
+                      </ul>
+                    ) : (
+                      <p className="text-[13px] leading-5 text-[var(--text-2)]">Review the saved assumptions before approving this step.</p>
+                    )}
+                  </CardShell>
+                </article>
+              )}
+
+              {interruptedJob && (
+                <div role="alert" aria-label="Interrupted research" className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-inner)] border border-[var(--warn)]/30 bg-[var(--warn)]/[0.06] px-3 py-2.5">
+                  <p className="st-meta min-w-0 flex-1 text-[var(--text-2)]">The server restarted mid-scan. The job was saved on the server; resume it to continue from the bars already fetched.</p>
+                  <button
+                    type="button"
+                    onClick={() => void resumeInterrupted()}
+                    className="st-meta inline-flex min-h-11 items-center gap-1.5 rounded-[var(--r-btn)] border border-[var(--line-strong)] px-3 font-semibold text-[var(--text-1)] transition-colors hover:bg-[var(--surface-hover)] sm:min-h-9"
+                  >
+                    <RefreshCw size={13} aria-hidden="true" /> Resume
+                  </button>
+                </div>
+              )}
 
               <div ref={endRef} />
             </div>
@@ -2256,11 +3648,19 @@ export const AiCopilotDock: React.FC<Props> = ({
             </div>
           </div>
         )}
-      </div>
 
       <div className="shrink-0 border-t border-[var(--line)] bg-[#111113] px-4 py-3 sm:px-6 sm:py-4">
         <div className="mx-auto w-full max-w-[832px] space-y-2">
           {applyStatus && <p role="status" className="st-meta text-[var(--text-3)]">{applyStatus}</p>}
+          {engineNote && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p role="status" className="st-meta min-w-0 text-[var(--text-3)]">{engineNote}</p>
+            </div>
+          )}
+          {engineStatus === 'ready' && engineLink === 'reconnecting' && (
+            <p role="status" className="st-meta text-[#f5d383]">Reconnecting to the engine — the saved conversation stays.</p>
+          )}
+          {voiceNote && <p role="status" className="st-meta text-[#f5d383]">{voiceNote}</p>}
           {clipboardStatus && <p role="status" className="st-meta text-[var(--text-3)]">{clipboardStatus}</p>}
           {saveStatus && <p role="status" className="st-meta text-[var(--text-3)]">{saveStatus}</p>}
           {error && <p role="alert" className="st-meta text-[var(--down)]">{error}</p>}
@@ -2307,6 +3707,12 @@ export const AiCopilotDock: React.FC<Props> = ({
               {preparingImage && <p role="status" className="st-meta mb-1 px-1 text-[var(--text-3)]">Preparing chart image…</p>}
               {imageError && <p role="alert" className="st-meta mb-1 px-1 text-[var(--down)]">{imageError}</p>}
               {dragActive && <p className="st-meta mb-1 px-1 text-[var(--accent)]">Drop a chart image to attach it.</p>}
+              {listening && (
+                <p role="status" className="st-meta mb-1 flex items-center gap-2 px-1 text-[var(--accent)]">
+                  <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
+                  Listening… the transcript appears below for review; nothing sends automatically.
+                </p>
+              )}
               <textarea
                 id="copilot-prompt"
                 ref={promptRef}
@@ -2350,10 +3756,35 @@ export const AiCopilotDock: React.FC<Props> = ({
                   >
                     <ImagePlus size={15} aria-hidden="true" />
                   </button>
+                  {/* Push-to-talk: browser STT first, recorder fallback. 44px target. */}
+                  <button
+                    type="button"
+                    aria-label={listening ? 'Stop voice input' : 'Start voice input'}
+                    aria-pressed={listening}
+                    title={voiceInputSupported ? 'Dictate your message (the transcript is not sent automatically)' : 'Voice input is not available in this browser'}
+                    disabled={loading || reviewStatus === 'running' || preparingImage || !!pendingApply.current}
+                    onClick={() => void toggleVoiceInput()}
+                    className={(listening ? 'text-[var(--accent)] ' : 'text-[var(--text-3)] ') + 'inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--r-btn)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 sm:min-w-8'}
+                  >
+                    {listening ? <MicOff size={15} aria-hidden="true" /> : <Mic size={15} aria-hidden="true" />}
+                  </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  {/* One control in this slot: send, or cancel while a request runs. */}
-                  {busy ? (
+                  {/* Spoken replies are a persisted, opt-in preference. */}
+                  <button
+                    type="button"
+                    aria-label={voiceMode ? 'Turn voice replies off' : 'Turn voice replies on'}
+                    aria-pressed={voiceMode}
+                    title={voiceOutputSupported ? 'Read assistant answers aloud' : 'Voice replies are not available in this browser'}
+                    disabled={!voiceOutputSupported}
+                    onClick={toggleVoiceMode}
+                    className={(voiceMode ? 'text-[var(--accent)] ' : 'text-[var(--text-3)] ') + 'inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--r-btn)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-8 sm:min-w-8'}
+                  >
+                    {voiceMode ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}
+                  </button>
+                  {/* One control in this slot: send, or cancel legacy work. An engine
+                      turn is stopped from its activity strip, so this slot stays empty. */}
+                  {busy && !engineTurnInFlight ? (
                     <button
                       type="button"
                       onClick={reviewStatus === 'running' ? cancelRun : cancelPendingRequest}
@@ -2361,7 +3792,17 @@ export const AiCopilotDock: React.FC<Props> = ({
                     >
                       Cancel research
                     </button>
-                  ) : (
+                  ) : engineTurnInFlight ? (
+                    <button
+                      type="button"
+                      disabled
+                      title="The engine is still working. Stop the turn to send another message."
+                      aria-label="Stop first — the engine is still working"
+                      className="st-meta inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-[var(--line-strong)] px-3.5 text-[var(--text-3)] disabled:cursor-not-allowed sm:min-h-9"
+                    >
+                      Stop first
+                    </button>
+                  ) : !busy ? (
                     <button
                       type="submit"
                       disabled={!canSubmit}
@@ -2370,16 +3811,28 @@ export const AiCopilotDock: React.FC<Props> = ({
                       <Send size={13} aria-hidden="true" />
                       Send request
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>
           </form>
+          {engineTurnInFlight && (
+            <p className="st-meta text-[var(--text-3)]">The engine is still working. Stop the turn before sending another message.</p>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <p className="st-meta hidden text-[var(--text-3)] sm:block">Enter to send · Shift+Enter for a new line · no broker orders</p>
             <p className="st-meta text-[var(--text-3)]">
-              <span className={historySaved ? 'sm:hidden' : ''}>{historySaved ? 'History stays in this browser · not investment advice' : historyStatus}</span>
-              {historySaved && <span className="hidden sm:inline">{historyStatus} Research output is not investment advice.</span>}
+              {engineConversation ? (
+                <>
+                  <span className="sm:hidden">Conversation saved on the server · not investment advice</span>
+                  <span className="hidden sm:inline">Conversation saved on the server. Research output is not investment advice.</span>
+                </>
+              ) : (
+                <>
+                  <span className="sm:hidden">Messages are saved once an engine chat starts · not investment advice</span>
+                  <span className="hidden sm:inline">A new chat starts empty; messages are saved on the server once the engine session starts. Research output is not investment advice.</span>
+                </>
+              )}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -2388,14 +3841,23 @@ export const AiCopilotDock: React.FC<Props> = ({
                 <X size={12} aria-hidden="true" /> Close chat
               </button>
             )}
-            {archivedMessages.length > 0 && (
-              <button type="button" onClick={restorePreviousConversation} className="st-meta inline-flex min-h-11 items-center gap-1 text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] sm:min-h-8">
-                <Plus size={12} aria-hidden="true" /> Restore previous
-              </button>
-            )}
           </div>
         </div>
+        </div>
       </div>
+      </div>
+      {isMobile && (
+        <SlideOver open={historyOpen} title="Chat history" side="left" onClose={() => setHistoryOpen(false)} testId="history-panel">
+          {historyPanel}
+        </SlideOver>
+      )}
+      <DataCachePanel open={dataOpen} onClose={() => setDataOpen(false)} universe={dataUniverse} />
+      <SystemPanel
+        open={systemOpen}
+        onClose={() => setSystemOpen(false)}
+        activeSessionId={engineSessionId}
+        activeSession={activeSession}
+      />
     </section>
   );
 };

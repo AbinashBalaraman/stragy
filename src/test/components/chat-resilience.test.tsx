@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AiCopilotDock, PENDING_SCAN_KEY } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
-import { requestResearchChat } from '../../client/researchChat';
 import { cancelResearchJob, checkBacktestJob, checkScanJob, requestScan } from '../../client/api';
+import { engineReply, resetEngineHarness } from '../../test/support/engineMock';
 import type { BacktestResponse } from '../../shared/strategy/types';
 import type { ResearchScreenPlan } from '../../shared/contracts/research-chat';
 
-vi.mock('../../client/researchChat', () => ({ requestResearchChat: vi.fn() }));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api', () => ({
   requestScan: vi.fn(),
   checkScanJob: vi.fn(),
@@ -52,7 +52,7 @@ const plan = (): ResearchScreenPlan => ({
 const screenReply = () => ({
   schemaVersion: 1, kind: 'screen', originatingRevision: 1, message: 'Scanning Nifty 50 for RSI above 60.',
   method: 'rule_parser', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [],
-  universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: [], backtestReady: false,
+  universe: 'NIFTY_50', strategy: validStrategy(), assumptions: [], missingBacktestRules: ['exits'], backtestReady: false,
 } as never);
 
 const deadline = (jobId: string) => Object.assign(new Error('Research request deadline exceeded.'), { code: 'CLIENT_DEADLINE', jobId });
@@ -63,7 +63,21 @@ let dom: JSDOM;
 beforeEach(() => {
   dom = new JSDOM('', { url: 'https://chat-resilience.test' });
   vi.stubGlobal('localStorage', dom.window.localStorage);
-  vi.mocked(requestResearchChat).mockResolvedValue(screenReply());
+  window.history.replaceState({}, '', '/');
+  resetEngineHarness();
+  engineReply({
+    ...(screenReply() as Record<string, unknown>),
+    __engineTool: {
+      name: 'scan_market',
+      run: async () => {
+        try { return { result: await vi.mocked(requestScan)({ universe: 'NIFTY_50', strategy: validStrategy() }) }; }
+        catch (error) {
+          const failure = error as { code?: string; message?: string; jobId?: string };
+          return { error: { ...(failure.code ? { code: failure.code } : {}), ...(failure.message ? { message: failure.message } : {}), ...(failure.jobId ? { jobId: failure.jobId } : {}) } };
+        }
+      },
+    },
+  });
   vi.mocked(cancelResearchJob).mockResolvedValue(undefined);
   vi.mocked(checkScanJob).mockResolvedValue({ state: 'running' });
   vi.mocked(checkBacktestJob).mockResolvedValue({ state: 'running' });

@@ -3,6 +3,7 @@ import { runBacktest } from '../backtest/engine';
 import { scanUniverseAsync } from '../backtest/scanner';
 import { buildMarketSnapshot } from '../backtest/marketSnapshot';
 import { analyzeChart, parseChartImageDataUrl } from '../ai/chartVision';
+import { runMarketCacheRefresh } from '../data/marketCacheRefresh';
 import { parseBacktestResult } from '../../shared/contracts/research';
 import { redact } from '../config';
 import { sourceCommit } from '../buildInfo';
@@ -19,11 +20,26 @@ async function main() {
     parentPort?.postMessage({ type:'result',result }); return;
   }
   if (payload.kind === 'scan') {
-    const result = await scanUniverseAsync(payload.strategy, payload.universe, { mode: payload.mode, asOf: payload.asOf, limit: payload.limit, offset: payload.offset, onProgress: stage => parentPort?.postMessage({ type: 'progress', stage }) });
+    const result = await scanUniverseAsync(payload.strategy, payload.universe, { mode: payload.mode, asOf: payload.asOf, limit: payload.limit, offset: payload.offset, maxSymbols: payload.maxSymbols, onProgress: (stage, counts) => parentPort?.postMessage({ type: 'progress', stage, ...(counts ? { processed: counts.processed, total: counts.total } : {}) }) });
     parentPort?.postMessage({ type:'result',result }); return;
   }
   if (payload.kind === 'market') {
     const result = await buildMarketSnapshot(payload.universe, payload.asOf, payload.mode, (stage, progress) => parentPort?.postMessage({ type: 'progress', stage, processed: progress?.processed, total: progress?.total }));
+    parentPort?.postMessage({ type:'result',result }); return;
+  }
+  if (payload.kind === 'cache') {
+    // Cache-first warm-up. The service resolves the universe and asks
+    // loadMarketSeries for each symbol, which downloads only the missing tail.
+    // The manager stops this worker to cancel; termination ends the signal-less run.
+    const controller = new AbortController();
+    const result = await runMarketCacheRefresh(
+      { universe: payload.universe, symbolIds: payload.symbolIds, maxSymbols: payload.maxSymbols },
+      {},
+      {
+        signal: controller.signal,
+        onProgress: state => parentPort?.postMessage({ type: 'progress', stage: 'cache ' + state.processed + '/' + state.total, processed: state.processed, total: state.total }),
+      },
+    );
     parentPort?.postMessage({ type:'result',result }); return;
   }
   const result = runBacktest(payload.strategy, payload.bars, payload.options);

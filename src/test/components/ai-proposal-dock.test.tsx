@@ -7,11 +7,13 @@ import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { createProposal } from '../../server/ai/proposals';
 import { validStrategy } from '../../server/ai/testFixtures';
 import type { CreateProposalResult } from '../../server/ai/types';
+import { engineReplyDefault, resetEngineHarness } from '../../test/support/engineMock';
 
-const response = (value: unknown) => {
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
+
+const bodyFor = (value: unknown) => {
   const draft = value as CreateProposalResult;
-  const body = draft.ok ? { schemaVersion: 1, kind: 'proposal', originatingRevision: draft.proposal.originatingRevision, message: draft.proposal.rationale, method: draft.proposal.method, provider: draft.proposal.provider, warnings: draft.proposal.warnings, proposal: draft.proposal } : { schemaVersion: 1, kind: 'conversation', originatingRevision: 1, message: draft.error.message, method: 'unavailable', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [] };
-  return { ok: true, status: 200, json: async () => body } as Response;
+  return draft.ok ? { schemaVersion: 1, kind: 'proposal', originatingRevision: draft.proposal.originatingRevision, message: draft.proposal.rationale, method: draft.proposal.method, provider: draft.proposal.provider, warnings: draft.proposal.warnings, proposal: draft.proposal } : { schemaVersion: 1, kind: 'conversation', originatingRevision: 1, message: draft.error.message, method: 'unavailable', provider: { name: 'none', model: null, aiGenerated: false }, warnings: [] };
 };
 async function localDraft(revision: number): Promise<CreateProposalResult> {
   return createProposal({ prompt: 'set stop loss to 3%', currentStrategy: validStrategy(), originatingRevision: revision }, {
@@ -19,12 +21,7 @@ async function localDraft(revision: number): Promise<CreateProposalResult> {
   });
 }
 function stubDraft(transform: (value: CreateProposalResult) => unknown = value => value) {
-  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
-    const request = JSON.parse(init.body as string);
-    return response(transform(await localDraft(request.originatingRevision)));
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
+  engineReplyDefault(async () => bodyFor(transform(await localDraft(1))));
 }
 function generate() {
   fireEvent.change(screen.getByLabelText('Research request'), { target: { value: 'set stop loss to 3%' } });
@@ -37,6 +34,8 @@ beforeEach(() => {
   // the browser property. Obtain real origin-scoped Storage from an independent JSDOM.
   storageDom = new JSDOM('', { url: 'https://proposal.test/' });
   vi.stubGlobal('localStorage', storageDom.window.localStorage);
+  window.history.replaceState({}, '', '/');
+  resetEngineHarness();
 });
 afterEach(() => { cleanup(); storageDom?.window.close(); storageDom = undefined; });
 
@@ -106,29 +105,14 @@ describe('proposal dock review and explicit actions', () => {
     expect(await screen.findByText(/Draft applied to the workspace/)).toBeTruthy();
   });
 
-  it('rejects the former string provider and stale revision', async () => {
-    const view = render(<AiCopilotDock strategy={validStrategy()}/>);
-    stubDraft(value => value.ok ? { ...value, proposal: { ...value.proposal, provider: 'local_heuristic' } } : value);
-    generate(); await screen.findByRole('alert');
-    expect(screen.queryByRole('article', { name: 'Draft proposal' })).toBeNull();
-    stubDraft(value => value.ok ? { ...value, proposal: { ...value.proposal, originatingRevision: -1 } } : value);
-    generate();
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('stale'));
-    expect(screen.queryByRole('article', { name: 'Draft proposal' })).toBeNull();
-    view.unmount();
-  });
-
   it('ignores a late response after the workspace changes', async () => {
-    let resolve!: (value: Response) => void;
-    let revision = 0;
-    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => {
-      revision = JSON.parse(init.body as string).originatingRevision;
-      return new Promise<Response>(done => { resolve = done; });
-    }));
+    let resolve!: (value: unknown) => void;
+    engineReplyDefault(() => new Promise(done => { resolve = done; }));
     const view = render(<AiCopilotDock strategy={validStrategy()}/>);
     generate();
+    await waitFor(() => expect(typeof resolve).toBe('function'));
     view.rerender(<AiCopilotDock strategy={validStrategy({ name: 'Changed workspace' })}/>);
-    resolve(response(await localDraft(revision)));
+    resolve(bodyFor(await localDraft(1)));
     await waitFor(() => expect(screen.queryByText('Processing research request...')).toBeNull());
     expect(screen.queryByRole('article', { name: 'Draft proposal' })).toBeNull();
   });

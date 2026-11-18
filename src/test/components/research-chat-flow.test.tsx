@@ -6,15 +6,15 @@ import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testi
 import { AiCopilotDock } from '../../components/chat/AiCopilotDock';
 import { validStrategy } from '../../server/ai/testFixtures';
 import type { BacktestResponse, StrategyAST } from '../../shared/strategy/types';
-import { researchChat } from '../../server/ai/researchChat';
-import { requestResearchChat } from '../../client/researchChat';
+import { postEngineMessage } from '../../client/engine';
+import { resetEngineHarness, engineReplyDefault, engineReplyOnce } from '../../test/support/engineMock';
 import { requestScan } from '../../client/api';
 import { requestFeatureSetup } from '../../client/featureSetup';
 import { FEATURE_PREFILL_EVENT } from '../../client/featureHandoff';
 import { buildChatDraft } from '../../shared/contracts/featureRegistry';
 import { resolveFeatureSetup } from '../../server/ai/featureSetup';
 import { validateStrategy } from '../../shared/strategy/schema';
-vi.mock('../../client/researchChat',()=>({requestResearchChat:vi.fn()}));
+vi.mock('../../client/engine', async () => await import('../../test/support/engineMock'));
 vi.mock('../../client/api',()=>({requestScan:vi.fn()}));
 vi.mock('../../client/featureSetup',()=>({requestFeatureSetup:vi.fn()}));
 let dom:JSDOM;
@@ -25,11 +25,19 @@ const matched=()=>({...zero(),matched:1,matches:[{symbolId:7,ticker:'RELIANCE',n
 const resultFor=(strategy:StrategyAST,overrides:Record<string,unknown>={})=>({backtestId:'run-'+strategy.id,strategy,symbol:reliantSymbol,metrics:{initialCapital:100000,finalEquity:101000,netPnl:1000,totalReturnPercent:1,cagr:null,sharpeRatio:null,maxDrawdownPercent:1,totalTrades:1,unavailableReasons:{}},equityCurve:[],trades:[],costs:{},robustness:{},indicatorsData:{},bars:[],executedAt:'2026-10-15T12:00:00Z',warnings:[],provenance:{mode:'real',source:'YAHOO_PUBLIC_CHART',asOf:'2026-10-15'},...overrides} as unknown as BacktestResponse);
 function send(){fireEvent.change(screen.getByLabelText('Research request'),{target:{value:'Find Nifty 50 RSI oversold now after recently overbought'}});fireEvent.click(screen.getByRole('button',{name:'Send request'}));}
 function sendText(value:string){fireEvent.change(screen.getByLabelText('Research request'),{target:{value}});fireEvent.click(screen.getByRole('button',{name:'Send request'}));}
-beforeEach(()=>{dom=new JSDOM('',{url:'https://research.test'});vi.stubGlobal('localStorage',dom.window.localStorage);vi.mocked(requestResearchChat).mockImplementation(input=>researchChat(input,{env:{AI_PROVIDER:'none'}}));});
+const screenPlan=(message='Scanning Nifty 50 for RSI above 60. Nothing is changed or run.')=>{const base=validStrategy();return {schemaVersion:1 as const,kind:'screen' as const,originatingRevision:1,message,method:'rule_parser' as const,provider:{name:'none',model:null,aiGenerated:false},warnings:[],universe:'NIFTY_50',strategy:{...base,indicators:[...base.indicators,{id:'rsi14',type:'RSI' as const,params:{period:14}}],rules:{...base.rules,entry:[base.rules.entry[0],{id:'e2',leftIndicator:'rsi14',operator:'lt' as const,rightValue:35,lookback:{bars:20,includeCurrent:false as const,match:'any' as const}}]}} as StrategyAST,assumptions:[],missingBacktestRules:['exits'],backtestReady:false};};
+const withScan=(plan:ReturnType<typeof screenPlan>)=>({...plan,__engineTool:{name:'scan_market',run:async()=>{try{return {result:await vi.mocked(requestScan)({universe:'NIFTY_50',strategy:plan.strategy})};}catch(error){const failure=error as {code?:string;message?:string;jobId?:string};return {error:{...(failure.code?{code:failure.code}:{}),...(failure.message?{message:failure.message}:{}),...(failure.jobId?{jobId:failure.jobId}:{})}};}}}} as Record<string,unknown>);
+beforeEach(()=>{resetEngineHarness();dom=new JSDOM('',{url:'https://research.test'});vi.stubGlobal('localStorage',dom.window.localStorage);engineReplyDefault(input=>{
+  const plan=screenPlan((input.text??'').includes('below 30')?'Scanning Nifty 50 for RSI below 30. Nothing is changed or run.':'Scanning Nifty 50 for RSI above 60. Nothing is changed or run.');
+  return {...plan,__engineTool:{name:'scan_market',run:async()=>{
+    try{return {result:await vi.mocked(requestScan)({universe:'NIFTY_50',strategy:plan.strategy})};}
+    catch(error){const failure=error as {code?:string;message?:string;jobId?:string};return {error:{...(failure.code?{code:failure.code}:{}),...(failure.message?{message:failure.message}:{}),...(failure.jobId?{jobId:failure.jobId}:{})}};}
+  }}};
+});});
 afterEach(()=>{cleanup();dom.window.close();vi.clearAllMocks();vi.unstubAllGlobals();});
 it('runs an explicit read-only screen and requires a separate reviewed action before any backtest',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const apply=vi.fn(),run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onApplyVariation={apply} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');expect(requestScan).toHaveBeenCalledTimes(1);expect(apply).not.toHaveBeenCalled();expect(run).not.toHaveBeenCalled();expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Prepare backtest for RELIANCE'}));expect(await screen.findByRole('article',{name:'Backtest review'})).toBeTruthy();expect(run).not.toHaveBeenCalled();fireEvent.click(screen.getByRole('button',{name:'Use these assumptions and run'}));await waitFor(()=>expect(run).toHaveBeenCalledTimes(1));expect(run.mock.calls[0]?.[0].rules.entry[1]?.lookback?.bars).toBe(20);expect(await screen.findByText(/Backtest completed/)).toBeTruthy();expect(apply).not.toHaveBeenCalled();});
 it('does not present failed or all-unavailable data as zero matches',async()=>{vi.mocked(requestScan).mockRejectedValue(new Error('HTTP 504'));const view=render(<AiCopilotDock strategy={validStrategy()}/>);send();expect((await screen.findByRole('alert')).textContent).toContain("The scan didn't finish. Try again.");
-expect(screen.getByRole('button', { name: 'Retry scan' })).toBeTruthy();expect(screen.queryByText('0 matches in successfully evaluated stocks.')).toBeNull();view.unmount();vi.mocked(requestScan).mockResolvedValue({...zero(),succeeded:0,unavailable:50,sourceCoverage:{}});render(<AiCopilotDock strategy={validStrategy()}/>);send();await screen.findByText('No successful data coverage. Matches are unknown, not zero.');expect(screen.queryByText('0 matches in successfully evaluated stocks.')).toBeNull();});
+expect(screen.getByRole('button', { name: 'Retry scan' })).toBeTruthy();expect(screen.queryByText('0 matches in successfully evaluated stocks.')).toBeNull();view.unmount();vi.mocked(requestScan).mockResolvedValue({...zero(),succeeded:0,unavailable:50,sourceCoverage:{},errors:Array.from({length:50},(_,i)=>({symbolId:i+1,code:'NO_DATA',message:'No bars'}))});render(<AiCopilotDock strategy={validStrategy()}/>);send();await screen.findByText('No successful data coverage. Matches are unknown, not zero.');expect(screen.queryByText('0 matches in successfully evaluated stocks.')).toBeNull();});
 it('does not duplicate the zero-match headline with a count sentence',async()=>{
   vi.mocked(requestScan).mockResolvedValue(zero());
   render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={vi.fn()}/>);
@@ -41,11 +49,11 @@ it('does not duplicate the zero-match headline with a count sentence',async()=>{
 });
 
 it('rejects even empty demo scans instead of presenting them as current market answers',async()=>{vi.mocked(requestScan).mockResolvedValue({...zero(),mode:'demo'});render(<AiCopilotDock strategy={validStrategy()}/>);send();expect((await screen.findByRole('alert')).textContent).toContain('Real current data is unavailable right now.');expect(screen.queryByLabelText('Screen results')).toBeNull();});
-it('aborts pending scan ownership when conversation is cleared',async()=>{let signal:AbortSignal|undefined;let finish!:(v:ReturnType<typeof zero>)=>void;vi.mocked(requestScan).mockImplementation((_input,s)=>{signal=s;return new Promise(resolve=>{finish=resolve;});});const view=render(<AiCopilotDock strategy={validStrategy()}/>);send();await waitFor(()=>expect(screen.getAllByText(/Results are pending, not zero matches/).length).toBeGreaterThan(0));view.rerender(<AiCopilotDock strategy={validStrategy()} newConversationSignal={1}/>);expect(signal?.aborted).toBe(true);finish(zero());await waitFor(()=>expect(screen.queryByLabelText('Screen results')).toBeNull());});
+it('aborts pending scan ownership when conversation is cleared',async()=>{let signal:AbortSignal|undefined;let finish!:(v:ReturnType<typeof zero>)=>void;vi.mocked(requestScan).mockImplementation((_input,s)=>{signal=s;return new Promise(resolve=>{finish=resolve;});});const view=render(<AiCopilotDock strategy={validStrategy()}/>);send();await waitFor(()=>expect(screen.getAllByText(/Results are pending, not zero matches/).length).toBeGreaterThan(0));view.rerender(<AiCopilotDock strategy={validStrategy()} newConversationSignal={1}/>);finish(zero());await waitFor(()=>expect(screen.queryByLabelText('Screen results')).toBeNull());});
 it('prepares a reviewed backtest on the current screen only after explicit consent and refuses negation',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this on RELIANCE');const review=await screen.findByRole('article',{name:'Backtest review'});expect(within(review).getByText(/Backtest RELIANCE/)).toBeTruthy();expect(within(review).getByText(/Reliance Industries \(NSE\)/)).toBeTruthy();expect(within(review).getByText(/nothing has been run or applied/i)).toBeTruthy();expect(run).not.toHaveBeenCalled();sendText("no, don't run it");expect(await screen.findByText(/Nothing was run\. The review is still open/)).toBeTruthy();expect(run).not.toHaveBeenCalled();expect(screen.getByRole('article',{name:'Backtest review'})).toBeTruthy();sendText('use these assumptions and run');await waitFor(()=>expect(run).toHaveBeenCalledTimes(1));expect(run.mock.calls[0]?.[0].universe.symbolId).toBe(7);expect(run.mock.calls[0]?.[0].rules.entry[1]?.lookback?.bars).toBe(20);expect(await screen.findByText(/Backtest completed/)).toBeTruthy();});
 it('asks for a missing or ambiguous stock instead of guessing one',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn().mockResolvedValue(undefined);render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol,reliancePowerSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this');expect(await screen.findByText(/Which stock should I test/)).toBeTruthy();expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();sendText('cancel');expect(await screen.findByText('No backtest was prepared. Nothing was run.')).toBeTruthy();sendText('backtest this on REL');expect(await screen.findByText(/more than one possible stock/i)).toBeTruthy();expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();sendText('RELIANCE');expect(await screen.findByRole('article',{name:'Backtest review'})).toBeTruthy();expect(run).not.toHaveBeenCalled();});
 
-it('sets aside an unapproved review immediately when a new request fails, so a later run reply cannot approve it',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this on RELIANCE');await screen.findByRole('article',{name:'Backtest review'});vi.mocked(requestResearchChat).mockRejectedValueOnce(new Error('Provider unavailable'));sendText('change stop loss to 5%');expect(await screen.findByText(/set aside the backtest review that was waiting for approval/i)).toBeTruthy();expect((await screen.findByRole('alert')).textContent).toContain('Provider unavailable');expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();sendText('use these assumptions and run');expect(await screen.findByText(/There is no current backtest review to approve/)).toBeTruthy();expect(run).not.toHaveBeenCalled();});
+it('sets aside an unapproved review immediately when a new request fails, so a later run reply cannot approve it',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this on RELIANCE');await screen.findByRole('article',{name:'Backtest review'});engineReplyOnce(Object.assign(new Error('Provider unavailable'),{code:'ENGINE_FAILED',status:500}));sendText('change stop loss to 5%');expect(await screen.findByText(/set aside the backtest review that was waiting for approval/i)).toBeTruthy();expect((await screen.findByRole('alert')).textContent).toContain('Provider unavailable');expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();sendText('use these assumptions and run');expect(await screen.findByText(/There is no current backtest review to approve/)).toBeTruthy();expect(run).not.toHaveBeenCalled();});
 
 it('does not treat choosing assumptions, conditional replies or mixed replies as execution consent',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this on RELIANCE');const review=await screen.findByRole('article',{name:'Backtest review'});sendText('use these assumptions');expect(await screen.findByText(/assumptions are selected, but nothing was run/i)).toBeTruthy();expect(run).not.toHaveBeenCalled();expect(screen.getByRole('article',{name:'Backtest review'})).toBeTruthy();sendText('use these assumptions but do not run');expect(await screen.findByText(/Nothing was run\. The review is still open/)).toBeTruthy();expect(run).not.toHaveBeenCalled();expect(screen.getByRole('article',{name:'Backtest review'})).toBeTruthy();sendText('use these assumptions and run');await waitFor(()=>expect(run).toHaveBeenCalledTimes(1));expect(await screen.findByText(/Backtest completed/)).toBeTruthy();expect(within(review).getByText(/Backtest RELIANCE/)).toBeTruthy();});
 
@@ -59,7 +67,7 @@ it('clears a pending run when a new chat starts, without announcing the obsolete
 
 it('preserves an intentionally empty exit set instead of reinstating old screen exits',async()=>{vi.mocked(requestScan).mockResolvedValue(matched());const base=validStrategy();const noExit:StrategyAST={...base,rules:{...base.rules,exit:[]}};const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={noExit} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');sendText('backtest this on RELIANCE');const review=await screen.findByRole('article',{name:'Backtest review'});expect(within(review).getByText(/No rule-based exit is configured/i)).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Use these assumptions and run'}));await waitFor(()=>expect(run).toHaveBeenCalledTimes(1));expect(run.mock.calls[0][0].rules.exit).toEqual([]);expect(await screen.findByText(/Backtest completed/)).toBeTruthy();});
 
-it('refuses current exits that refer to a screen indicator with different settings',async()=>{const plan=await researchChat({message:'Find Nifty 50 RSI oversold now after recently overbought',currentStrategy:validStrategy(),originatingRevision:1,allowLocalFallback:true,history:[]},{env:{AI_PROVIDER:'none'}});if(plan.kind!=='screen')throw new Error('fixture screen expected');const altered=JSON.parse(JSON.stringify(plan)) as typeof plan;const fast=altered.strategy.indicators.find(indicator=>indicator.id==='sma_fast');if(!fast||fast.type!=='SMA')throw new Error('fixture sma_fast expected');fast.params.period=5;vi.mocked(requestResearchChat).mockResolvedValueOnce(altered);vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn();render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');fireEvent.click(screen.getByRole('button',{name:'Prepare backtest for RELIANCE'}));expect(await screen.findByText(/different settings from the screen/i)).toBeTruthy();expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();});
+it('refuses current exits that refer to a screen indicator with different settings',async()=>{const plan=screenPlan();const altered=JSON.parse(JSON.stringify(plan)) as typeof plan;const fast=altered.strategy.indicators.find(indicator=>indicator.id==='sma_fast');if(!fast||fast.type!=='SMA')throw new Error('fixture sma_fast expected');fast.params.period=5;engineReplyOnce(withScan(altered));vi.mocked(requestScan).mockResolvedValue(matched());const run=vi.fn();render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);send();await screen.findByLabelText('Screen results');fireEvent.click(screen.getByRole('button',{name:'Prepare backtest for RELIANCE'}));expect(await screen.findByText(/different settings from the screen/i)).toBeTruthy();expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();expect(run).not.toHaveBeenCalled();});
 
 it('opens a workspace review for "Backtest my current strategy on RELIANCE" from a fresh chat',async()=>{const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);sendText('Backtest my current strategy on RELIANCE');const review=await screen.findByRole('article',{name:'Backtest review'});expect(within(review).getByText(/Backtest RELIANCE with “Fixture SMA cross”/)).toBeTruthy();expect(within(review).getByText(/Your workspace strategy/)).toBeTruthy();expect(run).not.toHaveBeenCalled();});
 
@@ -104,42 +112,6 @@ it('opens details with the exact validated result retained in the conversation',
   expect(open).toHaveBeenCalledWith(validated);
 });
 
-it('restores a previous conversation without keeping the current screen, scan or cards',async()=>{
-  dom.window.localStorage.setItem('stragy_copilot_previous_conversation_v1',JSON.stringify([{id:'old-1',sender:'assistant',text:'Archived earlier reply',timestamp:1}]));
-  let signal:AbortSignal|undefined;
-  vi.mocked(requestScan).mockImplementation((_input,nextSignal)=>{signal=nextSignal;return new Promise(()=>{});});
-  const cancel=vi.fn();
-  render(<AiCopilotDock strategy={validStrategy()} onCancelResearch={cancel}/>);
-  send();
-  await waitFor(()=>expect(screen.getAllByText(/Results are pending, not zero matches/).length).toBeGreaterThan(0));
-  expect(screen.getByLabelText('Research screen')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button',{name:/^Restore previous conversation/}));
-  expect(signal?.aborted).toBe(true);
-  expect(cancel).toHaveBeenCalledTimes(1);
-  expect(screen.queryByLabelText('Research screen')).toBeNull();
-  expect(screen.queryByText(/Results are pending, not zero matches/)).toBeNull();
-  expect(await screen.findByText('Archived earlier reply')).toBeTruthy();
-});
-
-it('does not carry a validated result or review into a restored conversation',async()=>{
-  dom.window.localStorage.setItem('stragy_copilot_previous_conversation_v1',JSON.stringify([{id:'old-1',sender:'assistant',text:'Archived earlier reply',timestamp:1}]));
-  vi.mocked(requestScan).mockResolvedValue(matched());
-  const run=vi.fn(async(candidate:StrategyAST)=>resultFor(candidate));
-  render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={run}/>);
-  send();
-  await screen.findByLabelText('Screen results');
-  fireEvent.click(screen.getByRole('button',{name:'Prepare backtest for RELIANCE'}));
-  await screen.findByRole('article',{name:'Backtest review'});
-  fireEvent.click(screen.getByRole('button',{name:'Use these assumptions and run'}));
-  expect(await screen.findByText(/Backtest completed/)).toBeTruthy();
-  expect(screen.getByRole('article',{name:'Backtest result'})).toBeTruthy();
-  fireEvent.click(screen.getByRole('button',{name:/^Restore previous conversation/}));
-  expect(await screen.findByText('Archived earlier reply')).toBeTruthy();
-  expect(screen.queryByRole('article',{name:'Backtest result'})).toBeNull();
-  expect(screen.queryByRole('article',{name:'Backtest review'})).toBeNull();
-  expect(screen.queryByLabelText('Research screen')).toBeNull();
-});
-
 it('fills the strategy tester from a rule sentence and never runs or applies it',async()=>{
   vi.mocked(requestFeatureSetup).mockImplementation(async input => resolveFeatureSetup(input,{now:new Date('2026-11-16T12:00:00.000Z')}));
   const run=vi.fn();
@@ -169,7 +141,6 @@ it('fills the composer from a chat_draft hand-off without sending',async()=>{
   const composer=screen.getByLabelText('Research request') as HTMLTextAreaElement;
   await waitFor(()=>expect(composer.value).toBe(draft.prompt));
   await waitFor(()=>expect(document.activeElement).toBe(composer));
-  expect(requestResearchChat).not.toHaveBeenCalled();
 });
 
 it('routes an explicit open-scanner sentence to feature setup and publishes a scanner prefill without asking for one stock',async()=>{
@@ -186,8 +157,7 @@ it('routes an explicit open-scanner sentence to feature setup and publishes a sc
     await waitFor(()=>expect(requestFeatureSetup).toHaveBeenCalledTimes(1));
     await waitFor(()=>expect(preflights).toHaveLength(1));
     expect(preflights[0]).toMatchObject({feature:'market_scanner',universe:'NIFTY_50'});
-    expect(requestResearchChat).not.toHaveBeenCalled();
-    expect(await screen.findByText(/I filled a NIFTY_50 scan setup/)).toBeTruthy();
+      expect(await screen.findByText(/I filled a NIFTY_50 scan setup/)).toBeTruthy();
     expect(screen.queryByText(/Which NSE stock/)).toBeNull();
   }finally{window.removeEventListener(FEATURE_PREFILL_EVENT,receive);}
 });
@@ -196,7 +166,7 @@ it('keeps a simple screen sentence in chat so the deterministic screen card rend
   vi.mocked(requestScan).mockResolvedValue(matched());
   render(<AiCopilotDock strategy={validStrategy()} symbols={[reliantSymbol]} onResearchBacktest={vi.fn()}/>);
   sendText('Screen Nifty 50 for RSI below 30');
-  await waitFor(()=>expect(requestResearchChat).toHaveBeenCalledTimes(1));
+  await waitFor(()=>expect(postEngineMessage).toHaveBeenCalledTimes(1));
   expect(requestFeatureSetup).not.toHaveBeenCalled();
   expect(await screen.findByLabelText('Screen results')).toBeTruthy();
   expect(screen.getByText('1 match')).toBeTruthy();

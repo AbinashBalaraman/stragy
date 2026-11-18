@@ -22,7 +22,11 @@
     "predev": "npm run build:worker"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.93",
     "@google/genai": "^2.4.0",
+    "@opencode/client": "2.3.2",
+    "@opencode/plugin": "2.3.2",
+    "@opencode/sdk": "2.3.2",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
