@@ -42,9 +42,21 @@ export interface EngineJobView {
   createdAt?: string;
 }
 
+export interface EngineJobSummary {
+  id: string;
+  kind: string;
+  status: string;
+  stage?: string;
+  createdAt?: string;
+  progress?: { processed: number; total: number };
+  universe?: string;
+}
+
 export interface EngineJobService {
   enqueue: (payload: ResearchPayload, key?: string) => EngineJobView;
   get: (id: string) => EngineJobView | undefined;
+  /** Recent durable jobs. Optional: a minimal host may only run jobs it was given. */
+  listSummaries?(input?: { limit?: number; status?: string }): EngineJobSummary[];
   /**
    * Optional capability flag. The in-tree durable manager runs `kind:'cache'`
    * warm-up jobs; a host that cannot run them sets this to false and
@@ -164,6 +176,20 @@ export class EngineContextStore {
   clear(sessionId: string): void {
     this.sessions.delete(sessionId);
   }
+}
+
+/**
+ * The strategy a tool should use for this session: the one the chat client last
+ * sent, or (for hosts without a Stragy workspace, such as the standalone
+ * OpenCode UI) the most recently saved workspace strategy. Nothing is invented.
+ */
+export function sessionStrategy(deps: EngineToolDeps, sessionId: string): { strategy: StrategyAST; source: string } | null {
+  const sent = deps.contexts.get(sessionId)?.currentStrategy;
+  if (sent) return { strategy: sent, source: 'workspace message' };
+  const saved = deps.repository?.listStrategies?.() ?? [];
+  const newest = [...saved].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
+  if (!newest) return null;
+  return { strategy: newest.strategy, source: 'newest saved strategy "' + newest.strategy.name + '" rev ' + newest.revision };
 }
 
 export interface EngineToolDeps {
@@ -719,7 +745,7 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             const screen = contextValue?.screenContext as { universe?: unknown; strategy?: unknown; asOf?: string } | undefined;
             const universe = normalizeUniverse(input.universe ?? screen?.universe, screen?.universe);
             if (!universe) return { output: typedFailure('UNKNOWN_UNIVERSE', 'Unknown universe. Use list_universes to see the valid ids.') };
-            const picked = strategyFrom(input.strategy ?? screen?.strategy, contextValue?.currentStrategy);
+            const picked = strategyFrom(input.strategy ?? screen?.strategy, sessionStrategy(deps, toolContext.sessionID)?.strategy);
             if (!picked.strategy) return { output: typedFailure('STRATEGY_REQUIRED', picked.error ?? 'A validated strategy is required.') };
             const symbols = universeSymbols(universe);
             const configured = symbols.length;
@@ -1278,8 +1304,8 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             const resolved = resolveSymbol(input.symbol);
             if (!resolved.symbol) return { output: typedFailure('UNKNOWN_SYMBOL', resolved.error ?? 'Unknown symbol.') };
             const picked = input.strategy !== undefined
-              ? strategyFrom(input.strategy, deps.contexts.get(toolContext.sessionID)?.currentStrategy)
-              : { strategy: deps.contexts.get(toolContext.sessionID)?.currentStrategy };
+              ? strategyFrom(input.strategy, sessionStrategy(deps, toolContext.sessionID)?.strategy)
+              : { strategy: sessionStrategy(deps, toolContext.sessionID)?.strategy };
             if (!picked.strategy) return { output: typedFailure('STRATEGY_REQUIRED', 'A current strategy or explicit conditions are required.') };
             const rawConditions = coerceJson(input.conditions) ?? picked.strategy.rules.entry;
             const parsedConditions = z.array(RuleNodeSchema).min(1).max(MAX_CONDITIONS).safeParse(rawConditions);
@@ -1360,10 +1386,11 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
           output: outputSchema,
           options: { codemode: false },
           execute: async (_input, toolContext) => {
-            const strategy = getDeps().contexts.get(toolContext.sessionID)?.currentStrategy;
-            return strategy
-              ? { output: { status: 'ok', source: 'workspace message', strategy } }
-              : { output: { status: 'unavailable', note: 'No workspace strategy has been sent in this session. Ask the user to pick or build one; do not invent exits or sizing.' } };
+            const deps = getDeps();
+            const picked = sessionStrategy(deps, toolContext.sessionID);
+            return picked
+              ? { output: { status: 'ok', source: picked.source, strategy: picked.strategy } }
+              : { output: { status: 'unavailable', note: 'No workspace strategy has been sent in this session and none is saved. Ask the user to pick or build one; do not invent exits or sizing.' } };
           },
         });
 
@@ -1488,7 +1515,7 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             const deps = getDeps();
             const jobs = requireJobs();
             if (!jobs) return { output: typedFailure('JOB_RUNNER_UNAVAILABLE', 'Backtests are unavailable on this server.') };
-            const picked = strategyFrom(input.strategy, deps.contexts.get(toolContext.sessionID)?.currentStrategy);
+            const picked = strategyFrom(input.strategy, sessionStrategy(deps, toolContext.sessionID)?.strategy);
             if (!picked.strategy) return { output: typedFailure('STRATEGY_REQUIRED', picked.error ?? 'A validated strategy is required.') };
             const strategy = picked.strategy;
             const options = { ...(input.asOf ? { asOf: input.asOf } : {}), ...(input.start ? { start: input.start } : {}), ...(input.end ? { end: input.end } : {}), ...(input.initialCapital !== undefined ? { initialCapital: input.initialCapital } : {}) };
@@ -1540,6 +1567,34 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             }
             if (['failed', 'cancelled', 'interrupted'].includes(job.status)) return { output: jobFailure(job) };
             return { output: { status: 'running', jobId: job.id, kind: 'backtest', ...(job.progress ? { progress: job.progress } : {}), note: 'The backtest is still running. Call get_backtest_result again with the same jobId.' } };
+          },
+        });
+
+        editor.add({
+          name: 'list_jobs',
+          description: 'List recent research jobs (scans, backtests, chart reads, cache refreshes) with their status, so a job started in an earlier or interrupted turn can be found and read with its result tool.',
+          input: z.object({
+            limit: z.number().int().min(1).max(50).optional().describe('How many recent jobs to return (1..50, default 10).'),
+            status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted']).optional(),
+          }),
+          output: outputSchema,
+          options: { codemode: false },
+          execute: async (input) => {
+            const jobs = requireJobs();
+            if (!jobs?.listSummaries) return { output: typedFailure('JOB_LIST_UNAVAILABLE', 'This host cannot list past jobs.') };
+            const rows = jobs.listSummaries({ limit: input.limit ?? 10, ...(input.status ? { status: input.status } : {}) });
+            return {
+              output: {
+                status: 'ok',
+                jobs: rows.map(row => ({
+                  jobId: row.id, kind: row.kind, status: row.status, stage: row.stage,
+                  ...(row.createdAt ? { createdAt: row.createdAt } : {}),
+                  ...(row.progress ? { progress: row.progress } : {}),
+                  ...(row.universe ? { universe: row.universe } : {}),
+                })),
+                note: rows.length ? 'Read a scan with get_scan_result, a backtest with get_backtest_result, a chart with get_chart_result and a cache refresh with get_refresh_result.' : 'No jobs matched.',
+              },
+            };
           },
         });
 

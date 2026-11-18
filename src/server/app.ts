@@ -32,6 +32,8 @@ import { resolveObservedUniverse } from './data/observedUniverse';
 import { getProvidersResponse, upsertProvider, deleteProvider, setChain, resetProviders, listProviderModels, testProvider, ProviderError, initializeProviderRegistry } from './ai/providerRegistry';
 import { initializeEngine, configureEngine, createSession as createEngineSession, getSession as getEngineSession, listSessions as listEngineSessions, renameSession as renameEngineSession, deleteSession as deleteEngineSession, switchSessionModel as switchEngineSessionModel, exportSession as exportEngineSession, availableModels as listEngineModels, usageReport as engineUsageReport, configuredModels as configuredEngineModels, prompt as promptEngineSession, messages as engineMessages, openSessionStream, interrupt as interruptEngineSession, stageContext, engineStatus, EngineError } from './ai/engine';
 import { engineApprovals, ApprovalError } from './ai/engineApprovals';
+import { EngineContextStore } from './ai/engineTools';
+import { createToolBridge } from './ai/toolBridge';
 import { initializeDatabase, getDbStatus } from './db/pool';
 
 export class ApiFailure extends Error {
@@ -214,6 +216,44 @@ export async function createApp(deps: AppDependencies = {}) {
   // Writes .data/opencode/config/opencode.json at boot, never throws. A missing
   // provider key is reported by the routes as the typed ENGINE_UNAVAILABLE.
   await initializeEngine();
+  // === Standalone OpenCode UI tool bridge =====================================
+  // `opencode serve` hosts the chat UI in its own process. Its plugin cannot
+  // own Stragy's jobs, candle cache or Angel session, so it calls these routes
+  // on loopback and this process runs the same tool executors. The bridge is
+  // loopback-only and, when STRAGY_TOOL_TOKEN is set, requires that token.
+  const bridgeContexts = new EngineContextStore();
+  const toolBridge = createToolBridge({
+    preferencesFile: path.join(process.env.STRAGY_ENGINE_DIR || path.join(process.cwd(), config.NODE_ENV === 'test' ? 'src/test/.tmp/engine-data' : '.data/opencode'), 'tool-preferences.db'),
+    getDeps: () => ({
+      jobs: deps.jobs,
+      dataMode: config.DATA_MODE,
+      prepareBacktest: prepareRun,
+      rememberRun: async result => { await remember(parseBacktestResult(result)); },
+      repository,
+      approvals: engineApprovals,
+      contexts: bridgeContexts,
+    }),
+  });
+  const toolToken = (process.env.STRAGY_TOOL_TOKEN ?? '').trim();
+  const localToolRequest = (req: Request): boolean => {
+    const address = req.socket.remoteAddress ?? '';
+    const local = address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+    if (!local) return false;
+    return toolToken ? req.get('x-stragy-tool-token') === toolToken : true;
+  };
+  app.get('/api/v2/engine/tools', wrap(async (req, res) => {
+    if (!localToolRequest(req)) throw new ApiFailure(403, 'TOOL_BRIDGE_LOCAL_ONLY', 'The tool bridge is only reachable from this machine.');
+    res.json({ tools: await toolBridge.list() });
+  }));
+  app.post('/api/v2/engine/tools/:name', express.json({ limit: '2mb' }), wrap(async (req, res) => {
+    if (!localToolRequest(req)) throw new ApiFailure(403, 'TOOL_BRIDGE_LOCAL_ONLY', 'The tool bridge is only reachable from this machine.');
+    const name = String(req.params.name ?? '');
+    if (!/^[a-z][a-z0-9_]{1,60}$/.test(name)) throw new ApiFailure(400, 'TOOL_NAME_INVALID', 'That tool name is not valid.');
+    const sessionId = String(req.get('x-stragy-session') ?? 'opencode-ui').slice(0, 120);
+    const body = (req.body ?? {}) as { input?: unknown };
+    const outcome = await toolBridge.run(name, body.input ?? {}, sessionId);
+    res.status(outcome.status).json(outcome.body);
+  }));
   const engineRoute = (handler: (req: Request, res: Response) => Promise<void> | void) => wrap(async (req, res) => {
     try { await handler(req, res); }
     catch (error) {

@@ -112,6 +112,36 @@ describe('engine research tools', () => {
     expect(result.output).toMatchObject({ status: 'succeeded', kind: 'chart', readingKind: 'screen' });
   });
 
+  it('lists recent jobs so a stopped turn can read its scan later', async () => {
+    const listSummaries = vi.fn(() => [
+      { id: 'job9', kind: 'scan', status: 'succeeded', stage: 'done', createdAt: '2026-11-18T13:16:41.931Z', progress: { processed: 200, total: 200 }, universe: 'NSE' },
+    ]);
+    const { get } = await setup({ jobs: { enqueue: vi.fn(), get: vi.fn(), listSummaries } });
+    const listed = await get('list_jobs').execute({ status: 'succeeded', limit: 5 }, context());
+    expect(listSummaries).toHaveBeenCalledWith({ limit: 5, status: 'succeeded' });
+    expect(listed.output).toMatchObject({
+      status: 'ok',
+      jobs: [{ jobId: 'job9', kind: 'scan', status: 'succeeded', universe: 'NSE', progress: { processed: 200, total: 200 } }],
+    });
+  });
+
+  it('falls back to the newest saved workspace strategy when no client sent one', async () => {
+    const older = { ...strategy, name: 'Older strategy' };
+    const newer = { ...strategy, name: 'Newest strategy' };
+    const { get } = await setup({
+      repository: {
+        listStrategies: () => [
+          { id: 'a', revision: 1, strategy: older, updatedAt: '2026-11-01T00:00:00Z' },
+          { id: 'b', revision: 3, strategy: newer, updatedAt: '2026-11-18T00:00:00Z' },
+        ],
+        getStrategy: () => undefined,
+      },
+    });
+    const current = await get('get_current_strategy').execute({}, context('fresh-session'));
+    expect(current.output).toMatchObject({ status: 'ok', source: 'newest saved strategy "Newest strategy" rev 3' });
+    expect((current.output?.strategy as { name: string }).name).toBe('Newest strategy');
+  });
+
   it('reports a missing job and a failed job honestly in get_scan_result', async () => {
     const { get } = await setup({ jobs: { enqueue: vi.fn(), get: () => ({ id: 'j', kind: 'scan', status: 'failed', error: { code: 'PROVIDER_DOWN', message: 'No data.' } }) } });
     const failed = await get('get_scan_result').execute({ jobId: 'j' }, context());
