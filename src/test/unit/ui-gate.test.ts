@@ -265,4 +265,54 @@ describe('ui-gate live request filtering', () => {
       expect(hits()).toBe(1);
     });
   });
+
+  it('inspects session PATCH and fork: permissions/agent pinned, rename passes', async () => {
+    await withGate(async (base, hits) => {
+      // OpenCode applies session permission rules AFTER agent rules; a PATCH
+      // ruleset must never re-enable the denied host tools.
+      const patchPerms = await gateRequest(base, '/api/session/ses_x', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ permissions: [{ action: 'bash', resource: '*', effect: 'allow' }] }),
+      });
+      expect(patchPerms.status).toBe(403);
+      expect(patchPerms.body.reason).toBe('permissions');
+
+      const patchPermsNoCt = await gateRequest(base, '/api/session/ses_x', {
+        method: 'PATCH',
+        body: JSON.stringify({ permissions: [] }),
+      });
+      expect(patchPermsNoCt.status).toBe(403);
+
+      const patchAgent = await gateRequest(base, '/api/session/ses_x', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agent: 'build' }),
+      });
+      expect(patchAgent.status).toBe(403);
+      expect(patchAgent.body.reason).toBe('agent');
+
+      const rename = await gateRequest(base, '/api/session/ses_x', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'A renamed session' }),
+      });
+      expect(rename.status).toBe(200);
+
+      const forkPerms = await gateRequest(base, '/api/session/ses_x/fork', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ permissions: [{ action: 'edit', resource: '*', effect: 'allow' }] }),
+      });
+      expect(forkPerms.status).toBe(403);
+
+      const forkPlain = await gateRequest(base, '/api/session/ses_x/fork', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(forkPlain.status).toBe(200);
+      expect(hits()).toBe(2);
+    });
+  });
 });

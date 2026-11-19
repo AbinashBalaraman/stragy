@@ -41,6 +41,7 @@ const indicatorsData = {
   ema20: [100, 101, 102],
   sma50: [99, 100, 101],
   bb20_upper: [105, 106, 107],
+  bb20_middle: [100, 101, 102],
   bb20_lower: [95, 96, 97],
   st14: [98, 99, 100],
 };
@@ -56,11 +57,13 @@ describe('PriceChart indicator overlays', () => {
     expect(keys).toContain('ema20');
     expect(keys).toContain('sma50');
     expect(keys).toContain('bb20_upper');
+    expect(keys).toContain('bb20_middle');
     expect(keys).toContain('bb20_lower');
     expect(keys).toContain('supertrend');
     const points = JSON.parse(container.querySelector('[data-chart-points]')!.getAttribute('data-chart-points')!);
     expect(points[0].ema20).toBe(100);
     expect(points[0].bb20_upper).toBe(105);
+    expect(points[0].bb20_middle).toBe(100);
     expect(points[0].supertrend).toBe(98);
   });
 

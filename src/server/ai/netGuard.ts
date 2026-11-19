@@ -107,7 +107,12 @@ export function createPinnedFetch(getLookup: () => DnsLookupLike = () => dns.loo
     const agent = new mod.Agent({ lookup, keepAlive: false });
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries((init.headers ?? {}) as Record<string, unknown>)) headers[name] = String(value);
-    if (init.body !== undefined && init.body !== null) headers['Content-Length'] = String(Buffer.byteLength(String(init.body)));
+    if (init.body !== undefined && init.body !== null) {
+      const bytes = Buffer.isBuffer(init.body) || init.body instanceof Uint8Array
+        ? init.body.byteLength
+        : Buffer.byteLength(String(init.body));
+      headers['Content-Length'] = String(bytes);
+    }
     const req = mod.request({
       protocol: url.protocol,
       hostname: url.hostname,

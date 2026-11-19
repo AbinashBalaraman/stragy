@@ -254,12 +254,22 @@ function collectDirValues(obj, out = []) {
 }
 
 /**
- * Session creation may only use the Stragy agent. Absent agent is fine; any
- * other value (including parent/fork sessions that carry an agent) is denied.
+ * Session creation AND mutation can choose agent/permissions/directory.
+ * OpenCode applies session permission rules AFTER agent rules (last match
+ * wins), so PATCH /api/session/:id and fork must be inspected exactly like
+ * create — otherwise a ruleset there re-enables the denied host tools.
  */
+function sessionMutationRoute(rawUrl, method) {
+  const upper = String(method).toUpperCase();
+  const p = decodePath(rawUrl).split('?')[0].toLowerCase();
+  if (upper === 'POST' && p === '/api/session') return true;
+  if (upper === 'PATCH' && /^\/api\/session\/[^/]+$/.test(p)) return true;
+  if (upper === 'POST' && /^\/api\/session\/[^/]+\/fork$/.test(p)) return true;
+  return false;
+}
+
 function bodyAgentBlocked(rawUrl, method, contentType, buffer) {
-  if (String(method).toUpperCase() !== 'POST') return false;
-  if (decodePath(rawUrl).split('?')[0].toLowerCase() !== '/api/session') return false;
+  if (!sessionMutationRoute(rawUrl, method)) return false;
   // OpenCode parses JSON regardless of Content-Type, so a text/plain JSON
   // body must be inspected too. Unparseable bodies pass through.
   if (!buffer.length) return false;
@@ -270,11 +280,10 @@ function bodyAgentBlocked(rawUrl, method, contentType, buffer) {
   } catch { return false; }
 }
 
-/** A created session must not carry a permission ruleset that loosens the
- * host-tool denies configured for the stragy agent. */
+/** A created or updated session must not carry a permission ruleset that
+ * loosens the host-tool denies configured for the stragy agent. */
 function bodyPermissionsBlocked(rawUrl, method, buffer) {
-  if (String(method).toUpperCase() !== 'POST') return false;
-  if (decodePath(rawUrl).split('?')[0].toLowerCase() !== '/api/session') return false;
+  if (!sessionMutationRoute(rawUrl, method)) return false;
   if (!buffer.length) return false;
   try {
     const obj = JSON.parse(buffer.toString('utf8'));
@@ -305,6 +314,8 @@ function bodyCommandsBlocked(rawUrl, method, buffer) {
 function bodyInspectionRoute(rawUrl, method) {
   const p = decodePath(rawUrl).split('?')[0].toLowerCase();
   if (method === 'POST' && p === '/api/session') return true;
+  if (method === 'PATCH' && /^\/api\/session\/[^/]+$/.test(p)) return true;
+  if (method === 'POST' && /^\/api\/session\/[^/]+\/fork$/.test(p)) return true;
   if (method === 'POST' && p === '/api/project') return true;
   if (method === 'PATCH' && /^\/api\/project\/[^/]+$/.test(p)) return true;
   return false;
@@ -443,6 +454,7 @@ export function createGateServer({
   // check and the session is already fixed. An oversized body on an inspected
   // route is denied rather than allowed as a bypass.
   const PEEK_LIMIT = 64 * 1024;
+  const PEEK_DEADLINE_MS = 30_000;
   function forwardWithPeek(req, res, decoded) {
     const chunks = [];
     let size = 0;
@@ -451,8 +463,19 @@ export function createGateServer({
       req.off('data', onData);
       req.off('end', onEnd);
       req.off('error', onError);
+      clearTimeout(peekTimer);
     };
     const onError = () => { cleanup(); res.destroy(); };
+    // A slow body must not hold an inspection connection forever.
+    const peekTimer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        cleanup();
+        denyWithReason(res, decoded, 'body-timeout');
+        req.destroy();
+      }
+    }, PEEK_DEADLINE_MS);
+    peekTimer.unref?.();
     const deliver = () => {
       if (finished) return;
       finished = true;
