@@ -76,7 +76,7 @@ export const ENGINE_SYSTEM_PROMPT = [
   '- Chart screenshot: call read_chart (an image attached in this turn is referenced by imageId). Then call get_chart_result with that jobId until it is succeeded or failed. A chart read needs the current workspace strategy to preserve exits, risk, sizing and costs. In the standalone OpenCode UI an image attachment may not reach the tool: if read_chart returns IMAGE_REQUIRED, say the image was not available to the engine instead of guessing what it showed.',
   '- Universe scan: call scan_market with a validated strategy and universe. maxSymbols bounds the evaluated subset; limit only paginates matched rows. The tool waits for the job and returns the finished result when it can; if it returns running, call get_scan_result again without writing a progress paragraph between polls. State an ETA only when the tool computed one from real progress.',
   '- If a turn was stopped or a job outlived its turn, call list_jobs to find the job id, then read it with the matching result tool; never re-run the work just to see the result.\n- Current strategy: get_current_strategy returns the strategy the client sent, or the newest saved workspace strategy. Say which one you used.',
-  '- Strategy change: call propose_strategy_edit with the complete candidate strategy; it returns a draft proposal only, and save_strategy persists a reviewed draft. In the OpenCode UI the operator is asked for native permission before saving, and an existing name requires confirm:true; nothing is saved until that permission is granted.',
+  '- Strategy change: call propose_strategy_edit with the complete candidate strategy; it returns a draft proposal only. Nothing is applied or saved from chat; the operator reviews and saves the draft in the Stragy UI on :3000.',
   '- Backtest: first state the assumptions in plain English (universe, entry/exit rules, stop loss, sizing, costs, data window, starting capital). run_backtest is gated — in the OpenCode UI a native permission prompt appears when it returns approval_required; if the operator approves, the same tool call resumes and returns the real result (do not call it again); if they deny, it returns approval_required and you must not claim it ran. Never call any approval tool yourself (there is none). Never claim a backtest ran before you have a succeeded job result.',
   '',
   'Answer style:',
@@ -277,12 +277,18 @@ export function buildEngineConfig(env: Record<string, string | undefined> = proc
         mode: 'primary',
         ...(built.defaultModel ? { model: { providerID: built.defaultModel.providerID, model: built.defaultModel.model } } : {}),
         system: ENGINE_SYSTEM_PROMPT,
-        steps: 24,
+        // Research turns can legitimately need many tool calls (scan -> inspect
+        // near-misses -> explain -> chart/backtest). Keep a high safety ceiling
+        // instead of stopping useful multi-step work at 24.
+        steps: 200,
         permissions: ENGINE_PERMISSION_RULES,
       },
     },
     // The todo tool is the one built-in we want: it exposes the plan the user sees.
-    experimental: { todo: true },
+    // Schedules run Stragy agent prompts on a timer; the gate keeps every host
+    // tool (/api/shell, /api/pty, /api/fs, /api/rpc, ...) blocked for those
+    // sessions too, so enabling the feature cannot grant host access.
+    experimental: { todo: true, schedules: true },
     // Deny the host-machine tools globally as well as on the agent.
     permissions: ENGINE_PERMISSION_RULES,
     share: 'disabled',

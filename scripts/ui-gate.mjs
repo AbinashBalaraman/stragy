@@ -20,7 +20,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, realpathSync } from 'node:fs';
 
 export const DEFAULT_LOG = '/tmp/opencode/ui-gate.log';
 export const ALLOWED_DIRECTORY = '/data/home/oc-import/Stragy/opencode-app-data/workspace';
@@ -28,7 +28,7 @@ export const ALLOWED_DIRECTORY = '/data/home/oc-import/Stragy/opencode-app-data/
 // Read-only metadata routes are needed by the UI, but they can echo provider
 // settings (plaintext API keys). Their JSON responses are buffered, redacted
 // and re-emitted. Streaming routes (/api/event, chat, uploads) are untouched.
-const REDACT_PREFIXES = ['/api/config', '/api/provider', '/api/model', '/api/info', '/api/agent', '/api/integration', '/api/experimental/mcp'];
+const REDACT_PREFIXES = ['/api/config', '/api/provider', '/api/model', '/api/info', '/api/agent', '/api/integration', '/api/credential', '/api/experimental/voice', '/api/experimental/mcp'];
 const SECRET_KEY_RE = /(api[-_]?key|token|secret|password|authorization|bearer)/i;
 const MAX_REDACT_BYTES = 32 * 1024 * 1024;
 
@@ -77,14 +77,12 @@ const RULES = [
   { name: 'worktree',                  test: start('/api/worktree') },
   { name: 'vcs-init',                  test: re(/^\/api\/vcs\/init(?:\/|$)/) },
   { name: 'experimental-generate',     test: start('/api/experimental/generate') },
-  { name: 'experimental-schedule',     test: start('/api/experimental/schedule') },
   { name: 'experimental-integration',  test: start('/api/experimental/integration') },
   { name: 'integration',               test: start('/api/integration') },
   { name: 'session-environment',       test: re(/^\/api\/session\/[^/]+\/environment(?:\/|$)/) },
   { name: 'session-move',              test: re(/^\/api\/session\/[^/]+\/move(?:\/|$)/) },
   { name: 'session-import',            test: re(/^\/api\/experimental\/session\/import(?:\/|$)/) },
   { name: 'experimental-migration',    test: start('/api/experimental/migration') },
-  { name: 'experimental-voice',        test: start('/api/experimental/voice') },
 ];
 
 /** Decode the pathname once (case preserved) for logs / error bodies. */
@@ -101,22 +99,55 @@ export function decodePath(rawUrl) {
  * remove/execute). Checked before the deny rules; exact method + path only.
  */
 const ALLOW_READONLY = [
-  { method: 'GET',  path: '/api/integration' },            // read-only status
-  { method: 'POST', path: '/api/rpc/opencode.goal/get' },  // read-only goal poll (POST is the RPC envelope)
-  { method: 'POST', path: '/api/worktree/refresh' },       // read-only refresh
-  { method: 'GET',  path: '/api/experimental/mcp' },       // MCP list only
+  { method: 'GET',  path: '/api/integration' },                     // read-only status
+  { method: 'POST', path: '/api/rpc/opencode.goal/get' },           // read-only goal poll (POST is the RPC envelope)
+  { method: 'POST', path: '/api/worktree/refresh' },                // read-only refresh
+  { method: 'GET',  path: '/api/experimental/mcp' },                // MCP list only
+  { method: 'GET',  path: '/api/experimental/voice/models' },       // voice/TTS model list
+  { method: 'POST', path: '/api/experimental/voice/session' },      // speech-to-speech session (no shell/file access)
 ];
+
+/**
+ * Read-only UI routes outside the narrow ALLOW_READONLY list. File reads are
+ * additionally restricted to real files inside the Stragy workspace.
+ */
+function fsReadAllowed(decodedPath) {
+  const prefix = '/api/fs/read/';
+  if (!decodedPath.toLowerCase().startsWith(prefix)) return false;
+  let rel = decodedPath.slice(prefix.length);
+  try { rel = decodeURIComponent(rel); } catch { return false; }
+  rel = rel.replace(/\\/g, '/');
+  if (rel.includes('\0')) return false;
+  const abs = rel.startsWith('/') ? rel : path.join(ALLOWED_DIRECTORY, rel);
+  let real, root;
+  try { real = realpathSync(abs); } catch { return false; }
+  try { root = realpathSync(ALLOWED_DIRECTORY); } catch { root = ALLOWED_DIRECTORY; }
+  return real === root || real.startsWith(root + '/');
+}
+
+function readOnlySafePath(decodedPath, lowerPath, method) {
+  if (method !== 'GET') return false;
+  const p = lowerPath;
+  if (p === '/api/worktree' || p === '/api/plugin' || p === '/api/plugin/gui' ||
+      p === '/api/fs/list' || p === '/api/shell' || p === '/api/pty') return true;
+  if (p === '/api/credential' || /^\/api\/credential\/[^/]+$/.test(p)) return true;
+  if (/^\/api\/pty\/[^/]+$/.test(p)) return true; // status only; /connect is not matched
+  if (p.startsWith('/api/fs/read/')) return fsReadAllowed(decodedPath);
+  return false;
+}
 
 /**
  * Return the deny-rule name when a request must be blocked, else null.
  * `method` is used only for method-specific narrowing.
  */
 export function isBlocked(rawUrl, method = 'GET') {
-  const p = decodePath(rawUrl).toLowerCase();
+  const decodedPath = decodePath(rawUrl);
+  const p = decodedPath.toLowerCase();
   const upper = String(method).toUpperCase();
   for (const allow of ALLOW_READONLY) {
     if (upper === allow.method && p === allow.path) return null;
   }
+  if (readOnlySafePath(decodedPath, p, upper)) return null;
   // /api/mcp GET is the read-only tool list the chat needs. PUT/POST install
   // or reconfigure MCP servers, which is arbitrary code execution.
   if (p === '/api/mcp' && ['POST', 'PUT'].includes(upper)) return 'mcp-mutate';
@@ -188,6 +219,19 @@ function bodyAgentBlocked(rawUrl, method, contentType, buffer) {
     if (!obj || typeof obj !== 'object' || !('agent' in obj)) return false;
     return obj.agent !== 'stragy';
   } catch { return false; }
+}
+
+/**
+ * Only routes that can choose a session/project directory or agent need their
+ * body inspected. Prompt/command/upload bodies can be large (base64 images)
+ * and must stream through untouched.
+ */
+function bodyInspectionRoute(rawUrl, method) {
+  const p = decodePath(rawUrl).split('?')[0].toLowerCase();
+  if (method === 'POST' && p === '/api/session') return true;
+  if (method === 'POST' && p === '/api/project') return true;
+  if (method === 'PATCH' && /^\/api\/project\/[^/]+$/.test(p)) return true;
+  return false;
 }
 
 /** Check the (peeked) JSON / form body for an out-of-scope directory. */
@@ -315,9 +359,11 @@ export function createGateServer({
     else req.pipe(proxy);
   }
 
-  // Buffer only small JSON/form bodies (64 KB) so directory/agent fields can
-  // be checked, then forward the exact bytes unchanged. Oversized JSON/form
-  // bodies are denied rather than being allowed as a bypass.
+  // Buffer only the small bodies that can choose a directory/agent (session
+  // creation, project add/update). Prompt bodies, including base64 image
+  // attachments, are streamed untouched; the directory is pinned by the query
+  // check and the session is already fixed. An oversized body on an inspected
+  // route is denied rather than allowed as a bypass.
   const PEEK_LIMIT = 64 * 1024;
   function forwardWithPeek(req, res, decoded) {
     const chunks = [];
@@ -369,10 +415,13 @@ export function createGateServer({
 
     const method = String(req.method).toUpperCase();
     const ct = String(req.headers['content-type'] || '').toLowerCase();
-    const peekable = ['POST', 'PUT', 'PATCH'].includes(method) &&
+    const peekable = filtering && bodyInspectionRoute(req.url, method) &&
       (ct.includes('application/json') || ct.includes('x-www-form-urlencoded'));
-    if (filtering && peekable) return forwardWithPeek(req, res, decoded);
-    return proxyRequest(req, res, decoded, Buffer.alloc(0), true, filtering && shouldRedact(req.url));
+    if (peekable) return forwardWithPeek(req, res, decoded);
+    // Not an inspection route: the request body (e.g. a prompt with a base64
+    // image) must be streamed verbatim to OpenCode. bodyComplete=false makes
+    // proxyRequest pipe req into the upstream request instead of ending it.
+    return proxyRequest(req, res, decoded, Buffer.alloc(0), false, filtering && shouldRedact(req.url));
   });
 
   // WebSocket / upgrade traffic: pipe raw bytes in both directions. Blocked

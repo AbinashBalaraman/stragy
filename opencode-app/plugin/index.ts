@@ -185,25 +185,6 @@ export default Plugin.define({
                 }
               } catch { /* the tool reports IMAGE_REQUIRED honestly */ }
             }
-            // Saving a strategy mutates workspace state. Ask the native
-            // OpenCode permission prompt BEFORE forwarding the call. If the
-            // operator denies it, ctx.permission.assert rejects and the tool
-            // call fails here rather than silently saving.
-            if (tool.name === "save_strategy") {
-              const record = input && typeof input === "object" ? input as Record<string, unknown> : {}
-              const ast = record.strategy && typeof record.strategy === "object" ? record.strategy as Record<string, unknown> : {}
-              const name = String(record.name ?? ast.name ?? "strategy")
-              await ctx.permission.assert({
-                sessionID: context.sessionID,
-                agent: context.agent,
-                source: { type: "tool", messageID: context.messageID, id: context.id },
-                // A known action + dedicated resource is what OpenCode's
-                // permission engine matches; custom action names auto-allow.
-                action: "edit",
-                resources: ["stragy:save_strategy:" + name],
-                metadata: { summary: 'Save strategy "' + name + '"' },
-              })
-            }
             const result = outputOf(await callTool(tool.name, args, context.sessionID, context.signal))
             // SAFE STATE: OpenCode 2.3.0's permission engine does not produce a
             // native prompt for in-chat tool actions here (custom actions
