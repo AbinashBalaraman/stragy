@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { createPinnedFetch } from './netGuard';
 import { VERIFIED_FREE_MODEL, verifyFreeModel, verifyOpenRouterFreeModel } from './freeModel';
 export type AIProviderName = 'none' | 'gemini' | 'openai' | 'openrouter' | 'deepseek' | 'tokenrouter' | 'opencode-go';
 export const AI_PROVIDERS: readonly AIProviderName[] = ['none', 'gemini', 'openai', 'openrouter', 'deepseek', 'tokenrouter', 'opencode-go'];
@@ -20,6 +21,9 @@ export const AI_PROVIDERS: readonly AIProviderName[] = ['none', 'gemini', 'opena
 export const OPENCODE_GO_USER_AGENT = 'stragy-research/2.0';
 /** Conversations without an explicit identifier reuse one process-scoped session id. */
 const OPENCODE_GO_PROCESS_SESSION = randomUUID();
+
+/** Connection-time DNS pinning for the default provider fetch (no network at import). */
+const defaultPinnedFetch = createPinnedFetch();
 
 /**
  * Go models listed as $0 by the provider. Only these may run under free-only.
@@ -634,12 +638,9 @@ export async function callProvider(cfg: AIRuntimeConfig, req: ProviderRequest, d
     recordProviderCall(result, cfg.provider, cfg.model);
     return result;
   }
-  const fetchImpl: FetchLike | undefined = deps.fetch ?? (globalThis.fetch as FetchLike | undefined);
-  if (!fetchImpl) {
-    const result = fail('network_error', 'No fetch implementation available.');
-    recordProviderCall(result, cfg.provider, cfg.model);
-    return result;
-  }
+  // Default to the connection-time-pinned fetch so chat and pricing checks
+  // get the same rebinding defense as registry calls; tests inject deps.fetch.
+  const fetchImpl: FetchLike = deps.fetch ?? defaultPinnedFetch;
 
   const attempts: { config: AIRuntimeConfig; fallback: boolean }[] = [{ config: cfg, fallback: false }];
   for (const target of cfg.fallbackTargets ?? []) {

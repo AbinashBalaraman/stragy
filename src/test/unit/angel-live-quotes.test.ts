@@ -145,3 +145,48 @@ describe('live Angel quotes', () => {
     await expect(getLiveQuotes([0])).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
   });
 });
+
+describe('BSE segment and quote identity matching', () => {
+  it('requests BSE tokens on the BSE segment and matches by exchange+token, never token alone', async () => {
+    vi.stubEnv('QUOTES_PROVIDER', 'angel');
+    const master = JSON.stringify([
+      { token: '500325', symbol: 'RELIANCE', name: 'RELIANCE', exch_seg: 'BSE' },
+      { token: '2885', symbol: 'RELIANCE-EQ', name: 'RELIANCE', exch_seg: 'NSE' },
+      ...FILLER,
+    ]);
+    const quoteBody = {
+      status: true, message: 'SUCCESS', errorcode: '',
+      data: {
+        fetched: [
+          { exchange: 'BSE', symbolToken: '500325', ltp: 1500.5, close: 1490, open: 1495, high: 1510, low: 1480, percentChange: 0.7, exchTradeTime: '16-Nov-2026 13:29:28' },
+          // Colliding NSE token: must never surface under the BSE symbol.
+          { exchange: 'NSE', symbolToken: '500325', ltp: 9999, close: 9990, open: 9990, high: 9999, low: 9990, percentChange: 0.1, exchTradeTime: '16-Nov-2026 13:29:28' },
+          { exchange: 'NSE', symbolToken: '2885', ltp: 1340.7, close: 1339.7, open: 1339.7, high: 1347.3, low: 1333.8, percentChange: 0.07, exchTradeTime: '16-Nov-2026 13:29:30' },
+        ]
+      }
+    };
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('loginByPassword')) return login();
+      if (u.includes('OpenAPIScripMaster')) return new Response(master, { status: 200, headers: { 'content-type': 'application/json' } });
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
+      return json(quoteBody);
+    });
+    configureAngelTransport({ fetch: fetcher as unknown as typeof fetch, now: () => NOW, resetSession: true });
+    // 2059 = 500325.BO (BSE), 9 = RELIANCE (NSE).
+    const result = await getLiveQuotes([2059, 9], { fetch: fetcher as unknown as typeof fetch, cacheDirectory: directory });
+    expect(result.available).toBe(true);
+    expect(result.quotes.find(q => q.symbolId === 2059)).toMatchObject({ ticker: '500325.BO', ltp: 1500.5 });
+    expect(result.quotes.find(q => q.symbolId === 9)).toMatchObject({ ticker: 'RELIANCE', ltp: 1340.7 });
+    const quoteCalls = bodies.filter(b => b.exchangeTokens);
+    expect(quoteCalls.some(b => {
+      const t = b.exchangeTokens as Record<string, string[]>;
+      return Array.isArray(t.BSE) && t.BSE.includes('500325') && !t.NSE;
+    })).toBe(true);
+    expect(quoteCalls.some(b => {
+      const t = b.exchangeTokens as Record<string, string[]>;
+      return Array.isArray(t.NSE) && t.NSE.includes('2885') && !t.BSE;
+    })).toBe(true);
+  });
+});

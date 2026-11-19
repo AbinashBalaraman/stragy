@@ -163,8 +163,11 @@ const QuoteMeta: React.FC<{ quote: LiveQuote; eodClose?: number; className?: str
 
 const LiveQuoteLine: React.FC<{ quote: LiveQuote; eodClose?: number; className?: string }> = ({ quote, eodClose, className = '' }) => {
   const sameAsClose = typeof eodClose === 'number' && Math.abs(quote.ltp - eodClose) < 0.005;
-  const clock = istClock(quote.exchangeTimestamp ?? quote.fetchedAt);
-  const afterClose = clock !== null && clock >= '15:30';
+  // "After close" is only evidence when the EXCHANGE timestamp says so; the
+  // broker fetch time must never relabel an unverified quote as a close feed.
+  const exchangeClock = istClock(quote.exchangeTimestamp);
+  const afterClose = exchangeClock !== null && exchangeClock >= '15:30';
+  const clock = exchangeClock ?? istClock(quote.fetchedAt);
   const closeFeed = sameAsClose || afterClose;
   // The server marks delay 'unknown' when the exchange timestamp is missing
   // or stale; such a quote must never wear the green Live badge.
@@ -461,6 +464,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     setMarketSlow(false);
     setUniverseNoData(false);
     setIsLoadingTrends(true);
+    // A superseded "Check again" must not strand its busy flag: this fetch
+    // owns the market lane now, regardless of how the previous check ended.
+    setCheckingMarket(false);
     setMarketError(''); setScannerError('');
     setMarketProgress(null);
     setMarketDeadline(null); setMarketCancelled(false);

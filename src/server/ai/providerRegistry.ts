@@ -101,7 +101,9 @@ function mergedProviders(env: Record<string, string | undefined>): ProviderRecor
   for (const saved of state?.providers ?? []) {
     const builtin = BUILTINS.find(item => item.id === saved.id);
     if (builtin) {
-      records.set(saved.id, { ...saved, builtin: true, adapter: builtin.adapter, keyEnv: builtin.keyEnv });
+      // Pin the endpoint at read time too: a state file written before the
+      // write-time pin must never send env keys to an overridden builtin URL.
+      records.set(saved.id, { ...saved, builtin: true, baseUrl: builtin.baseUrl, adapter: builtin.adapter, keyEnv: builtin.keyEnv });
     } else {
       records.set(saved.id, { ...saved, builtin: false, adapter: 'openai' });
     }
@@ -387,10 +389,13 @@ export async function listProviderModels(id: string, env: Record<string, string 
   if (id === 'openrouter') {
     const key = providerKey(record, env);
     const response = await registryFetch(`${record.baseUrl.replace(/\/+$/, '')}/models`, {
-      method: 'GET',
+      method: 'GET', signal: AbortSignal.timeout(20_000),
       headers: { Accept: 'application/json', ...(key ? { Authorization: 'Bearer ' + key } : {}) },
     });
-    if (!response.ok) throw new ProviderError(502, 'MODELS_UNAVAILABLE', 'OpenRouter models endpoint did not return success.');
+    if (!response.ok) {
+      try { await response.body?.cancel?.(); } catch { /* best-effort release */ }
+      throw new ProviderError(502, 'MODELS_UNAVAILABLE', 'OpenRouter models endpoint did not return success.');
+    }
     const payload = await response.json() as { data?: any[] };
     const models = Array.isArray(payload.data) ? payload.data : [];
     return models.map(item => {
@@ -450,7 +455,10 @@ export async function testProvider(id: string, raw: unknown, env: Record<string,
       headers: built.headers, body: built.body,
     });
     const latencyMs = Date.now() - started;
-    if (!response.ok) return { ok: false, latencyMs, error: redactSecret(`Provider returned HTTP ${response.status}.`, key) };
+    if (!response.ok) {
+      try { await response.body?.cancel?.(); } catch { /* best-effort release */ }
+      return { ok: false, latencyMs, error: redactSecret(`Provider returned HTTP ${response.status}.`, key) };
+    }
     const payload = await response.json() as { model?: unknown; choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }> };
     const choice = payload.choices?.[0];
     const content = typeof choice?.message?.content === 'string' ? choice.message.content.trim() : '';

@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
+import net from 'node:net';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ import { redact } from '../../server/config';
 import { createPinnedFetch, isPrivateIp } from '../../server/ai/netGuard';
 import {
   initializeProviderRegistry, resetProviderRegistryCache, resetProviderRegistryForTests,
-  setChain, setDnsLookupForTests, setProviderFetchForTests, testProvider, upsertProvider,
+  setChain, setDnsLookupForTests, setProviderFetchForTests, testProvider, upsertProvider, validateBaseUrl,
 } from '../../server/ai/providerRegistry';
 import { resetSecretsCache } from '../../server/ai/providerSecrets';
 
@@ -142,5 +143,51 @@ describe('connection-time DNS pinning (rebinding defense)', () => {
       upstream.close();
       (upstream as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
     }
+  });
+
+  it('completes HOSTNAME requests under autoSelectFamily on and off (array lookup contract)', async () => {
+    // Regression: Node >= 20 calls lookup with all:true and requires the
+    // array callback form; the single-address form broke every hostname URL.
+    const upstream = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const port = (upstream.address() as { port: number }).port;
+    const loopbackLookup = (() => (async () => [{ address: '127.0.0.1', family: 4 }])) as never;
+    const previous = net.getDefaultAutoSelectFamily();
+    try {
+      for (const auto of [true, false]) {
+        net.setDefaultAutoSelectFamily(auto);
+        const pinned = createPinnedFetch(loopbackLookup);
+        const res = await pinned(`http://localhost:${port}/v1/models`, { method: 'GET' });
+        expect(res.ok).toBe(true);
+        expect(await res.json()).toEqual({ ok: true });
+      }
+    } finally {
+      net.setDefaultAutoSelectFamily(previous);
+      upstream.close();
+      (upstream as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+    }
+  });
+
+  it('rejects a pre-aborted signal with AbortError instead of crashing or hanging', async () => {
+    const pinned = createPinnedFetch();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(pinned('http://localhost:1/x', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('classifies hex-form IPv4-mapped IPv6 addresses', () => {
+    expect(isPrivateIp('::ffff:7f00:1')).toBe(true);      // 127.0.0.1
+    expect(isPrivateIp('::ffff:a00:5')).toBe(true);       // 10.0.0.5
+    expect(isPrivateIp('::ffff:a9fe:a9fe')).toBe(true);   // 169.254.169.254
+    expect(isPrivateIp('::ffff:0808:0808')).toBe(false);  // 8.8.8.8
+    expect(isPrivateIp('::ffff:8.8.8.8')).toBe(false);
+  });
+
+  it('rejects hex-mapped loopback literals at write time', async () => {
+    await expect(validateBaseUrl('https://[::ffff:7f00:1]/v1')).rejects.toMatchObject({ code: 'PRIVATE_BASE_URL' });
   });
 });

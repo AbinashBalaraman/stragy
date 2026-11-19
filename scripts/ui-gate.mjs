@@ -238,13 +238,15 @@ export function headerDirectoryBlocked(headers) {
   return false;
 }
 
-/** Recursively collect values of any key mentioning "directory". */
+/** Recursively collect values of any location-bearing key. OpenCode's
+ * project payloads use `canonical` (and fs payloads `path`), not just
+ * `directory` — the pin must cover every field that can re-point a project. */
 function collectDirValues(obj, out = []) {
   if (Array.isArray(obj)) {
     for (const item of obj) collectDirValues(item, out);
   } else if (obj && typeof obj === 'object') {
     for (const [key, value] of Object.entries(obj)) {
-      if (/directory/i.test(key) && typeof value === 'string') out.push(value);
+      if (/(directory|canonical|path|location|cwd|root)/i.test(key) && typeof value === 'string') out.push(value);
       else collectDirValues(value, out);
     }
   }
@@ -266,6 +268,33 @@ function bodyAgentBlocked(rawUrl, method, contentType, buffer) {
     if (!obj || typeof obj !== 'object' || !('agent' in obj)) return false;
     return obj.agent !== 'stragy';
   } catch { return false; }
+}
+
+/** A created session must not carry a permission ruleset that loosens the
+ * host-tool denies configured for the stragy agent. */
+function bodyPermissionsBlocked(rawUrl, method, buffer) {
+  if (String(method).toUpperCase() !== 'POST') return false;
+  if (decodePath(rawUrl).split('?')[0].toLowerCase() !== '/api/session') return false;
+  if (!buffer.length) return false;
+  try {
+    const obj = JSON.parse(buffer.toString('utf8'));
+    return Boolean(obj && typeof obj === 'object' && 'permissions' in obj);
+  } catch { return false; }
+}
+
+/** Project payloads must not carry `commands` (e.g. commands.start is later
+ * executed by worktree creation); the gate never accepts shell configuration. */
+function bodyCommandsBlocked(rawUrl, method, buffer) {
+  const upper = String(method).toUpperCase();
+  const p = decodePath(rawUrl).split('?')[0].toLowerCase();
+  if (!((upper === 'POST' && p === '/api/project') || (upper === 'PATCH' && /^\/api\/project\/[^/]+$/.test(p)))) return false;
+  if (!buffer.length) return false;
+  const hasCommands = (obj) => {
+    if (Array.isArray(obj)) return obj.some(hasCommands);
+    if (obj && typeof obj === 'object') return Object.entries(obj).some(([key, value]) => key === 'commands' || hasCommands(value));
+    return false;
+  };
+  try { return hasCommands(JSON.parse(buffer.toString('utf8'))); } catch { return false; }
 }
 
 /**
@@ -432,8 +461,14 @@ export function createGateServer({
       if (filtering && bodyAgentBlocked(req.url, req.method, req.headers['content-type'], buffered)) {
         return denyWithReason(res, decoded, 'agent');
       }
+      if (filtering && bodyPermissionsBlocked(req.url, req.method, buffered)) {
+        return denyWithReason(res, decoded, 'permissions');
+      }
       if (filtering && bodyDirectoryBlocked(req.headers['content-type'], buffered)) {
         return denyDirectory(res, decoded);
+      }
+      if (filtering && bodyCommandsBlocked(req.url, req.method, buffered)) {
+        return denyWithReason(res, decoded, 'project-commands');
       }
       proxyRequest(req, res, decoded, buffered, true, filtering && shouldRedact(req.url));
     };
@@ -464,12 +499,10 @@ export function createGateServer({
     if (filtering && headerDirectoryBlocked(req.headers)) return denyDirectory(res, decoded);
 
     const method = String(req.method).toUpperCase();
-    const ct = String(req.headers['content-type'] || '').toLowerCase();
-    // Session-create bodies are small and OpenCode parses them as JSON
-    // regardless of Content-Type, so peek them under ANY content type.
-    const sessionCreate = method === 'POST' && decodePath(req.url).split('?')[0].toLowerCase() === '/api/session';
-    const peekable = filtering && bodyInspectionRoute(req.url, method) &&
-      (ct.includes('application/json') || ct.includes('x-www-form-urlencoded') || sessionCreate);
+    // Inspection routes carry small bodies; peek them under ANY content type
+    // (OpenCode defaults an absent Content-Type to JSON and parses it).
+    // PEEK_LIMIT denies oversized bodies rather than letting them bypass.
+    const peekable = filtering && bodyInspectionRoute(req.url, method);
     if (peekable) return forwardWithPeek(req, res, decoded);
     // Not an inspection route: the request body (e.g. a prompt with a base64
     // image) must be streamed verbatim to OpenCode. bodyComplete=false makes

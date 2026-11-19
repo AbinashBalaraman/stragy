@@ -220,4 +220,49 @@ describe('ui-gate live request filtering', () => {
       expect(hits()).toBe(0);
     });
   });
+
+  it('pins project canonical paths and rejects commands/permissions/no-CT payloads', async () => {
+    await withGate(async (base, hits) => {
+      // OpenCode project updates use `canonical`, not `directory`.
+      const badCanonical = await gateRequest(base, '/api/project/p1', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ canonical: '/etc' }),
+      });
+      expect(badCanonical.status).toBe(403);
+      expect(badCanonical.body.reason).toBe('directory');
+
+      const okCanonical = await gateRequest(base, '/api/project/p1', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ canonical: ALLOWED_DIRECTORY }),
+      });
+      expect(okCanonical.status).toBe(200);
+
+      const commands = await gateRequest(base, '/api/project', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ canonical: ALLOWED_DIRECTORY, commands: { start: 'echo hi' } }),
+      });
+      expect(commands.status).toBe(403);
+      expect(commands.body.reason).toBe('project-commands');
+
+      const perms = await gateRequest(base, '/api/session', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agent: 'stragy', permissions: { edit: 'allow' } }),
+      });
+      expect(perms.status).toBe(403);
+      expect(perms.body.reason).toBe('permissions');
+
+      // Absent Content-Type: OpenCode still parses the body as JSON.
+      const noCt = await gateRequest(base, '/api/session', {
+        method: 'POST',
+        body: JSON.stringify({ agent: 'build' }),
+      });
+      expect(noCt.status).toBe(403);
+      expect(noCt.body.reason).toBe('agent');
+      expect(hits()).toBe(1);
+    });
+  });
 });

@@ -19,7 +19,19 @@ export function isPrivateIp(address: string): boolean {
   if (ip === '::1' || ip === '::' || ip === '0.0.0.0') return ip !== '::1' ? true : false;
   if (ip.includes(':')) {
     if (ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd')) return true;
-    if (ip.startsWith('::ffff:')) return isPrivateIp(ip.slice(7));
+    if (ip.startsWith('::ffff:')) {
+      const rest = ip.slice(7);
+      // Hex form (::ffff:7f00:1) maps to dotted IPv4 just like ::ffff:127.0.0.1.
+      if (rest.includes(':')) {
+        const groups = rest.split(':');
+        if (groups.length === 2 && groups.every(g => /^[0-9a-f]{1,4}$/.test(g))) {
+          const n = (parseInt(groups[0], 16) << 16) | parseInt(groups[1], 16);
+          return isPrivateIp([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.'));
+        }
+        return true; // unrecognized mapped form: fail closed
+      }
+      return isPrivateIp(rest);
+    }
     return false;
   }
   const parts = ip.split('.').map(Number);
@@ -73,7 +85,11 @@ export function createPinnedFetch(getLookup: () => DnsLookupLike = () => dns.loo
           callback(new Error('Provider host resolved to a private or metadata address at connection time.'), '', 4);
           return;
         }
-        callback(null, safe[0].address, safe[0].family);
+        // net with autoSelectFamily (Node >= 20 default) calls lookup with
+        // all:true and requires the ARRAY callback form; the single-address
+        // form is only valid for all:false.
+        if (options.all) callback(null, safe.map(item => ({ address: item.address, family: item.family })));
+        else callback(null, safe[0].address, safe[0].family);
       };
       // Support both callback-style dns.lookup and promise-style test seams.
       let result: unknown;
@@ -91,6 +107,7 @@ export function createPinnedFetch(getLookup: () => DnsLookupLike = () => dns.loo
     const agent = new mod.Agent({ lookup, keepAlive: false });
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries((init.headers ?? {}) as Record<string, unknown>)) headers[name] = String(value);
+    if (init.body !== undefined && init.body !== null) headers['Content-Length'] = String(Buffer.byteLength(String(init.body)));
     const req = mod.request({
       protocol: url.protocol,
       hostname: url.hostname,
@@ -113,7 +130,7 @@ export function createPinnedFetch(getLookup: () => DnsLookupLike = () => dns.loo
         }
         return Buffer.concat(chunks).toString('utf8');
       };
-      res.on('close', () => agent.destroy());
+      res.on('close', () => { removeAbortListener(); agent.destroy(); });
       resolve({
         ok: status >= 200 && status < 300,
         status,
@@ -123,6 +140,11 @@ export function createPinnedFetch(getLookup: () => DnsLookupLike = () => dns.loo
         json: async () => JSON.parse(await readAll()),
       });
     });
+    // Attach the error handler BEFORE honoring the signal: a pre-aborted
+    // signal destroys the request, and without a listener that 'error' event
+    // would crash the process and leave the promise pending forever.
+    let removeAbortListener = () => {};
+    req.on('error', (error) => { removeAbortListener(); agent.destroy(); reject(error); });
     const abort = () => {
       const error = new Error('The provider request was aborted.');
       error.name = 'AbortError';
@@ -131,8 +153,8 @@ export function createPinnedFetch(getLookup: () => DnsLookupLike = () => dns.loo
     if (init.signal) {
       if (init.signal.aborted) { abort(); return; }
       init.signal.addEventListener('abort', abort, { once: true });
+      removeAbortListener = () => init.signal.removeEventListener('abort', abort);
     }
-    req.on('error', (error) => { agent.destroy(); reject(error); });
     if (init.body !== undefined && init.body !== null) req.write(init.body);
     req.end();
   });

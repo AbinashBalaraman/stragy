@@ -67,6 +67,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
           point[ind.id] = safeIndData[ind.id]?.[idx] ?? null;
         } else if (ind.type === 'BBANDS') {
           point[`${ind.id}_upper`] = safeIndData[`${ind.id}_upper`]?.[idx] ?? null;
+          point[`${ind.id}_middle`] = safeIndData[`${ind.id}_middle`]?.[idx] ?? null;
           point[`${ind.id}_lower`] = safeIndData[`${ind.id}_lower`]?.[idx] ?? null;
         }
       }
@@ -202,6 +203,16 @@ export const PriceChart: React.FC<PriceChartProps> = ({
                       isAnimationActive={false}
                       connectNulls={false}
                       name={`${ind.id} upper`}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey={`${ind.id}_middle`}
+                      stroke={color}
+                      strokeWidth={1}
+                      dot={false}
+                      isAnimationActive={false}
+                      connectNulls={false}
+                      name={`${ind.id} middle`}
                     />
                     <Line
                       type="monotone"
