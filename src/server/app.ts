@@ -239,7 +239,7 @@ export async function createApp(deps: AppDependencies = {}) {
     const address = req.socket.remoteAddress ?? '';
     const local = address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
     if (!local) return false;
-    return toolToken ? req.get('x-stragy-tool-token') === toolToken : true;
+    return toolToken ? tokenMatches(req.get('x-stragy-tool-token') ?? '', toolToken) : true;
   };
   app.get('/api/v2/engine/tools', wrap(async (req, res) => {
     if (!localToolRequest(req)) throw new ApiFailure(403, 'TOOL_BRIDGE_LOCAL_ONLY', 'The tool bridge is only reachable from this machine.');
@@ -710,7 +710,14 @@ export async function createApp(deps: AppDependencies = {}) {
     const message = membershipMessage ?? (rateLimited ? ANGEL_RATE_LIMIT_MESSAGE : err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.');
     res.status(status).json({ success: false, error: { code, message, requestId: res.locals.requestId, retryable: [429, 503, 504].includes(status), ...(err instanceof ApiFailure && err.details ? { fieldErrors: err.details } : {}) } });
   });
-  app.use((req, res, next) => { if (/\.(?:cjs|map)$|(?:^|\/)\.env|(?:^|\/)server(?:\/|\.)/i.test(req.path)) return res.status(404).end(); next(); });
+  // Decode before the artifact check: express.static decodes percent-escapes,
+  // so /index.js%2emap or /%2e%65nv must not slip past the raw-path regex.
+  app.use((req, res, next) => {
+    let decoded = req.path;
+    try { decoded = decodeURIComponent(req.path); } catch { /* keep raw on malformed escapes */ }
+    if (/\.(?:cjs|map)$|(?:^|\/)\.env|(?:^|\/)server(?:\/|\.)/i.test(decoded)) return res.status(404).end();
+    next();
+  });
   if (deps.enableVite && config.NODE_ENV !== 'production') { const { createServer } = await import('vite'); const vite = await createServer({ configLoader: 'native', server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); }
   else if (config.NODE_ENV === 'production') { const client = path.join(process.cwd(), 'dist/client'); app.use(express.static(client, { dotfiles: 'deny', index: false })); app.get('*', (_req, res) => res.sendFile(path.join(client, 'index.html'))); }
   return app;

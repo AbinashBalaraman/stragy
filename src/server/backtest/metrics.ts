@@ -12,7 +12,7 @@ export function computeMetrics(points: EquityPoint[], trades: TradeRecord[], ini
   const unavailable = (name: string, reason: string): null => { unavailableReasons[name] = reason; return null; };
   const durationDays = (points.at(-1)!.timestamp - points[0].timestamp) / 86400000;
   const cagrRaw = durationDays > 0 && finalEquity > 0 ? (Math.pow(finalEquity / initialCapital, 365.2425 / durationDays) - 1) * 100 : null;
-  const cagr = cagrRaw !== null && Number.isFinite(cagrRaw) ? cagrRaw : unavailable('cagr', finalEquity <= 0 ? 'NONPOSITIVE_EQUITY' : 'INSUFFICIENT_DURATION');
+  const cagr = cagrRaw !== null && Number.isFinite(cagrRaw) ? cagrRaw : unavailable('cagr', finalEquity <= 0 ? 'NONPOSITIVE_EQUITY' : durationDays <= 0 ? 'INSUFFICIENT_DURATION' : 'NONFINITE_ANNUALIZATION');
   const returns = equityReturns(points), dailyRf = Math.pow(1 + riskFreeAnnual, 1 / factor) - 1;
   const validReturns = returns.length >= 2 && returns.every(Number.isFinite);
   const excess = returns.map(r => r - dailyRf), avg = validReturns ? mean(excess) : 0;

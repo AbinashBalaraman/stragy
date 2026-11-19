@@ -15,7 +15,14 @@ export const gttInputSchema = z.object({ symbolId: positive.int().refine(id => N
 export type GttInput = z.infer<typeof gttInputSchema>;
 const numericString = text.refine(v => Number.isFinite(Number(v)) && Number(v) > 0);
 export const gttSchema = z.object({ success: z.literal(true), mode: z.literal('demo'), previewOnly: z.literal(true), inputRevision: text, warnings: z.array(text).min(1), symbol: text, ticker: text, spotPrice: positive, action: z.enum(['BUY', 'SELL']), capitalAllocated: positive, qty: positive.int(), entryPrice: positive, stopLossPrice: positive, stopLossAmountInr: nonnegative, stopLossPct: positive, targetPrice: positive, targetAmountInr: nonnegative, targetPct: positive, trailingStopLossStep: positive, trailingJumpPct: positive, riskRewardRatio: positive, smartApiPayload: z.object({ variety: z.literal('ROBO'), tradingsymbol: text, symboltoken: text, transactiontype: z.enum(['BUY', 'SELL']), exchange: text, ordertype: z.literal('LIMIT'), producttype: z.literal('BO'), duration: z.literal('DAY'), price: numericString, squareoff: numericString, stoploss: numericString, trailingStopLoss: numericString, quantity: numericString, disclosedquantity: z.literal('0') }) });
-export function parseOptionChain(value: unknown, key: string) { const result = optionChainSchema.parse(value); if (result.ticker !== key) throw new Error('Response symbol mismatch'); return result; }
+export function parseOptionChain(value: unknown, key: string) {
+  const result = optionChainSchema.parse(value);
+  // The scanner wires requests by numeric symbol id; accept either the id or
+  // the ticker itself, resolving ids through the catalog like volume profile.
+  const expected = NSE_SYMBOLS.find(s => s.id === Number(key))?.ticker ?? key;
+  if (result.ticker !== expected) throw new Error('Response symbol mismatch');
+  return result;
+}
 export function parseVolumeProfile(value: unknown, key: string) { const result = volumeProfileSchema.parse(value); if (result.ticker !== NSE_SYMBOLS.find(s => s.id === Number(key))?.ticker) throw new Error('Response symbol mismatch'); return result; }
 export function parseBasisSpreads(value: unknown) { return basisSpreadsSchema.parse(value); }
 export function parseGtt(value: unknown, key: string) {

@@ -805,7 +805,7 @@ export function parseAngelExchangeTime(raw: unknown): string | null {
   return Number.isFinite(parsed) && parsed > 0 ? new Date(parsed).toISOString() : null;
 }
 
-export interface AngelQuoteRequest { exchange: 'NSE'; tokens: string[] }
+export interface AngelQuoteRequest { exchange: 'NSE' | 'BSE'; tokens: string[] }
 
 /** FULL-mode market quotes, one batch per exchange (documented cap: 50 tokens per request). */
 export async function getAngelQuotes(requests: AngelQuoteRequest[], options: { signal?: AbortSignal; fetch?: typeof fetch } = {}): Promise<AngelRawQuote[]> {

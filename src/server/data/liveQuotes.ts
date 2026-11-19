@@ -145,14 +145,14 @@ export async function getLiveQuotes(
   const work = (async (): Promise<LiveQuotesResult> => {
     const at = nowImpl();
     const fetchedAt = new Date(at).toISOString();
-    const resolved: { symbolId: number; ticker: string; token: string }[] = [];
+    const resolved: { symbolId: number; ticker: string; token: string; exchange: 'NSE' | 'BSE' }[] = [];
     const unavailable: LiveQuoteUnavailable[] = [];
     for (const symbolId of ids) {
       const symbol = getSymbolById(symbolId);
       try {
         options.signal?.throwIfAborted();
         const instrument = await resolveAngelInstrument(symbol.ticker, { signal: options.signal, fetch: options.fetch, cacheDirectory: options.cacheDirectory, now: nowImpl });
-        resolved.push({ symbolId, ticker: symbol.ticker, token: instrument.token });
+        resolved.push({ symbolId, ticker: symbol.ticker, token: instrument.token, exchange: instrument.exchange });
       } catch (error) {
         const code = error instanceof MarketDataError ? error.code : 'UNKNOWN_MAPPING';
         unavailable.push({ symbolId, ticker: symbol.ticker, code, message: `No verified Angel One token for ${symbol.ticker}` });
@@ -173,12 +173,21 @@ export async function getLiveQuotes(
       cache.set(key, { at, result });
       return result;
     }
-    const raw = await getAngelQuotes([{ exchange: 'NSE', tokens: resolved.map(r => r.token) }], { signal: options.signal, fetch: options.fetch });
-    const byToken = new Map<string, AngelRawQuote>();
-    for (const quote of raw) byToken.set(quote.symbolToken, quote);
+    // Request each exchange segment separately: BSE tokens must never be
+    // asked for on NSE, and responses are matched by exchange+token so a
+    // cross-segment token collision can never surface another instrument's
+    // price under this symbol.
+    const raw = await getAngelQuotes(
+      (['NSE', 'BSE'] as const)
+        .map(exchange => ({ exchange, tokens: resolved.filter(r => r.exchange === exchange).map(r => r.token) }))
+        .filter(request => request.tokens.length > 0),
+      { signal: options.signal, fetch: options.fetch }
+    );
+    const byIdentity = new Map<string, AngelRawQuote>();
+    for (const quote of raw) byIdentity.set(quote.exchange + ':' + quote.symbolToken, quote);
     const quotes: LiveQuote[] = [];
     for (const item of resolved) {
-      const match = byToken.get(item.token);
+      const match = byIdentity.get(item.exchange + ':' + item.token);
       if (!match) {
         unavailable.push({ symbolId: item.symbolId, ticker: item.ticker, code: 'PROVIDER_UNAVAILABLE', message: `Angel One returned no quote for ${item.ticker}` });
         continue;

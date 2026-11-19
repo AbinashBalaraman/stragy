@@ -3,6 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { createEnginePlugin, type EngineToolDepsGetter } from './engineTools';
+import { redact } from '../config';
 
 /**
  * The standalone OpenCode server (the chat UI) runs as its own process, so its
@@ -118,7 +119,9 @@ export function createToolBridge(options: { getDeps: EngineToolDepsGetter; prefe
         const result = await tool.execute(parsed.value, { sessionID });
         return { status: 200, body: result };
       } catch (error) {
-        return { status: 500, body: { code: 'TOOL_FAILED', message: (error as Error)?.message ?? 'The tool failed.' } };
+        // Underlying provider/storage/broker diagnostics can embed credentials;
+        // the bridge echoes them to chat clients, so scrub before returning.
+        return { status: 500, body: { code: 'TOOL_FAILED', message: redact((error as Error)?.message ?? 'The tool failed.') } };
       }
     },
     close() { preferences.close(); captured = null; },

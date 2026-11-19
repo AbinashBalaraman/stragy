@@ -166,11 +166,20 @@ const LiveQuoteLine: React.FC<{ quote: LiveQuote; eodClose?: number; className?:
   const clock = istClock(quote.exchangeTimestamp ?? quote.fetchedAt);
   const afterClose = clock !== null && clock >= '15:30';
   const closeFeed = sameAsClose || afterClose;
+  // The server marks delay 'unknown' when the exchange timestamp is missing
+  // or stale; such a quote must never wear the green Live badge.
+  const unverified = !closeFeed && quote.delay === 'unknown';
+  const badgeClass = closeFeed
+    ? 'border-sky-400/25 bg-sky-400/10 text-sky-200'
+    : unverified
+      ? 'border-amber-400/25 bg-amber-400/10 text-amber-200'
+      : 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300';
+  const dotClass = closeFeed ? 'bg-sky-400' : unverified ? 'bg-amber-400' : 'bg-emerald-400';
   return (
     <div className={'flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] ' + className} title={liveQuoteTimeTitle(quote)}>
-      <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-semibold ${closeFeed ? 'border-sky-400/25 bg-sky-400/10 text-sky-200' : 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'}`}>
-        <span aria-hidden="true" className={`h-1 w-1 rounded-full ${closeFeed ? 'bg-sky-400' : 'bg-emerald-400'}`} />
-        {closeFeed ? 'Close (live feed)' : 'Live'}
+      <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-semibold ${badgeClass}`}>
+        <span aria-hidden="true" className={`h-1 w-1 rounded-full ${dotClass}`} />
+        {closeFeed ? 'Close (live feed)' : unverified ? 'Unverified freshness' : 'Live'}
       </span>
       <span className="st-tnum font-semibold text-white">{formatLivePrice(quote.ltp)}</span>
       <span className={`st-tnum font-semibold ${quote.changePercent >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
@@ -314,11 +323,32 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState<boolean>(false);
   const [moreTabsOpen, setMoreTabsOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+  // Disclosure hygiene: Escape and outside clicks close the More menu, and
+  // focus returns to the trigger so keyboard users are never orphaned.
+  useEffect(() => {
+    if (!moreTabsOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setMoreTabsOpen(false); moreTriggerRef.current?.focus(); }
+    };
+    const onPointer = (event: PointerEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) setMoreTabsOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [moreTabsOpen]);
   const [scanLimit, setScanLimit] = useState(35);
   const [scanSlow, setScanSlow] = useState(false);
   const [prefill, setPrefill] = useState<ScannerPrefill | null>(null);
   const appliedPrefill = useRef<ScannerPrefill | null>(null);
   const [availableTradingDates, setAvailableTradingDates] = useState<TradingSessionDate[]>([]);
+  const [datesLoaded, setDatesLoaded] = useState(false);
+  const [prefillCutoffNotice, setPrefillCutoffNotice] = useState('');
   const [trendFilter, setTrendFilter] = useState<'ALL' | 'BULLISH' | 'OVERSOLD' | 'BREAKOUT' | 'GOLDEN_CROSS'>('ALL');
   const [trendSearchQuery, setTrendSearchQuery] = useState('');
   const [isScanning, setIsScanning] = useState(false);
@@ -388,7 +418,8 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     || officialMembership;
   const membershipUnverified = Boolean(dataEvidence?.mode === 'real' && !membershipVerified);
 
-  // Fetch available trading session dates on mount
+  // Fetch available trading session dates on mount. A failed load is recorded
+  // (not swallowed) so the hand-off cutoff can be flagged as unverified.
   useEffect(() => {
     const abort = new AbortController();
     fetch('/api/market/dates', { signal: abort.signal })
@@ -397,8 +428,9 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
         if (data && data.success && Array.isArray(data.dates)) {
           setAvailableTradingDates(data.dates);
         }
+        setDatesLoaded(true);
       })
-      .catch(() => {});
+      .catch(() => { setDatesLoaded(true); });
     return () => abort.abort();
   }, []);
 
@@ -467,22 +499,27 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
 
   const checkMarketAgain = async () => {
     if (!marketDeadline || checkingMarket) return;
+    // Same ownership discipline as fetchMarketData: a resumed snapshot from
+    // the old universe/date must never land under a new context header.
+    const ticket = marketOwner.current.begin(contextKey);
     setCheckingMarket(true);
     try {
-      const resumed = await checkMarketJob(marketDeadline.jobId);
+      const resumed = await checkMarketJob(marketDeadline.jobId, ticket.signal);
+      if (!marketOwner.current.owns(ticket, currentContext.current)) return;
       if (resumed.state === 'done') {
         applyMarketSnapshot(resumed.result);
         setMarketDeadline(null);
         setMarketError('');
       }
     } catch (e) {
+      if (!marketOwner.current.owns(ticket, currentContext.current)) return;
       const failure = e as Error & { status?: number };
       setMarketDeadline(null);
       setMarketError(failure.status === 404
         ? 'The server restarted and the market load was lost. Try again.'
         : (e instanceof Error ? e.message : 'Market data unavailable'));
     } finally {
-      setCheckingMarket(false);
+      if (marketOwner.current.owns(ticket, currentContext.current)) setCheckingMarket(false);
     }
   };
 
@@ -543,20 +580,33 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
     setActiveTab('strategy_matches');
   }, [incomingPrefill]);
 
-  // Apply the hand-off cutoff once the session list can confirm it is an observed date.
+  // Apply the hand-off cutoff once the session list can confirm it is an
+  // observed date. When confirmation is impossible, say so instead of
+  // silently scanning a different session than chat requested.
   useEffect(() => {
     if (!prefill) return;
-    if (!prefill.asOf) { setSelectedDate(''); return; }
-    if (!availableTradingDates.length) return;
-    setSelectedDate(availableTradingDates.some(item => item.date === prefill.asOf) ? prefill.asOf : '');
-  }, [prefill, availableTradingDates]);
+    if (!prefill.asOf) { setSelectedDate(''); setPrefillCutoffNotice(''); return; }
+    if (!availableTradingDates.length) {
+      if (!datesLoaded) return;
+      setSelectedDate(prefill.asOf);
+      setPrefillCutoffNotice(`The session calendar could not be loaded, so the requested cutoff ${prefill.asOf} is unverified. The scan uses it as requested; the server still enforces its observed-data cutoff.`);
+      return;
+    }
+    if (availableTradingDates.some(item => item.date === prefill.asOf)) {
+      setSelectedDate(prefill.asOf);
+      setPrefillCutoffNotice('');
+    } else {
+      setSelectedDate('');
+      setPrefillCutoffNotice(`The requested cutoff ${prefill.asOf} is outside the observed session window, so the latest session is shown instead.`);
+    }
+  }, [prefill, availableTradingDates, datesLoaded]);
 
   useEffect(() => {
     setTrends([]); setMovers(null); setScanResult(null); setDataCutoff(''); setMarketEvaluated(0);
     setPriceLabel('Price source not yet reported');
     setScannerError(''); setMarketError(''); setScanError('');
     setMarketDeadline(null); setMarketCancelled(false);
-    setIsScanning(false); setIsLoadingTrends(false);
+    setIsScanning(false); setIsLoadingTrends(false); setCheckingMarket(false);
     setCoverageLabel('Coverage not yet reported');setCoverageDetail('Coverage details not yet reported.');setDataEvidence(null);
     if (isStrategyView) void runScan();
     else void fetchMarketData();
@@ -911,16 +961,17 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
               <button
                 key={tab}
                 type="button"
-                onClick={() => setActiveTab(tab)}
+                onClick={() => { setActiveTab(tab); setMoreTabsOpen(false); }}
                 aria-current={activeTab === tab ? 'page' : undefined}
                 className={'whitespace-nowrap rounded-md px-3 py-1.5 text-xs transition-colors ' + (activeTab === tab ? 'bg-white/[0.08] font-medium text-neutral-100' : 'text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200')}
               >
                 {label}
               </button>
             ))}
-            <div className="relative">
+            <div className="relative" ref={moreMenuRef}>
               <button
                 type="button"
+                ref={moreTriggerRef}
                 onClick={() => setMoreTabsOpen(open => !open)}
                 aria-expanded={moreTabsOpen}
                 aria-controls="scanner-more-sections"
@@ -951,8 +1002,11 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       {prefill && (
         <PrefillNote
           assumptions={prefill.assumptions}
-          onDismiss={() => { setPrefill(null); onPrefillDismiss?.(); }}
+          onDismiss={() => { setPrefill(null); setPrefillCutoffNotice(''); onPrefillDismiss?.(); }}
         />
+      )}
+      {prefill && prefillCutoffNotice && (
+        <p role="status" className="px-1 text-xs leading-5 text-amber-200/90">{prefillCutoffNotice}</p>
       )}
 
       {marketDeadline ? null : marketCancelled && !modelOnlyTab ? (

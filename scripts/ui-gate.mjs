@@ -28,7 +28,7 @@ export const ALLOWED_DIRECTORY = '/data/home/oc-import/Stragy/opencode-app-data/
 // Read-only metadata routes are needed by the UI, but they can echo provider
 // settings (plaintext API keys). Their JSON responses are buffered, redacted
 // and re-emitted. Streaming routes (/api/event, chat, uploads) are untouched.
-const REDACT_PREFIXES = ['/api/config', '/api/provider', '/api/model', '/api/info', '/api/agent', '/api/integration', '/api/credential', '/api/experimental/voice', '/api/experimental/mcp'];
+const REDACT_PREFIXES = ['/api/config', '/api/provider', '/api/model', '/api/info', '/api/agent', '/api/integration', '/api/credential', '/api/experimental/voice', '/api/experimental/mcp', '/api/mcp', '/api/websearch', '/api/location', '/api/project'];
 const SECRET_KEY_RE = /(api[-_]?key|token|secret|password|authorization|bearer)/i;
 const MAX_REDACT_BYTES = 32 * 1024 * 1024;
 
@@ -83,6 +83,8 @@ const RULES = [
   { name: 'session-move',              test: re(/^\/api\/session\/[^/]+\/move(?:\/|$)/) },
   { name: 'session-import',            test: re(/^\/api\/experimental\/session\/import(?:\/|$)/) },
   { name: 'experimental-migration',    test: start('/api/experimental/migration') },
+  { name: 'experimental-config',       test: seg('/api/experimental/config') },
+  { name: 'location-reload',           test: seg('/api/location/reload') },
 ];
 
 /** Decode the pathname once (case preserved) for logs / error bodies. */
@@ -111,13 +113,18 @@ const ALLOW_READONLY = [
  * Read-only UI routes outside the narrow ALLOW_READONLY list. File reads are
  * additionally restricted to real files inside the Stragy workspace.
  */
-function fsReadAllowed(decodedPath) {
-  const prefix = '/api/fs/read/';
-  if (!decodedPath.toLowerCase().startsWith(prefix)) return false;
-  let rel = decodedPath.slice(prefix.length);
+/**
+ * Realpath containment: a caller-supplied location must resolve to a real
+ * path inside the Stragy workspace. Empty means "server default" (the
+ * launcher pins that to the workspace). Symlinks escaping the workspace,
+ * missing paths and NUL bytes fail closed.
+ */
+export function pathInsideWorkspace(value) {
+  let rel = String(value ?? '');
   try { rel = decodeURIComponent(rel); } catch { return false; }
   rel = rel.replace(/\\/g, '/');
   if (rel.includes('\0')) return false;
+  if (rel === '') return true;
   const abs = rel.startsWith('/') ? rel : path.join(ALLOWED_DIRECTORY, rel);
   let real, root;
   try { real = realpathSync(abs); } catch { return false; }
@@ -125,11 +132,33 @@ function fsReadAllowed(decodedPath) {
   return real === root || real.startsWith(root + '/');
 }
 
-function readOnlySafePath(decodedPath, lowerPath, method) {
+function fsReadAllowed(decodedPath) {
+  const prefix = '/api/fs/read/';
+  if (!decodedPath.toLowerCase().startsWith(prefix)) return false;
+  return pathInsideWorkspace(decodedPath.slice(prefix.length));
+}
+
+/**
+ * GET /api/fs/list is needed by the UI, but its `path`/`location` query must
+ * stay inside the workspace — otherwise it enumerates arbitrary host
+ * directories through the public gate.
+ */
+export function fsListAllowed(rawUrl) {
+  try {
+    const u = new URL(rawUrl, 'http://gate.local');
+    for (const [key, value] of u.searchParams) {
+      if (/^(path|location)$/i.test(key) && !pathInsideWorkspace(value)) return false;
+    }
+  } catch { return false; }
+  return true;
+}
+
+function readOnlySafePath(rawUrl, decodedPath, lowerPath, method) {
   if (method !== 'GET') return false;
   const p = lowerPath;
   if (p === '/api/worktree' || p === '/api/plugin' || p === '/api/plugin/gui' ||
-      p === '/api/fs/list' || p === '/api/shell' || p === '/api/pty') return true;
+      p === '/api/shell' || p === '/api/pty') return true;
+  if (p === '/api/fs/list') return fsListAllowed(rawUrl);
   if (p === '/api/credential' || /^\/api\/credential\/[^/]+$/.test(p)) return true;
   if (/^\/api\/pty\/[^/]+$/.test(p)) return true; // status only; /connect is not matched
   if (p.startsWith('/api/fs/read/')) return fsReadAllowed(decodedPath);
@@ -147,10 +176,13 @@ export function isBlocked(rawUrl, method = 'GET') {
   for (const allow of ALLOW_READONLY) {
     if (upper === allow.method && p === allow.path) return null;
   }
-  if (readOnlySafePath(decodedPath, p, upper)) return null;
+  if (readOnlySafePath(rawUrl, decodedPath, p, upper)) return null;
   // /api/mcp GET is the read-only tool list the chat needs. PUT/POST install
   // or reconfigure MCP servers, which is arbitrary code execution.
   if (p === '/api/mcp' && ['POST', 'PUT'].includes(upper)) return 'mcp-mutate';
+  // /api/location GET is read-only metadata; mutating it (add/remove/reload
+  // locations) re-points the server at other projects' configs/plugins.
+  if (p === '/api/location' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(upper)) return 'location-mutate';
   // Switching a session to a built-in agent (Build/Plan/General/Explore) is a
   // chat-level RCE: those agents have full host shell/file tools.
   if (['POST', 'PUT', 'PATCH'].includes(upper) && /^\/api\/session\/[^/]+\/agent(?:\/|$)/.test(p)) return 'agent-switch';
@@ -193,6 +225,19 @@ function queryDirectoryBlocked(rawUrl) {
   return false;
 }
 
+/**
+ * OpenCode also honors location headers (x-opencode-directory). They must
+ * obey the same pin as the query/body, on requests and upgrades alike.
+ */
+export function headerDirectoryBlocked(headers) {
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (!/directory/i.test(key)) continue;
+    const values = Array.isArray(value) ? value : [value];
+    for (const v of values) if (!directoryAllowed(v)) return true;
+  }
+  return false;
+}
+
 /** Recursively collect values of any key mentioning "directory". */
 function collectDirValues(obj, out = []) {
   if (Array.isArray(obj)) {
@@ -213,7 +258,9 @@ function collectDirValues(obj, out = []) {
 function bodyAgentBlocked(rawUrl, method, contentType, buffer) {
   if (String(method).toUpperCase() !== 'POST') return false;
   if (decodePath(rawUrl).split('?')[0].toLowerCase() !== '/api/session') return false;
-  if (!buffer.length || !String(contentType || '').toLowerCase().includes('application/json')) return false;
+  // OpenCode parses JSON regardless of Content-Type, so a text/plain JSON
+  // body must be inspected too. Unparseable bodies pass through.
+  if (!buffer.length) return false;
   try {
     const obj = JSON.parse(buffer.toString('utf8'));
     if (!obj || typeof obj !== 'object' || !('agent' in obj)) return false;
@@ -239,10 +286,12 @@ function bodyDirectoryBlocked(contentType, buffer) {
   if (!buffer.length) return false;
   const ct = String(contentType || '').toLowerCase();
   const text = buffer.toString('utf8');
+  // OpenCode parses JSON regardless of Content-Type, so try JSON first for
+  // any content type; fall back to form parsing for urlencoded bodies.
   try {
-    if (ct.includes('application/json')) {
-      return collectDirValues(JSON.parse(text)).some(v => !directoryAllowed(v));
-    }
+    return collectDirValues(JSON.parse(text)).some(v => !directoryAllowed(v));
+  } catch { /* not JSON */ }
+  try {
     if (ct.includes('x-www-form-urlencoded')) {
       for (const [key, value] of new URLSearchParams(text)) {
         if (/directory/i.test(key) && !directoryAllowed(value)) return true;
@@ -412,11 +461,15 @@ export function createGateServer({
     const reason = filtering ? isBlocked(req.url, req.method) : null;
     if (reason) return deny(res, decoded, reason);
     if (filtering && queryDirectoryBlocked(req.url)) return denyDirectory(res, decoded);
+    if (filtering && headerDirectoryBlocked(req.headers)) return denyDirectory(res, decoded);
 
     const method = String(req.method).toUpperCase();
     const ct = String(req.headers['content-type'] || '').toLowerCase();
+    // Session-create bodies are small and OpenCode parses them as JSON
+    // regardless of Content-Type, so peek them under ANY content type.
+    const sessionCreate = method === 'POST' && decodePath(req.url).split('?')[0].toLowerCase() === '/api/session';
     const peekable = filtering && bodyInspectionRoute(req.url, method) &&
-      (ct.includes('application/json') || ct.includes('x-www-form-urlencoded'));
+      (ct.includes('application/json') || ct.includes('x-www-form-urlencoded') || sessionCreate);
     if (peekable) return forwardWithPeek(req, res, decoded);
     // Not an inspection route: the request body (e.g. a prompt with a base64
     // image) must be streamed verbatim to OpenCode. bodyComplete=false makes
@@ -429,7 +482,7 @@ export function createGateServer({
   server.on('upgrade', (req, socket, head) => {
     const decoded = decodePath(req.url);
     const reason = filtering ? isBlocked(req.url, req.method || 'GET') : null;
-    const badDirectory = filtering && queryDirectoryBlocked(req.url);
+    const badDirectory = filtering && (queryDirectoryBlocked(req.url) || headerDirectoryBlocked(req.headers));
     if (reason || badDirectory) {
       if (reason) logBlock(decoded, reason);
       else logBlock(decoded, 'directory');
@@ -462,11 +515,13 @@ export function createGateServer({
     socket.on('close', () => up.destroy());
   });
 
-  // Long-lived SSE streams must never be timed out by the proxy.
+  // Long-lived SSE streams must never be timed out by the proxy, but header
+  // completion and idle keep-alive sockets get finite bounds so slow clients
+  // cannot exhaust the public socket (slowloris).
   server.timeout = 0;
   server.requestTimeout = 0;
-  server.headersTimeout = 0;
-  server.keepAliveTimeout = 0;
+  server.headersTimeout = 60_000;
+  server.keepAliveTimeout = 5_000;
   return server;
 }
 

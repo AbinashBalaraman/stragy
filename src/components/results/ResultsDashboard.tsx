@@ -142,6 +142,7 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
             bars={result.bars}
             trades={result.trades}
             indicators={result.strategy.indicators}
+            indicatorsData={result.indicatorsData}
             symbol={result.symbol}
           />
           <EquityCharts

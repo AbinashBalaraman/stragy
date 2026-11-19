@@ -384,6 +384,9 @@ export function createRequestBudget(now: () => number = Date.now, windowMs = 3_6
 }
 const defaultBudget = createRequestBudget();
 
+/** Shared hourly AI budget; provider connectivity tests consume it too. */
+export function consumeDefaultBudget(limit: number): boolean { return defaultBudget.tryConsume(limit); }
+
 export interface ProviderDeps {
   fetch?: FetchLike;
   budget?: RequestBudget;

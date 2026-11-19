@@ -20,6 +20,10 @@ export const monthYearTick = (value: unknown): string => {
   return date.toLocaleDateString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' });
 };
 
+/** Distinct overlay strokes, kept clear of close (#ececed), supertrend
+ * (#a8c7fa) and the entry/exit dots. */
+const OVERLAY_COLORS = ['#f6c453', '#7fd1ca', '#c792ea', '#9ccc65', '#f78c6c'];
+
 interface PriceChartProps {
   bars?: OHLCVBar[];
   trades?: TradeRecord[];
@@ -148,19 +152,73 @@ export const PriceChart: React.FC<PriceChartProps> = ({
               name="Close Price"
             />
 
-            {/* Overlays */}
-            {safeIndicators.some(i => i?.type === 'SUPERTREND') && (
-              <Line
-                type="monotone"
-                dataKey="supertrend"
-                stroke="#a8c7fa"
-                strokeWidth={1.5}
-                strokeDasharray="4 2"
-                dot={false}
-                isAnimationActive={false}
-                name="Supertrend"
-              />
-            )}
+            {/* Indicator overlays: every configured series that has data keys
+                in chartData must actually render (EMA/SMA/BBANDS were once
+                computed here but silently dropped). Warmup nulls stay gaps. */}
+            {safeIndicators.map((ind, idx) => {
+              if (!ind || !ind.id) return null;
+              const color = OVERLAY_COLORS[idx % OVERLAY_COLORS.length];
+              if (ind.type === 'SUPERTREND') {
+                return (
+                  <Line
+                    key={ind.id}
+                    type="monotone"
+                    dataKey="supertrend"
+                    stroke="#a8c7fa"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 2"
+                    dot={false}
+                    isAnimationActive={false}
+                    connectNulls={false}
+                    name="Supertrend"
+                  />
+                );
+              }
+              if (ind.type === 'EMA' || ind.type === 'SMA') {
+                return (
+                  <Line
+                    key={ind.id}
+                    type="monotone"
+                    dataKey={ind.id}
+                    stroke={color}
+                    strokeWidth={1.3}
+                    dot={false}
+                    isAnimationActive={false}
+                    connectNulls={false}
+                    name={ind.id}
+                  />
+                );
+              }
+              if (ind.type === 'BBANDS') {
+                return (
+                  <React.Fragment key={ind.id}>
+                    <Line
+                      type="monotone"
+                      dataKey={`${ind.id}_upper`}
+                      stroke={color}
+                      strokeWidth={1}
+                      strokeDasharray="3 2"
+                      dot={false}
+                      isAnimationActive={false}
+                      connectNulls={false}
+                      name={`${ind.id} upper`}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey={`${ind.id}_lower`}
+                      stroke={color}
+                      strokeWidth={1}
+                      strokeDasharray="3 2"
+                      dot={false}
+                      isAnimationActive={false}
+                      connectNulls={false}
+                      name={`${ind.id} lower`}
+                    />
+                  </React.Fragment>
+                );
+              }
+              return null;
+            })}
 
             {/* Trades Entry and Exit Reference Dots */}
             {safeTrades.map(t => (
