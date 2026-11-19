@@ -119,7 +119,7 @@ const env = {
   XDG_DATA_HOME: dataDir,
   OPENCODE_CONFIG_DIR: configDir,
   OPENCODE_PASSWORD: password,
-  STRAGY_TOOL_BRIDGE: process.env.STRAGY_TOOL_BRIDGE ?? 'http://127.0.0.1:3000',
+  STRAGY_TOOL_BRIDGE: process.env.STRAGY_TOOL_BRIDGE ?? 'http://127.0.0.1:3100',
   // The plugin starts the backend itself when it is not running.
   STRAGY_HOME: process.env.STRAGY_HOME ?? root,
   STRAGY_NODE_BIN: process.env.STRAGY_NODE_BIN ?? process.execPath,

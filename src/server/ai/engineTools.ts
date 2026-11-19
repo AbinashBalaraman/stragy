@@ -683,7 +683,7 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
         // ---------------------------------------------------------------- chart
         editor.add({
           name: 'read_chart',
-          description: 'Start reading an attached chart screenshot. Returns a jobId immediately; call get_chart_result with it. The current workspace strategy is required so exits, risk, sizing and costs are preserved.',
+          description: 'Start reading an attached chart screenshot. Returns a jobId immediately; call get_chart_result with it. A current workspace strategy is preferred so exits, risk, sizing and costs are preserved. If none exists the tool returns STRATEGY_REQUIRED: do not retry or hunt for a strategy; describe the image directly instead.',
           input: z.object({
             imageId: z.string().max(80).optional().describe('Attachment id from the prompt; omit to use the latest attached image.'),
             hint: z.string().max(1000).optional(),
@@ -698,7 +698,7 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             const image = deps.contexts.attachment(toolContext.sessionID, input.imageId);
             if (!image) return { output: typedFailure('IMAGE_REQUIRED', 'No chart image is attached to this session. Attach a PNG/JPEG/WebP screenshot and send it with a message.') };
             const picked = strategyFrom(input.currentStrategy ?? image.currentStrategy, sessionStrategy(deps, toolContext.sessionID)?.strategy);
-            if (!picked.strategy) return { output: typedFailure('STRATEGY_REQUIRED', picked.error ?? 'A current workspace strategy is required.') };
+            if (!picked.strategy) return { output: typedFailure('STRATEGY_REQUIRED', 'No current strategy is available. Do not retry or search templates; describe the attached image directly from vision and say a strategy is needed for a full screen plan.') };
             try {
               const job = jobs.enqueue({ kind: 'chart', image: image.dataUrl, hint: input.hint ?? image.hint, currentStrategy: picked.strategy });
               return { output: { status: 'queued', kind: 'chart', jobId: job.id, imageId: image.id, note: 'Chart analysis usually takes 20-200 seconds. Call get_chart_result with this jobId; a running answer means call again.' } };

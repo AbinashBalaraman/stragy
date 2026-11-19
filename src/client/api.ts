@@ -313,8 +313,8 @@ export async function requestMarketSnapshot(input: { universe: string; asOf?: st
     return result;
   }, signal, undefined, onProgress);
 }
-export async function requestScan(input: { universe: string; strategy: StrategyAST; limit?: number; asOf?: string }, signal?: AbortSignal, onPhase?: (phase: ResearchPhase) => void, onProgress?: (progress: ResearchJobProgress) => void): Promise<ScanResult> {
-  const body = { universe: input.universe, strategy: snapshotStrategy(input.strategy), limit: input.limit ?? 35, ...(input.asOf ? { asOf: input.asOf } : {}) };
+export async function requestScan(input: { universe: string; strategy: StrategyAST; limit?: number; maxSymbols?: number; asOf?: string }, signal?: AbortSignal, onPhase?: (phase: ResearchPhase) => void, onProgress?: (progress: ResearchJobProgress) => void): Promise<ScanResult> {
+  const body = { universe: input.universe, strategy: snapshotStrategy(input.strategy), limit: input.limit ?? 35, ...(input.maxSymbols ? { maxSymbols: input.maxSymbols } : {}), ...(input.asOf ? { asOf: input.asOf } : {}) };
   return researchJob('scan', body, raw => {
     const result = parseScanResult(raw);
     if (result.universe !== body.universe || result.asOf !== body.asOf || result.limit !== body.limit || result.offset !== 0) throw new ApiError('Scan belongs to a different universe, cutoff or page.', 'RESULT_IDENTITY_MISMATCH');

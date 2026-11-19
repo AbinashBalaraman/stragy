@@ -17,7 +17,7 @@ import { dirname, join } from "node:path"
  * the turn aborts this fetch while the job keeps running on the server.
  */
 
-const BRIDGE = (process.env.STRAGY_TOOL_BRIDGE ?? "http://127.0.0.1:3000").replace(/\/+$/, "")
+const BRIDGE = (process.env.STRAGY_TOOL_BRIDGE ?? "http://127.0.0.1:3100").replace(/\/+$/, "")
 const TOKEN = process.env.STRAGY_TOOL_TOKEN ?? ""
 const RESULT_TOOL: Record<string, string> = {
   scan: "get_scan_result",

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build --configLoader native && node scripts/build-server.mjs",
+    "build:frontend": "vite build --config vite.frontend.config.ts --configLoader native && node -e \"require('fs').copyFileSync('dist/frontend/frontend.html','dist/frontend/index.html')\"",
     "start": "node start.js",
+    "start:frontend": "node scripts/frontend-proxy.mjs",
     "preview": "vite preview",
     "clean": "node scripts/clean.mjs",
     "typecheck": "tsc --noEmit",
@@ -17,12 +19,16 @@
     "test:components": "vitest run --configLoader native src/test/components",
     "test:coverage": "vitest run --configLoader native --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:frontend": "playwright test --config qa/pass-08/playwright.config.ts",
     "test:smoke": "node scripts/smoke.mjs",
     "build:worker": "node scripts/build-server.mjs",
     "predev": "npm run build:worker"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.93",
+    "@fontsource/instrument-serif": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/noto-sans-tamil": "^5.3.0",
     "@google/genai": "^2.4.0",
     "@opencode/client": "2.3.2",
     "@opencode/plugin": "2.3.2",
