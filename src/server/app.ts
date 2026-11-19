@@ -435,7 +435,17 @@ export async function createApp(deps: AppDependencies = {}) {
   }).strict();
   app.post('/api/v2/engine/approvals', express.json({ limit: '128kb' }), engineRoute(async (req, res) => {
     const body = parse(EngineApprovalBody, req.body ?? {});
-    await getEngineSession(body.sessionId);
+    // The session may be an embedded engine session OR a standalone OpenCode
+    // UI session served through the tool bridge (the plugin tells operators
+    // to approve with that session id). The bridge's approval store knows the
+    // latter; sessions unknown to both still fail closed.
+    try {
+      await getEngineSession(body.sessionId);
+    } catch (error) {
+      const knownBridgeSession = engineApprovals.pendingForSession(body.sessionId).length > 0
+        || (body.approvalId ? engineApprovals.get(body.approvalId)?.sessionId === body.sessionId : false);
+      if (!knownBridgeSession) throw error;
+    }
     if (body.approvalId) {
       const existing = engineApprovals.get(body.approvalId);
       if (!existing) throw new ApiFailure(404, 'APPROVAL_NOT_FOUND', 'This approval request no longer exists. Ask the assistant to prepare it again.');
