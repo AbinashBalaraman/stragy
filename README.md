@@ -67,6 +67,44 @@ The credential-shaped fallback removed from the original baseline must still be 
 
 See `UPGRADE_PLAN.md` and `docs/upgrade/TASKS.json`. Plan acceptance criteria that have not been independently verified remain open. Optional P31-P34 work (licensed extended feeds, advanced research, accounts and order execution) is deferred.
 
+## Architecture (OpenCode UI)
+
+The chat is a standalone [OpenCode](https://opencode.ai) web UI; Stragy stays the single owner of market data and jobs. Two processes talk over loopback only:
+
+| Process | Port | Owns |
+|---|---|---|
+| Stragy server (`qa/start-server.sh`) | 127.0.0.1:3000 | job runner, SQLite candle cache, Angel One session, approvals, saved strategies |
+| Launcher + UI gate (`qa/start-opencode-app.sh`, `scripts/ui-gate.mjs`) | 127.0.0.1:4200 | public socket, auth passthrough, API filtering, streaming proxy |
+| OpenCode server (`opencode serve`, child of the launcher) | 127.0.0.1:4201 | chat sessions, streaming, native tool states, web UI (loopback only) |
+
+`instabox-port publish 4200` exposes the gate; the public tunnel and all existing URLs stay on `:4200`. Basic auth user `opencode`, password in `opencode-app-data/password.txt`. The launcher uses isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, so the operator's own providers, plugins and sessions are not loaded. The old Stragy screens stay at `:3000` (unlinked).
+
+**Security gate.** The launcher owns the gate on `:4200` and streams to `opencode serve` on `:4201`, blocking the API families a password-holder could abuse for host code execution: `pty`/`shell`/terminal, `fs`, `plugin`, `credential`, `rpc`, `debug`, `worktree`, `generate`, `schedule`, integrations, RPC/agent switching and directory pivots. The UI remains the chat — login, SSE, uploads, models, agents and all Stragy tool calls pass through unchanged; config/model responses are redacted so provider API keys are not exposed. `terminal.toggle`/`terminal.new` may still appear in the command palette, but their API calls return 403. See `qa/pass-06/security-gate.md` for the full audit and evidence.
+
+**Loopback bridge + plugin autostart.** `opencode-app/plugin/index.ts` (copied to `opencode-app-data/workspace/.opencode/plugins/stragy`) fetches `GET /api/v2/engine/tools` and forwards each call to `POST /api/v2/engine/tools/:name` with `x-stragy-session: <session id>`; attachments go to `POST /api/v2/engine/attachments`. These are the same 29 executors as the embedded engine — no second implementation and no second Angel session. Long jobs (scan/chart/backtest/refresh) are awaited inside the tool (3 s polling, 15 min cap), so the model sees one call; stopping the turn aborts the fetch while the job keeps running, and `list_jobs` recovers it later. The bridge is loopback-only and honours `STRAGY_TOOL_TOKEN`. The plugin also starts the backend itself when `/health/ready` is down: with `STRAGY_HOME` set and `STRAGY_AUTOSTART != 0` it spawns the canonical `qa/start-server.sh`, waits up to 60 s for readiness, and sets `STRAGY_AUTOSTART=0` in the child to avoid recursion.
+
+**Model policy.** The UI keeps OpenCode's normal catalog and provider ids (the launcher deliberately does not disable providers), so the operator's usual models appear in the selector. The engine config fixes the default and the `stragy` agent to the free `opencode-go/hy4-flash-free` (zero input/output cost); E2E step b verified both through `/api/model/default` and `/api/agent`. Paid use is gated on the Stragy side: `AI_COST_POLICY=free-only` by default, paid models only via explicit `AI_APPROVED_PAID_MODELS`/chain approval, a model-selection route that exposes only configured models and rejects unapproved paid ones, and a public-research exposure check that refuses to start with unapproved paid AI. The engine config also denies every host shell/file/web tool to the agent — only Stragy tools run.
+
+**Slash commands.** `/scan`, `/check` and `/cache` are defined in the OpenCode config (`opencode.json`) alongside built-ins `/init`, `/review` and `/goal`. They are a config surface (no CSS/DOM injection), so an OpenCode UI update cannot break them; `GET /api/command` lists them.
+
+**Chart images.** The UI stores an upload on the user message (`files[].data`, base64); `read_chart` reads Stragy's own per-session context. The plugin finds the newest image in the conversation, uploads it to `/api/v2/engine/attachments` (returning an `imageId`) and passes that id into `read_chart`. A chart read requires a valid current workspace strategy to preserve exits, risk, sizing and costs; without one the tool returns a typed `STRATEGY_REQUIRED` failure instead of inventing an interpretation (E2E step e verified the attachment plus an honest typed failure). A real, successful read with a workspace strategy is recorded in `qa/pass-05/report.md`. Vision-provider outages remain possible; in that case chart reads degrade honestly rather than being fabricated.
+
+**MCP package.** `stragy-mcp/` is a thin stdio MCP server that forwards to the same loopback bridge (29 tools, long jobs settled inside the tool call). Client snippets for Claude Desktop, Cursor, OpenCode and Codex are in `stragy-mcp/README.md`; E2E step f verified `listTools` and `get_data_cache` through it.
+
+**Ops scripts** (under `qa/`):
+- `start-all.sh` — idempotent: leaves healthy processes alone, starts only what is down, waits for both health checks and prints the public URL.
+- `backup.sh` — copies the three SQLite databases (with their `-wal`/`-shm` sidecars) plus UI config and password to `/data/backups/stragy-<UTC>/`, prunes after 14 days, and checkpoints only the copy, never the live DB.
+- `warm-cache.sh` — queues cache-refresh jobs (NSE up to 200 symbols and NIFTY 50), polls them and writes a report; `install-warm-timer.sh` schedules it on weekdays.
+- `rotate-password.sh` — operator-only: writes a new 24-character `password.txt` (mode 600) and restarts **only** the UI, invalidating every browser session/pairing. Never run it as part of an audit.
+
+**Honest limits.**
+- `maxSymbols` and universe scans are capped at **200 symbols** (`MAX_SCAN_SYMBOLS`), a subset of roughly 2,051 configured NSE symbols; every result states the evaluated window and whether data came from cache or a provider fetch.
+- Some symbols have no verified Angel One token and stay `UNKNOWN_MAPPING` (12 of the warmed 200 NSE symbols; hundreds more across the full catalog) — no look-alike mapping and no invented data.
+- Prices are observed **end-of-day/delayed daily bars**, not live tick streams; `liveLtp` (when present) is the only live quote.
+- The public `instabox-port` URL answers only while this machine runs, and a Cloudflare quick tunnel cannot stream the UI (it buffers roughly the first 128 KB of SSE). The link is revoked/replaced when re-published.
+- The UI's project list is per browser: the first visit needs **Add project → Select folder** once.
+- End-to-end proof and per-step evidence live in `qa/pass-06/e2e-report.json`, with console output in `qa/pass-06/e2e-run.txt`.
+
 ## License
 
 MIT. Original project: Abinash Balaraman, [stragy](https://github.com/AbinashBalaraman/stragy).

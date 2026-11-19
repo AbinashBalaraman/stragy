@@ -76,6 +76,8 @@ export interface EngineSavedStrategy {
 export interface EngineStrategyRepository {
   listStrategies: () => EngineSavedStrategy[];
   getStrategy: (id: string, revision?: number) => EngineSavedStrategy | undefined;
+  /** Persist a validated strategy (upsert). `expectedRevision` guards concurrent writes. */
+  saveStrategy?: (raw: unknown, expectedRevision?: number) => Promise<EngineSavedStrategy>;
 }
 
 export interface EngineAttachment {
@@ -1467,6 +1469,44 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             const record = repository.getStrategy(input.id, input.revision);
             if (!record) return { output: typedFailure('STRATEGY_NOT_FOUND', 'No saved strategy has that id/revision.') };
             return { output: { status: 'ok', id: record.id, revision: record.revision, updatedAt: record.updatedAt, strategy: record.strategy } };
+          },
+        });
+
+        editor.add({
+          name: 'save_strategy',
+          description: 'Apply a reviewed strategy draft by persisting it with the same validator the engine uses. A new name is saved; an existing name requires confirm:true so nothing is overwritten silently. The OpenCode UI asks for native permission before forwarding this call.',
+          input: z.object({
+            strategy: z.unknown().describe('The complete validated strategy AST to save.'),
+            name: z.string().trim().min(1).max(200).optional().describe('Override the strategy name; defaults to the AST name.'),
+            confirm: z.boolean().optional().describe('Set true to overwrite an existing strategy with the same name.'),
+          }),
+          output: outputSchema,
+          options: { codemode: false },
+          execute: async (input) => {
+            const deps = getDeps();
+            const repository = deps.repository;
+            if (!repository?.saveStrategy) return { output: typedFailure('STORAGE_UNAVAILABLE', 'Saving strategies is not available on this server.') };
+            const validated = validateStrategy(coerceJson(input.strategy));
+            if (!validated.success || !validated.data) {
+              return { output: typedFailure('INVALID_STRATEGY', 'The strategy is invalid: ' + (validated.errors?.slice(0, 6).join('; ') ?? 'unknown validation error')) };
+            }
+            const name = input.name ?? validated.data.name;
+            const existing = repository.listStrategies().find(item => item.strategy.name === name);
+            // On a confirmed overwrite, keep the existing id so the repository
+            // bumps that record's revision instead of creating a duplicate.
+            const strategy = { ...validated.data, ...(existing ? { id: existing.id } : {}), name };
+            if (existing && input.confirm !== true) {
+              return { output: typedFailure('NEEDS_CONFIRM', 'A strategy named "' + name + '" already exists (id ' + existing.id + ', revision ' + existing.revision + '). Ask the operator to confirm before overwriting it.', { name, existingId: existing.id, existingRevision: existing.revision }) };
+            }
+            try {
+              const record = existing
+                ? await repository.saveStrategy(strategy, existing.revision)
+                : await repository.saveStrategy(strategy);
+              return { output: { status: 'saved', id: record.id, revision: record.revision, name: record.strategy.name } };
+            } catch (error) {
+              const failure = error as { code?: string; status?: number };
+              return { output: typedFailure(failure.code ?? 'SAVE_STRATEGY_FAILED', (error as Error).message || 'The strategy could not be saved.') };
+            }
           },
         });
 

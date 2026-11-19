@@ -78,15 +78,41 @@ describe('engine config generation', () => {
     expect(approved.defaultModel).toEqual({ providerID: 'opencode-go', model: 'hy4-flash-free' });
   });
 
-  it('hides every paid model except DeepSeek V4.1 Flash', async () => {
-    const built = await build(baseEnv({
+  it('lists every approved paid model, hides unapproved ones, and keeps a free default', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const file = await tempFile();
+    await writeFile(file, JSON.stringify({
+      version: 1,
+      providers: [
+        { id: 'opencode-go', label: 'OpenCode Go', baseUrl: 'https://opencode.ai/inference/go/openai/v1', enabled: true, builtin: true },
+        { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', enabled: true, builtin: true },
+      ],
+      chain: [
+        { providerId: 'opencode-go', model: 'hy4-flash-free', vision: true, paidApproved: false },
+        { providerId: 'opencode-go', model: 'gpt-5-paid', vision: false, paidApproved: false },
+        { providerId: 'deepseek', model: 'deepseek-v4.1-flash', vision: false, paidApproved: false },
+      ],
+      updatedAt: new Date().toISOString(),
+    }), 'utf8');
+
+    // Without approvals, no paid model is exposed and the default stays free.
+    const denied = await build(baseEnv({ DEEPSEEK_API_KEY: 'test-deepseek-key' }), file);
+    expect(denied.models.filter(model => !model.free)).toHaveLength(0);
+    expect(denied.defaultModel).toEqual({ providerID: 'opencode-go', model: 'hy4-flash-free' });
+
+    // The owner's rule is about the default, not the catalog: once two distinct
+    // paid models are approved, both appear (gpt-5-paid is not DeepSeek).
+    const approved = await build(baseEnv({
       DEEPSEEK_API_KEY: 'test-deepseek-key',
-      AI_APPROVED_PAID_MODELS: 'deepseek:deepseek-v4.1-flash,opencode-go:gpt-5-paid',
-    }));
-    const paid = built.models.filter(model => !model.free);
-    expect(paid.length).toBeGreaterThan(0);
-    expect(paid.every(model => model.model === 'deepseek-v4.1-flash')).toBe(true);
-    expect(built.models.some(model => model.model === 'gpt-5-paid')).toBe(false);
+      AI_APPROVED_PAID_MODELS: 'opencode-go:gpt-5-paid,deepseek:deepseek-v4.1-flash',
+    }), file);
+    const paid = approved.models.filter(model => !model.free);
+    expect(paid.map(model => `${model.providerId}:${model.model}`).sort()).toEqual([
+      'deepseek:deepseek-v4.1-flash',
+      'opencode-go:gpt-5-paid',
+    ]);
+    // A paid model never becomes the default while a free model exists.
+    expect(approved.defaultModel).toEqual({ providerID: 'opencode-go', model: 'hy4-flash-free' });
   });
 
   it('denies every host-machine tool while keeping Stragy tools available', async () => {

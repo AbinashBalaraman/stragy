@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createEnginePlugin, EngineContextStore, type EngineToolDeps } from '../../server/ai/engineTools';
+import { createEnginePlugin, EngineContextStore, type EngineSavedStrategy, type EngineToolDeps } from '../../server/ai/engineTools';
 import { ApprovalStore } from '../../server/ai/engineApprovals';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import type { ResearchPayload } from '../../server/jobs/manager';
@@ -39,6 +39,24 @@ function jobsWith(result?: unknown) {
   const enqueue = vi.fn((_payload: ResearchPayload) => ({ id: 'job1', kind: 'backtest', status: 'queued' }));
   const get = vi.fn(() => result ? { id: 'job1', kind: 'scan', status: 'succeeded', result } : undefined);
   return { jobs: { enqueue, get }, enqueue, get };
+}
+
+/** Minimal in-memory repository mirroring ResearchRepository's id/revision rules. */
+function memoryRepository() {
+  const records = new Map<string, EngineSavedStrategy>();
+  return {
+    listStrategies: () => [...records.values()],
+    getStrategy: (id: string) => records.get(id),
+    saveStrategy: async (raw: unknown, expectedRevision?: number): Promise<EngineSavedStrategy> => {
+      const ast = raw as EngineSavedStrategy['strategy'] & { id?: string };
+      const id = ast.id ?? 'strat_' + (records.size + 1);
+      const existing = records.get(id);
+      if (existing && expectedRevision !== existing.revision) throw Object.assign(new Error('conflict'), { code: 'REVISION_CONFLICT' });
+      const record = { id, revision: (existing?.revision ?? 0) + 1, strategy: { ...ast, id }, updatedAt: new Date().toISOString() };
+      records.set(id, record);
+      return record;
+    },
+  };
 }
 
 describe('engine research tools', () => {
@@ -149,5 +167,28 @@ describe('engine research tools', () => {
     const missingSetup = await setup({ jobs: { enqueue: vi.fn(), get: () => undefined } });
     const missing = await missingSetup.get('get_scan_result').execute({ jobId: 'gone' }, context());
     expect(missing.output).toMatchObject({ status: 'failed', error: { code: 'JOB_NOT_FOUND' } });
+  });
+
+  it('save_strategy validates, guards name collisions and bumps revision on confirm', async () => {
+    const { get } = await setup({ repository: memoryRepository() });
+    const save = get('save_strategy');
+
+    const invalid = await save.execute({ strategy: { name: 'Bad strategy' } }, context());
+    expect(invalid.output).toMatchObject({ status: 'failed', error: { code: 'INVALID_STRATEGY' } });
+
+    const draft = { ...strategy, name: 'E2E Draft' };
+    const first = await save.execute({ strategy: draft }, context());
+    expect(first.output).toMatchObject({ status: 'saved', name: 'E2E Draft', revision: 1 });
+    const id = String(first.output?.id);
+
+    const collision = await save.execute({ strategy: draft }, context());
+    expect(collision.output).toMatchObject({ status: 'failed', error: { code: 'NEEDS_CONFIRM' }, existingId: id });
+
+    const confirmed = await save.execute({ strategy: draft, confirm: true }, context());
+    expect(confirmed.output).toMatchObject({ status: 'saved', id, name: 'E2E Draft', revision: 2 });
+
+    // An explicit name overrides the AST name and starts a new strategy.
+    const renamed = await save.execute({ strategy: draft, name: 'E2E Draft Renamed' }, context());
+    expect(renamed.output).toMatchObject({ status: 'saved', name: 'E2E Draft Renamed', revision: 1 });
   });
 });

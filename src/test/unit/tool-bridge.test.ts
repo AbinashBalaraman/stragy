@@ -31,7 +31,9 @@ describe('tool bridge', () => {
     expect(names).toContain('scan_market');
     expect(names).toContain('get_data_cache');
     expect(names).toContain('run_backtest');
-    expect(tools.length).toBeGreaterThanOrEqual(28);
+    expect(names).toContain('save_strategy');
+    expect(names).not.toContain('approve_backtest');
+    expect(tools.length).toBeGreaterThanOrEqual(30);
     const scan = tools.find(tool => tool.name === 'scan_market')!;
     expect(scan.input).toMatchObject({ type: 'object' });
     expect((scan.input as { properties: Record<string, unknown> }).properties).toHaveProperty('universe');

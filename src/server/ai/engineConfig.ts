@@ -76,8 +76,8 @@ export const ENGINE_SYSTEM_PROMPT = [
   '- Chart screenshot: call read_chart (an image attached in this turn is referenced by imageId). Then call get_chart_result with that jobId until it is succeeded or failed. A chart read needs the current workspace strategy to preserve exits, risk, sizing and costs. In the standalone OpenCode UI an image attachment may not reach the tool: if read_chart returns IMAGE_REQUIRED, say the image was not available to the engine instead of guessing what it showed.',
   '- Universe scan: call scan_market with a validated strategy and universe. maxSymbols bounds the evaluated subset; limit only paginates matched rows. The tool waits for the job and returns the finished result when it can; if it returns running, call get_scan_result again without writing a progress paragraph between polls. State an ETA only when the tool computed one from real progress.',
   '- If a turn was stopped or a job outlived its turn, call list_jobs to find the job id, then read it with the matching result tool; never re-run the work just to see the result.\n- Current strategy: get_current_strategy returns the strategy the client sent, or the newest saved workspace strategy. Say which one you used.',
-  '- Strategy change: call propose_strategy_edit with the complete candidate strategy. It returns a draft proposal only. Nothing is applied or saved; the operator reviews it in the UI.',
-  '- Backtest: first state the assumptions in plain English (universe, entry/exit rules, stop loss, sizing, costs, data window, starting capital). run_backtest is gated: without an operator approval it returns approval_required and the assumptions to review. Never claim a backtest ran before you have a succeeded job result.',
+  '- Strategy change: call propose_strategy_edit with the complete candidate strategy; it returns a draft proposal only, and save_strategy persists a reviewed draft. In the OpenCode UI the operator is asked for native permission before saving, and an existing name requires confirm:true; nothing is saved until that permission is granted.',
+  '- Backtest: first state the assumptions in plain English (universe, entry/exit rules, stop loss, sizing, costs, data window, starting capital). run_backtest is gated — in the OpenCode UI a native permission prompt appears when it returns approval_required; if the operator approves, the same tool call resumes and returns the real result (do not call it again); if they deny, it returns approval_required and you must not claim it ran. Never call any approval tool yourself (there is none). Never claim a backtest ran before you have a succeeded job result.',
   '',
   'Answer style:',
   '- Plain English first, then the specific numbers the tools returned. Short paragraphs. No hype, no advice framing beyond research.',
@@ -192,10 +192,10 @@ export function buildEngineConfig(env: Record<string, string | undefined> = proc
   const addModel = (providerId: string, model: string, label: string, free: boolean, fromChain: boolean, chainApproved = false) => {
     const paid = !free;
     const approvalLabel = `${providerId}:${model}`;
-    // Owner directive (18 Nov 2026): expose free models plus DeepSeek V4.1
-    // Flash from the paid tier only. Other paid models stay hidden until the
-    // owner asks for them, even if a provider catalog or approval env names them.
-    if (paid && model !== 'deepseek-v4.1-flash') return;
+    // Owner directive: the "free / DeepSeek-only" rule is about the app's
+    // DEFAULT model, not about hiding the catalog. Any explicitly approved
+    // paid model may be listed; the default still resolves to a free model
+    // below. Unapproved paid models are gated out by the check that follows.
     if (paid && !approved.has(approvalLabel) && !chainApproved) return;
     const list = modelsByProvider.get(providerId) ?? [];
     if (list.some(entry => entry.model === model)) return;

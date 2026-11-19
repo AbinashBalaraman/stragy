@@ -68,8 +68,8 @@ describe('expanded engine research tools', () => {
   it('registers the complete toolset with unique names and validated inputs', async () => {
     const { tools } = await setup();
     const names = tools.map(tool => tool.name);
-    expect(names).toHaveLength(29);
-    expect(new Set(names).size).toBe(29);
+    expect(names).toHaveLength(30);
+    expect(new Set(names).size).toBe(30);
     expect(names).toContain('list_jobs');
     expect(names).toEqual(expect.arrayContaining([
       'read_chart', 'get_chart_result', 'scan_market', 'get_scan_result', 'list_universes', 'list_indicators',
@@ -77,7 +77,7 @@ describe('expanded engine research tools', () => {
       'search_symbols', 'get_symbol_info', 'get_quote', 'get_price_history', 'compute_indicators', 'market_overview',
       'get_market_result', 'check_symbol', 'explain_match', 'get_current_strategy', 'validate_strategy',
       'list_strategy_templates', 'list_saved_strategies', 'load_saved_strategy', 'propose_strategy_edit',
-      'run_backtest', 'get_backtest_result', 'remember_preference', 'get_preferences',
+      'run_backtest', 'get_backtest_result', 'save_strategy', 'remember_preference', 'get_preferences',
     ]));
     for (const tool of tools) expect(typeof tool.input.safeParse).toBe('function');
   });
