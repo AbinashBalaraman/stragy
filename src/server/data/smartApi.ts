@@ -262,7 +262,7 @@ export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: st
 
 export interface MarketMoversData {
   universe?: string;
-  asOfDate: string;
+  asOfDate: string | null;
   formattedDate: string;
   isHistorical?: boolean;
   availableTradingSessions?: { date: string; label: string; isLatest: boolean }[];
@@ -315,11 +315,12 @@ export function calculateMarketMovers(trends: StockTrendData[], universe: string
   }
 
   // The session label is the newest observed date in the evaluated pool, not
-  // an arbitrary first row (trends arrive sorted by symbol id). Never
-  // fabricate today's date when nothing was evaluated.
+  // an arbitrary first row (trends arrive sorted by symbol id). When nothing
+  // was evaluated the session is null (typed unavailable), never a fabricated
+  // today's date.
   const poolDates = targetPool.map(t => t.date).filter((date): date is string => Boolean(date)).sort();
-  const latestDate = poolDates.at(-1) || requestedDate || '';
-  const latestFormattedDate = targetPool.find(t => t.date === latestDate)?.formattedDate || latestDate;
+  const latestDate = poolDates.at(-1) || requestedDate || null;
+  const latestFormattedDate = targetPool.find(t => t.date === latestDate)?.formattedDate || latestDate || '';
   const availableTradingSessions = observedSessions ?? tradingSessionsFromDates(targetPool.flatMap(t=>t.date?[t.date]:[]),getDataMode());
   const isHistorical = requestedDate ? requestedDate !== availableTradingSessions[0]?.date : false;
 

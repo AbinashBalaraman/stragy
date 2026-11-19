@@ -1033,7 +1033,7 @@ export const MarketScannerView: React.FC<MarketScannerViewProps> = ({
       {activeTab === 'movers' && (
         <section aria-label="Top gainers and losers" className="space-y-3">
           <p className="px-1 text-[11px] leading-5 text-neutral-500">
-            {movers ? `${movers.totalFilteredCount} stocks ranked on ${shortDay(movers.asOfDate)} close` : 'Evaluation pending or unavailable.'}
+            {movers && movers.asOfDate ? `${movers.totalFilteredCount} stocks ranked on ${shortDay(movers.asOfDate)} close` : 'Evaluation pending or unavailable.'}
           </p>
 
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

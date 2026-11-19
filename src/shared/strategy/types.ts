@@ -324,7 +324,7 @@ export interface StockTrendData {
 
 export interface MarketMoversData {
   universe?: string;
-  asOfDate: string;
+  asOfDate: string | null;
   formattedDate: string;
   isHistorical?: boolean;
   availableTradingSessions?: { date: string; label: string; isLatest: boolean }[];
