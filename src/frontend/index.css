@@ -736,7 +736,7 @@ select.sel { appearance: none; padding-right: 26px; cursor: pointer; }
 .composer > .fine { font-size: var(--fs-xs); color: var(--text-3); text-align: center; margin: 8px 0 0; }
 
 /* Thin quiet scrollbars everywhere; the old native arrows clipped at edges. */
-* { scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--surface-hover) transparent; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--surface-hover); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-disabled); }
