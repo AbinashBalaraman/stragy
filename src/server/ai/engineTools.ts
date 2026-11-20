@@ -574,7 +574,7 @@ function refreshSummary(job: EngineJobView): { status: string; [key: string]: un
 function backtestSummary(job: EngineJobView): { status: string; [key: string]: unknown } {
   const result = job.result as {
     metrics?: Record<string, number | null>; warnings?: string[]; executedAt?: string;
-    provenance?: { source?: string; mode?: string; actualRange?: unknown }; symbol?: { ticker?: string; name?: string };
+    provenance?: { source?: string; mode?: string; actualRange?: unknown; evaluationRange?: unknown; warmupBars?: number }; symbol?: { ticker?: string; name?: string };
   } | undefined;
   if (!result?.metrics) return { status: 'succeeded', jobId: job.id, note: 'The job finished but returned no backtest result.' };
   const m = result.metrics;
@@ -586,14 +586,18 @@ function backtestSummary(job: EngineJobView): { status: string; [key: string]: u
     executedAt: result.executedAt,
     dataSource: result.provenance?.source,
     mode: result.provenance?.mode,
-    range: result.provenance?.actualRange,
+    // The evaluated window — NOT the longer input snapshot. Reporting
+    // actualRange here made the agent flag a false window mismatch: warmup
+    // history feeds indicators only; trades stay inside evaluationRange.
+    range: result.provenance?.evaluationRange ?? result.provenance?.actualRange,
+    warmupBars: result.provenance?.warmupBars ?? 0,
     metrics: {
       totalReturnPercent: m.totalReturnPercent, netPnl: m.netPnl, cagr: m.cagr, sharpeRatio: m.sharpeRatio,
       maxDrawdownPercent: m.maxDrawdownPercent, totalTrades: m.totalTrades, winRate: m.winRate,
       profitFactor: m.profitFactor, benchmarkReturnPercent: m.benchmarkReturnPercent, alpha: m.alpha,
     },
     warnings: (result.warnings ?? []).slice(0, 8),
-    note: 'The full result, equity curve and trades are rendered in the backtest card in the UI.',
+    note: 'range is the evaluated window; trades occur only inside it and earlier bars are indicator warm-up. The full result, equity curve and trades are rendered in the backtest card in the UI.',
   };
 }
 

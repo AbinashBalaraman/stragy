@@ -255,6 +255,25 @@ describe('expanded engine research tools', () => {
     expect(remembered).toHaveBeenCalledTimes(1);
   });
 
+  it('reports the evaluated window, not the longer warmup snapshot', async () => {
+    const metrics = { totalReturnPercent: 16.46, netPnl: 16460, cagr: 16.52, sharpeRatio: 0.98, maxDrawdownPercent: 5.25, totalTrades: 4, winRate: 75, profitFactor: 4.14, benchmarkReturnPercent: -11.2, alpha: 21.15 };
+    const result = {
+      metrics, symbol: { ticker: 'RELIANCE', name: 'Reliance' }, executedAt: '2026-11-20T00:00:00.000Z', warnings: [],
+      provenance: {
+        source: 'ANGEL_SMARTAPI', mode: 'real',
+        actualRange: { start: '2023-11-15', end: '2026-11-19' },
+        evaluationRange: { start: '2025-11-20', end: '2026-11-19' },
+        warmupBars: 500,
+      },
+    };
+    const { get } = await setup({ jobs: { enqueue: vi.fn(), get: () => ({ id: 'bt3', kind: 'backtest', status: 'succeeded', result }) } });
+    const summary = await get('get_backtest_result').execute({ jobId: 'bt3' }, context());
+    // The agent used to read range=actualRange and flag a false window mismatch.
+    expect(summary.output?.range).toEqual({ start: '2025-11-20', end: '2026-11-19' });
+    expect(summary.output?.warmupBars).toBe(500);
+    expect(String(summary.output?.note)).toContain('evaluated window');
+  });
+
   it('accepts a JSON-string strategy for an approved backtest and consumes the token once', async () => {
     const enqueue = vi.fn(() => ({ id: 'bt1', kind: 'backtest', status: 'queued' }));
     const { get, deps } = await setup({
