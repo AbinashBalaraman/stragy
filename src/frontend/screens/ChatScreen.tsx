@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, MessageSquarePlus, Search, Trash2 } from 'lucide-react';
+import { ArrowDown, MessageSquarePlus, Search, Square, Trash2 } from 'lucide-react';
 import { opencode, type Message, type ModelRef, type SessionInfo } from '../opencode/client';
 import { EventBridge } from '../opencode/events';
 import { deriveMessages, sortSessions, type ViewMessage } from '../opencode/sessionStore';
@@ -10,6 +10,7 @@ import { ImageCard } from '../components/ImageCard';
 import { Prose } from '../components/Prose';
 import { ToolTimeline } from '../components/ToolTimeline';
 import { useVoiceController } from '../voice/useVoiceController';
+import { useLiveVoice } from '../voice/useLiveVoice';
 
 type Option = { value: string; label: string };
 
@@ -67,6 +68,7 @@ export function ChatScreen({
   const voice = useVoiceController(lang, {
     onFinalTranscript: (text) => { voiceTurnRef.current = true; setDraft(text); void send(text, []); },
   });
+  const live = useLiveVoice();
 
   useEffect(() => {
     if (session?.model) setSelectedModel(`${session.model.providerID}/${session.model.id}`);
@@ -425,6 +427,20 @@ export function ChatScreen({
 
         {showJump && <button className="jump" onClick={() => logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })}><ArrowDown size={13} /> Latest</button>}
 
+        {live.state !== 'off' && (
+          <div className={`voice-strip live ${live.state}`} data-testid="live-strip" aria-label="Live voice conversation">
+            <span className={`chip ${live.state === 'speaking' ? 'running' : live.state === 'listening' ? 'ready' : live.state === 'error' ? 'failed' : 'queued'}`} data-testid="live-state">
+              <span className="cdot" />{live.state}
+            </span>
+            <span className="voice-strip-text" data-testid="live-transcript">
+              {live.transcript || live.detail || t(lang, 'liveHint')}
+            </span>
+            <button type="button" className="btn" data-testid="live-end" onClick={live.stop}>
+              <Square size={12} /> {t(lang, 'endLive')}
+            </button>
+          </div>
+        )}
+
         <Composer
           lang={lang}
           onLangChange={handleLang}
@@ -444,6 +460,8 @@ export function ChatScreen({
           value={draft}
           onValueChange={setDraft}
           voice={voice}
+          liveState={live.state}
+          onLiveToggle={() => { if (live.state === 'off' || live.state === 'error') void live.start(lang); else live.stop(); }}
         />
       </div>
     </div>

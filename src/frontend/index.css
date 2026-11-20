@@ -732,6 +732,13 @@ select.sel { appearance: none; padding-right: 26px; cursor: pointer; }
 .voice-strip-text { color: var(--text-1); }
 .voice-strip-detail { color: var(--text-2); }
 .icon-btn[aria-pressed="true"] { color: var(--accent-bright); border-color: var(--accent-line); background: var(--accent-wash); }
+.icon-btn.live-on { color: var(--up); border-color: rgba(99, 198, 162, 0.45); background: rgba(99, 198, 162, 0.1); }
+.voice-strip.live { margin: 0 24px 8px; border-color: var(--hairline-strong); }
+.voice-strip.live.listening { border-color: rgba(99, 198, 162, 0.45); }
+.voice-strip.live.speaking { border-color: var(--accent-line); background: var(--accent-wash); }
+.voice-strip.live.error { border-color: rgba(224, 122, 114, 0.4); }
+.voice-strip.live .voice-strip-text { white-space: normal; }
+@media (max-width: 900px) { .voice-strip.live { margin: 0 12px 8px; } }
 .composer-inner { padding: 12px 14px; }
 .composer > .fine { font-size: var(--fs-xs); color: var(--text-3); text-align: center; margin: 8px 0 0; }
 

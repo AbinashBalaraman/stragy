@@ -38,6 +38,7 @@ const HOST = arg('host', '127.0.0.1');
 const USER = process.env.FRONTEND_USER || 'opencode';
 const GATE_PORT = Number(process.env.OPENCODE_GATE_PORT || '4200');
 const STRAGY_PORT = Number(process.env.STRAGY_PORT || '3100');
+const VOICE_PORT = Number(process.env.VOICE_PORT || '8766');
 const LOG = process.env.FRONTEND_PROXY_LOG || '/tmp/opencode/frontend-proxy.log';
 const MAX_UPLOAD = 12 * 1024 * 1024; // guard only; bodies still stream (guard is advisory)
 // /tts is deliberately small and bounded: a single assistant reply, not audio
@@ -393,6 +394,14 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api' || pathname.startsWith('/api/')) {
     return proxyStragy(req, res);
   }
+  if (pathname === '/voice' || pathname.startsWith('/voice/')) {
+    // Live voice service (loopback :8766). The proxy's Basic auth is the gate;
+    // the upstream service itself is unauthenticated and never public.
+    const headers = upstreamHeaders(req.headers, VOICE_PORT);
+    delete headers.authorization;
+    pipeToUpstream(req, res, VOICE_PORT, req.url, headers);
+    return;
+  }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405); res.end('Method not allowed'); return;
   }
@@ -404,16 +413,19 @@ const server = http.createServer((req, res) => {
 server.on('upgrade', (req, socket, head) => {
   let pathname = '/';
   try { pathname = new URL(req.url, 'http://proxy.local').pathname; } catch { /* keep / */ }
-  if (!authorized(req) || !(pathname === '/opencode' || pathname.startsWith('/opencode/'))) {
+  const isOpencode = pathname === '/opencode' || pathname.startsWith('/opencode/');
+  const isVoice = pathname === '/voice' || pathname.startsWith('/voice/');
+  if (!authorized(req) || !(isOpencode || isVoice)) {
     socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     return;
   }
-  const up = net.connect(GATE_PORT, '127.0.0.1');
+  const up = net.connect(isVoice ? VOICE_PORT : GATE_PORT, '127.0.0.1');
   up.on('connect', () => {
     let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
     for (const [key, value] of Object.entries(req.headers)) {
       if (key.toLowerCase() === 'authorization') {
-        raw += `authorization: ${basic('opencode', opencodePassword())}\r\n`;
+        if (isVoice) continue; // upstream voice service takes no credentials
+        raw += `authorization: ***'opencode', opencodePassword())}\r\n`;
       } else if (Array.isArray(value)) {
         for (const v of value) raw += `${key}: ${v}\r\n`;
       } else {

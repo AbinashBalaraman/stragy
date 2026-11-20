@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Camera, Mic, Paperclip, Square } from 'lucide-react';
+import { ArrowUp, Camera, Headphones, Mic, Paperclip, Square } from 'lucide-react';
 import type { Lang, Key } from '../i18n';
 import { t } from '../i18n';
 import { LanguageToggle } from './LanguageToggle';
@@ -32,6 +32,9 @@ type Props = {
   onValueChange?: (text: string) => void;
   /** Full voice-turn controller; enables the live state strip and push-to-talk. */
   voice?: VoiceControllerApi | null;
+  /** Hands-free live conversation (VAD turn-taking, barge-in). */
+  liveState?: string;
+  onLiveToggle?: () => void;
 };
 
 async function fileToDataUri(file: File): Promise<Attachment> {
@@ -184,6 +187,18 @@ export function Composer(props: Props) {
             disabled={props.busy}
             onClick={() => { if (props.voice) void props.voice.toggle(); else props.onVoice(); }}
           ><Mic /></button>
+          {props.onLiveToggle && (
+            <button
+              className={`icon-btn ${props.liveState && props.liveState !== 'off' ? 'live-on' : ''}`}
+              type="button"
+              aria-label={t(props.lang, 'live')}
+              title={t(props.lang, 'liveHint')}
+              data-testid="live-voice-button"
+              aria-pressed={!!props.liveState && props.liveState !== 'off'}
+              disabled={props.busy}
+              onClick={props.onLiveToggle}
+            ><Headphones /></button>
+          )}
           {voice?.creditsRequired && (
             <span className="chip failed" data-testid="realtime-credits-chip" title={t(props.lang, 'realtimeCredits')}>
               <span className="cdot" />{t(props.lang, 'unavailable')} · realtime

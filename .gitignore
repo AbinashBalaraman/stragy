@@ -22,3 +22,6 @@ data/.provider-secrets-key
 
 # Durable job records and engine state (SQLite, local only)
 .data/
+
+# live voice service local venv
+services/voice-live/.venv/
