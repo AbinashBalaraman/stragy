@@ -213,11 +213,12 @@ export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: st
   const pcrRatio = Number((0.75 + (rsi / 100) * 0.7 + (changePercent > 0 ? 0.15 : -0.1)).toFixed(2));
   const momentumScore = Math.min(99, Math.max(10, Math.round(rsi * 0.65 + (changePercent * 6) + (volumeRatio > 1.2 ? 15 : 0) + 15)));
 
-  // Format trade date
+  // Format trade date (UTC-pinned like every other session label; a server
+  // timezone behind UTC must not render the previous day).
   const barDate = lastBar.date || new Date().toISOString().split('T')[0];
   const dObj = new Date(barDate);
   const formattedDate = !isNaN(dObj.getTime())
-    ? dObj.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    ? dObj.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
     : barDate;
 
   return {
@@ -261,7 +262,7 @@ export function calculateStockTrends(bars: OHLCVBar[], sym: any, targetDate?: st
 
 export interface MarketMoversData {
   universe?: string;
-  asOfDate: string;
+  asOfDate: string | null;
   formattedDate: string;
   isHistorical?: boolean;
   availableTradingSessions?: { date: string; label: string; isLatest: boolean }[];
@@ -313,8 +314,13 @@ export function calculateMarketMovers(trends: StockTrendData[], universe: string
     }
   }
 
-  const latestDate = targetPool[0]?.date || requestedDate || new Date().toISOString().split('T')[0];
-  const latestFormattedDate = targetPool[0]?.formattedDate || latestDate;
+  // The session label is the newest observed date in the evaluated pool, not
+  // an arbitrary first row (trends arrive sorted by symbol id). When nothing
+  // was evaluated the session is null (typed unavailable), never a fabricated
+  // today's date.
+  const poolDates = targetPool.map(t => t.date).filter((date): date is string => Boolean(date)).sort();
+  const latestDate = poolDates.at(-1) || requestedDate || null;
+  const latestFormattedDate = targetPool.find(t => t.date === latestDate)?.formattedDate || latestDate || '';
   const availableTradingSessions = observedSessions ?? tradingSessionsFromDates(targetPool.flatMap(t=>t.date?[t.date]:[]),getDataMode());
   const isHistorical = requestedDate ? requestedDate !== availableTradingSessions[0]?.date : false;
 

@@ -8,9 +8,10 @@
 import { promises as dns } from 'node:dns';
 import { z } from 'zod';
 import {
-  OPENCODE_GO_MODELS, buildProviderPayload, getLastProviderCall, isOpenCodeGoFreeModel, resolveAIConfig,
+  OPENCODE_GO_MODELS, buildProviderPayload, consumeDefaultBudget, getLastProviderCall, isOpenCodeGoFreeModel, resolveAIConfig,
   type AIEntryFailure, type AIFallbackTarget, type AIProviderName, type AIRuntimeConfig,
 } from './provider';
+import { createPinnedFetch, isPrivateIp, literalIp, type FetchLike } from './netGuard';
 import { VERIFIED_FREE_MODEL } from './freeModel';
 import { decryptSecret, encryptSecret, getSecretsStorage, redactSecret, secretHint } from './providerSecrets';
 import { clearState, loadState, persistence as storePersistence, readFileState, saveState, type StoredProvider, type StoredState } from './providerStore';
@@ -100,7 +101,9 @@ function mergedProviders(env: Record<string, string | undefined>): ProviderRecor
   for (const saved of state?.providers ?? []) {
     const builtin = BUILTINS.find(item => item.id === saved.id);
     if (builtin) {
-      records.set(saved.id, { ...saved, builtin: true, adapter: builtin.adapter, keyEnv: builtin.keyEnv });
+      // Pin the endpoint at read time too: a state file written before the
+      // write-time pin must never send env keys to an overridden builtin URL.
+      records.set(saved.id, { ...saved, builtin: true, baseUrl: builtin.baseUrl, adapter: builtin.adapter, keyEnv: builtin.keyEnv });
     } else {
       records.set(saved.id, { ...saved, builtin: false, adapter: 'openai' });
     }
@@ -226,28 +229,19 @@ function requireWritable(env: Record<string, string | undefined>): void {
   if (!writable(env)) throw new ProviderError(403, 'READ_ONLY', 'Provider settings are read-only on this deployment.');
 }
 
-let dnsLookup = dns.lookup;
+let dnsLookup: typeof dns.lookup = dns.lookup;
 /** Test seam. */
 export function setDnsLookupForTests(fn: typeof dns.lookup | null): void { dnsLookup = fn ?? dns.lookup; }
 
-function isPrivateIp(address: string): boolean {
-  const ip = address.toLowerCase();
-  if (ip === '::1' || ip === '::' || ip === '0.0.0.0') return ip !== '::1' ? true : false;
-  if (ip.includes(':')) {
-    if (ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd')) return true;
-    if (ip.startsWith('::ffff:')) return isPrivateIp(ip.slice(7));
-    return false;
-  }
-  const parts = ip.split('.').map(Number);
-  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts;
-  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
-}
-
-function literalIp(host: string): string | null {
-  const value = host.replace(/^\[|\]$/g, '');
-  return /^[0-9.]+$/.test(value) || value.includes(':') ? value : null;
+// Registry HTTP calls (connectivity tests, model lists) go through a fetch
+// that re-validates DNS answers at connection time, closing the rebinding
+// window left by write-time-only validation.
+const pinnedFetch = createPinnedFetch(() => dnsLookup);
+let providerFetchImpl: FetchLike | null = null;
+/** Test seam. */
+export function setProviderFetchForTests(fn: FetchLike | null): void { providerFetchImpl = fn; }
+function registryFetch(input: string, init?: Record<string, unknown>): Promise<any> {
+  return (providerFetchImpl ?? pinnedFetch)(input, init);
 }
 
 /** Validate an operator-supplied base URL. Rejects private/metadata targets and non-HTTPS. */
@@ -303,6 +297,11 @@ export async function upsertProvider(raw: unknown, env: Record<string, string | 
   if (input.id && !existingBuiltin && existingMerged?.builtin) throw new ProviderError(400, 'BUILTIN_PROVIDER', 'Built-in providers cannot be replaced.');
 
   const baseUrl = await validateBaseUrl(input.baseUrl);
+  // Built-in endpoints are pinned: env keys must never be sent to an
+  // operator-supplied override of a built-in provider (key exfiltration).
+  if (existingBuiltin && baseUrl !== existingBuiltin.baseUrl) {
+    throw new ProviderError(400, 'BUILTIN_BASE_URL', 'Built-in provider endpoints cannot be changed. Create a custom provider for a different endpoint.');
+  }
   const id = input.id ?? customId(input.label);
   const builtin = Boolean(existingBuiltin);
   const priorKeyEnc = existingSaved?.keyEnc;
@@ -389,11 +388,14 @@ export async function listProviderModels(id: string, env: Record<string, string 
   }
   if (id === 'openrouter') {
     const key = providerKey(record, env);
-    const response = await fetch(`${record.baseUrl.replace(/\/+$/, '')}/models`, {
-      method: 'GET', redirect: 'manual',
-      headers: { Accept: 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+    const response = await registryFetch(`${record.baseUrl.replace(/\/+$/, '')}/models`, {
+      method: 'GET', signal: AbortSignal.timeout(20_000),
+      headers: { Accept: 'application/json', ...(key ? { Authorization: 'Bearer ' + key } : {}) },
     });
-    if (!response.ok) throw new ProviderError(502, 'MODELS_UNAVAILABLE', 'OpenRouter models endpoint did not return success.');
+    if (!response.ok) {
+      try { await response.body?.cancel?.(); } catch { /* best-effort release */ }
+      throw new ProviderError(502, 'MODELS_UNAVAILABLE', 'OpenRouter models endpoint did not return success.');
+    }
     const payload = await response.json() as { data?: any[] };
     const models = Array.isArray(payload.data) ? payload.data : [];
     return models.map(item => {
@@ -419,15 +421,27 @@ export async function testProvider(id: string, raw: unknown, env: Record<string,
   const input = testSchema.parse(raw);
   const key = providerKey(record, env);
   if (!key) return { ok: false, latencyMs: 0, error: 'No API key is configured for this provider.' };
-  const started = Date.now();
   const defaults = resolveAIConfig(env);
+  // A connectivity test obeys the same cost policy as chat: under free-only,
+  // only verified-zero-priced models or explicitly chain-approved paid models
+  // may be called. It also consumes the shared hourly request budget.
+  const free = freeState(id, input.model);
+  const chainEntry = activeChain(env).find(entry => entry.providerId === id && entry.model === input.model);
+  const approved = env.AI_COST_POLICY === 'operator-approved' || free === true || Boolean(chainEntry?.paidApproved);
+  if (!approved) {
+    return { ok: false, latencyMs: 0, error: `No test request was sent: ${id}:${input.model} is paid or has unknown price and is not approved in the AI chain.` };
+  }
+  if (!consumeDefaultBudget(defaults.requestsPerHour)) {
+    return { ok: false, latencyMs: 0, error: 'AI request budget exhausted for this period.' };
+  }
+  const started = Date.now();
   // Reuse the real request builder so provider identity headers (OpenCode Go's
   // User-Agent and x-opencode-session) and the provider-specific body are tested.
   const config: AIRuntimeConfig = {
     provider: record.adapter, model: input.model, state: 'ready', ready: true, keyPresent: true,
     endpointHost: new URL(record.baseUrl).host, timeoutMs: 15_000, maxOutputTokens: 64,
-    requestsPerHour: defaults.requestsPerHour, costPolicy: 'operator-approved', approvedPaid: true,
-    supportsImages: false, approvedPaidModels: [], baseUrl: record.baseUrl,
+    requestsPerHour: defaults.requestsPerHour, costPolicy: defaults.costPolicy, approvedPaid: Boolean(chainEntry?.paidApproved),
+    supportsImages: false, approvedPaidModels: defaults.approvedPaidModels ?? [], baseUrl: record.baseUrl,
     providerLabel: record.label, ...(record.extraHeaders ? { extraHeaders: record.extraHeaders } : {}),
   };
   Object.defineProperty(config, 'apiKey', { value: key, enumerable: false });
@@ -436,12 +450,15 @@ export async function testProvider(id: string, raw: unknown, env: Record<string,
       system: 'Connectivity check. Reply with OK.', user: 'Reply OK', json: false,
       maxOutputTokens: 64, sessionId: `provider-test-${id}`,
     });
-    const response = await fetch(built.url, {
-      method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15_000),
+    const response = await registryFetch(built.url, {
+      method: 'POST', signal: AbortSignal.timeout(15_000),
       headers: built.headers, body: built.body,
     });
     const latencyMs = Date.now() - started;
-    if (!response.ok) return { ok: false, latencyMs, error: redactSecret(`Provider returned HTTP ${response.status}.`, key) };
+    if (!response.ok) {
+      try { await response.body?.cancel?.(); } catch { /* best-effort release */ }
+      return { ok: false, latencyMs, error: redactSecret(`Provider returned HTTP ${response.status}.`, key) };
+    }
     const payload = await response.json() as { model?: unknown; choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }> };
     const choice = payload.choices?.[0];
     const content = typeof choice?.message?.content === 'string' ? choice.message.content.trim() : '';

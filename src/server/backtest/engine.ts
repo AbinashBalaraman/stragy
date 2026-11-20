@@ -71,7 +71,10 @@ export function simulate(raw: StrategyAST, inputBars: OHLCVBar[], options: Backt
       pendingEntry = false;
       if (!position && !exited && !halted) {
         const price = b.open * (1 + slip), stopDistance = distance(strategy.risk.stopLoss.type, strategy.risk.stopLoss.value, price, riskATR[i - 1]);
+        const trail = strategy.risk.trailingStop;
+        const trailDistance = trail ? distance(trail.type, trail.value, price, trailingATR[i - 1]) : null;
         if (stopDistance === null || stopDistance <= 0 || stopDistance > price) warnings.push('Entry skipped: unavailable ATR or non-executable stop distance at ' + b.date);
+        else if (trail?.type === 'atr' && trailDistance === null) warnings.push('Entry skipped: trailing ATR is unavailable at ' + b.date);
         else {
           const stop = price - stopDistance, sizing = strategy.risk.positionSizing;
           const allocation = sizing.type === 'fixedFraction' ? cash * sizing.fraction! : cash;
@@ -87,9 +90,6 @@ export function simulate(raw: StrategyAST, inputBars: OHLCVBar[], options: Backt
             fillCosts.push(charged); ledger.push({ timestamp: b.timestamp, side: 'BUY', quantity: qty, price, fees: charged.totalCharges, cash });
             const target = strategy.risk.takeProfit;
             const targetPrice = target ? price + (target.type === 'percent' ? price * target.value / 100 : target.type === 'points' ? target.value : stopDistance * target.value) : null;
-            const trail = strategy.risk.trailingStop;
-            const trailDistance = trail ? distance(trail.type, trail.value, price, trailingATR[i - 1]) : null;
-            if (trail?.type === 'atr' && trailDistance === null) throw new SimulationInputError('ATR_NOT_READY', 'Trailing ATR is unavailable at entry.');
             position = { entryIndex: i, entryPrice: price, quantity: qty, entryFees: charged.totalCharges, stop, target: targetPrice, trail: trail && !(trail.activation && trail.activation > 0) && trailDistance !== null ? price - trailDistance : null, highWater: price };
           } else warnings.push('Entry skipped: allocation/risk budget cannot fund a valid quantity at ' + b.date);
         }

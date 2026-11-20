@@ -59,8 +59,8 @@ export function parseConfig(env: Record<string, string | undefined> = process.en
   return config;
 }
 export function redact(value: unknown): string {
-  const secrets = Object.entries(process.env).filter(([k,v]) => /(KEY|TOKEN|SECRET|PASSWORD|CLIENT_CODE)/i.test(k) && v && v.length >= 4).map(([,v]) => v!);
+  const secrets = Object.entries(process.env).filter(([k,v]) => /(KEY|TOKEN|SECRET|PASSWORD|CLIENT_CODE|DATABASE_URL)/i.test(k) && v && v.length >= 4).map(([,v]) => v!);
   let text = typeof value === 'string' ? value : value instanceof Error ? value.message : JSON.stringify(value);
   for (const secret of secrets) text = text.split(secret).join('[REDACTED]');
-  return text.replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]');
+  return text.replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]').replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, 'postgres://[REDACTED]');
 }

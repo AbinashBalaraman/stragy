@@ -239,7 +239,7 @@ export async function createApp(deps: AppDependencies = {}) {
     const address = req.socket.remoteAddress ?? '';
     const local = address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
     if (!local) return false;
-    return toolToken ? req.get('x-stragy-tool-token') === toolToken : true;
+    return toolToken ? tokenMatches(req.get('x-stragy-tool-token') ?? '', toolToken) : true;
   };
   app.get('/api/v2/engine/tools', wrap(async (req, res) => {
     if (!localToolRequest(req)) throw new ApiFailure(403, 'TOOL_BRIDGE_LOCAL_ONLY', 'The tool bridge is only reachable from this machine.');
@@ -435,7 +435,17 @@ export async function createApp(deps: AppDependencies = {}) {
   }).strict();
   app.post('/api/v2/engine/approvals', express.json({ limit: '128kb' }), engineRoute(async (req, res) => {
     const body = parse(EngineApprovalBody, req.body ?? {});
-    await getEngineSession(body.sessionId);
+    // The session may be an embedded engine session OR a standalone OpenCode
+    // UI session served through the tool bridge (the plugin tells operators
+    // to approve with that session id). The bridge's approval store knows the
+    // latter; sessions unknown to both still fail closed.
+    try {
+      await getEngineSession(body.sessionId);
+    } catch (error) {
+      const knownBridgeSession = engineApprovals.pendingForSession(body.sessionId).length > 0
+        || (body.approvalId ? engineApprovals.get(body.approvalId)?.sessionId === body.sessionId : false);
+      if (!knownBridgeSession) throw error;
+    }
     if (body.approvalId) {
       const existing = engineApprovals.get(body.approvalId);
       if (!existing) throw new ApiFailure(404, 'APPROVAL_NOT_FOUND', 'This approval request no longer exists. Ask the assistant to prepare it again.');
@@ -710,7 +720,14 @@ export async function createApp(deps: AppDependencies = {}) {
     const message = membershipMessage ?? (rateLimited ? ANGEL_RATE_LIMIT_MESSAGE : err instanceof ApiFailure || err instanceof UnknownSymbolError || err instanceof MarketDataError || err instanceof JobError || err instanceof StorageError || err instanceof SimulationInputError ? redact(err.message) : status === 500 ? 'Internal request error.' : 'Invalid request body.');
     res.status(status).json({ success: false, error: { code, message, requestId: res.locals.requestId, retryable: [429, 503, 504].includes(status), ...(err instanceof ApiFailure && err.details ? { fieldErrors: err.details } : {}) } });
   });
-  app.use((req, res, next) => { if (/\.(?:cjs|map)$|(?:^|\/)\.env|(?:^|\/)server(?:\/|\.)/i.test(req.path)) return res.status(404).end(); next(); });
+  // Decode before the artifact check: express.static decodes percent-escapes,
+  // so /index.js%2emap or /%2e%65nv must not slip past the raw-path regex.
+  app.use((req, res, next) => {
+    let decoded = req.path;
+    try { decoded = decodeURIComponent(req.path); } catch { /* keep raw on malformed escapes */ }
+    if (/\.(?:cjs|map)$|(?:^|\/)\.env|(?:^|\/)server(?:\/|\.)/i.test(decoded)) return res.status(404).end();
+    next();
+  });
   // The custom Chat + Scanner frontend is the only UI. When this server runs
   // as the data engine (STRAGY_API_ONLY=1), never serve the retired React app:
   // every non-API path is a plain 404, so nothing links to or depends on it.

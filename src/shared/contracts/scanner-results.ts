@@ -40,7 +40,7 @@ const coverageStatus = z.enum(['complete', 'partial', 'unavailable']);
 const deadline = z.object({ budgetMs: count, reached: z.boolean(), truncated: z.boolean(), elapsedMs: count });
 const progress = z.object({ processed: count, total: count, stage: z.string() });
 const movers = z.object({
-  universe: z.string().optional(), asOfDate: date, formattedDate: z.string(), isHistorical: z.boolean().optional(),
+  universe: z.string().optional(), asOfDate: date.nullable(), formattedDate: z.string(), isHistorical: z.boolean().optional(),
   availableTradingSessions: z.array(z.object({ date, label: z.string(), isLatest: z.boolean() })).optional(),
   totalFilteredCount: count.optional(), topGainers: trends, topLosers: trends, volumeShockers: trends,
   nearFiftyTwoWeekHigh: trends, nearFiftyTwoWeekLow: trends,

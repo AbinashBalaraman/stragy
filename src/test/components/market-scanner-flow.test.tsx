@@ -277,7 +277,7 @@ describe('bounded lazy market scanner flow', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
     expect(await screen.findByRole('heading', { name: /^Top gainers —/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
-    expect(checkMarket).toHaveBeenCalledWith('job-late');
+    expect(checkMarket).toHaveBeenCalledWith('job-late', expect.anything());
   });
 
   it('keeps the deadline line while Check again reports still running', async () => {
@@ -285,7 +285,7 @@ describe('bounded lazy market scanner flow', () => {
     checkMarket.mockResolvedValueOnce({ state: 'running', stage: 'scan 12/50' });
     renderScanner();
     fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
-    await waitFor(() => expect(checkMarket).toHaveBeenCalledWith('job-late'));
+    await waitFor(() => expect(checkMarket).toHaveBeenCalledWith('job-late', expect.anything()));
     expect(screen.getByText('The market snapshot is still loading. Check again.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
   });

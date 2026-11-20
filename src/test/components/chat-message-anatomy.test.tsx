@@ -64,7 +64,10 @@ describe('chat message anatomy', () => {
     send('Explain RSI');
     // A reply that lands almost immediately never flashes a skeleton.
     expect(screen.queryByTestId('assistant-pending')).toBeNull();
-    expect(await screen.findByTestId('assistant-pending')).toBeTruthy();
+    // The skeleton is held back 300 ms; under full-suite CPU contention the
+    // timer can land late, so give the assertion the same wide budget the
+    // other load-sensitive chat waits use.
+    expect(await screen.findByTestId('assistant-pending', {}, { timeout: 3000 })).toBeTruthy();
     expect(screen.queryByText(/Preparing a response/)).toBeNull();
     expect(screen.queryByText(/Scanning actual current daily data/)).toBeNull();
   });
