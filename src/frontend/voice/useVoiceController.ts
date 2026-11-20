@@ -76,11 +76,17 @@ export function useVoiceController(lang: Lang, opts: Opts = {}): VoiceController
     }
   }, []);
 
+  const fallbackRef = useRef<() => Promise<void>>(async () => {});
   const onState = useCallback((s: VoiceState) => {
     setStateRaw(s);
     if (s === 'unavailable') {
-      const why = browser().detail(lang);
+      const why = active.current === 'server' ? server().detailText() : browser().detail(lang);
       if (why) setDetail(why);
+      // Web Speech can exist yet fail at runtime (no mic, blocked speech
+      // service). Fall back to configured server transcription instead of
+      // leaving a dead mic button. "No speech" is not a failure — the user
+      // simply stayed quiet, so keep the honest retry hint.
+      if (active.current === 'browser' && !/no speech/i.test(why)) void fallbackRef.current();
     }
   }, [lang]);
 
@@ -106,6 +112,36 @@ export function useVoiceController(lang: Lang, opts: Opts = {}): VoiceController
     setStateRaw('unavailable');
   }, []);
 
+  const fellBack = useRef(false);
+  const serverFallback = useCallback(async () => {
+    if (fellBack.current || active.current !== 'browser') return;
+    let serverStt = false;
+    try { serverStt = (await serverSttStatus()).configured; } catch { /* ignore */ }
+    if (!serverStt || typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+    fellBack.current = true;
+    browser().abort();
+    active.current = 'server';
+    try {
+      await server().start({ sessionId: '', lang, onTranscript, onState });
+      setDetail('Browser speech failed — using server transcription. Speak, then tap the mic to send.');
+    } catch (err) {
+      active.current = null;
+      handleFailure(err);
+    }
+  }, [lang, onTranscript, onState, handleFailure]);
+  fallbackRef.current = serverFallback;
+
+  // Server transcription can take tens of seconds; show elapsed time so the
+  // wait reads as progress, not a hang.
+  useEffect(() => {
+    if (state !== 'transcribing' || active.current !== 'server') return;
+    const startedAt = Date.now();
+    const id = window.setInterval(() => {
+      setDetail(`Transcribing on the server… ${Math.max(1, Math.round((Date.now() - startedAt) / 1000))}s`);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [state]);
+
   const probeRealtime = useCallback(async () => {
     setCreditsRequired(false);
     setDetail('');
@@ -123,6 +159,7 @@ export function useVoiceController(lang: Lang, opts: Opts = {}): VoiceController
   const start = useCallback(async () => {
     setCreditsRequired(false);
     setDetail('');
+    fellBack.current = false;
     // A new spoken turn interrupts any answer still being read aloud.
     browser().stopSpeaking();
     server().stopSpeaking();

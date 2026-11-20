@@ -60,6 +60,7 @@ export function ChatScreen({
   const langSessionRef = useRef<string | undefined>(undefined);
   const [streaming, setStreaming] = useState<{ id: string; text: string } | null>(null);
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  const [resolvedApprovals, setResolvedApprovals] = useState<Record<string, 'approved' | 'rejected'>>({});
 
   // Voice turn: the composer mic drives browser STT; the final transcript is
   // inserted and sent with the language prefix; the reply is spoken via TTS.
@@ -168,7 +169,6 @@ export function ChatScreen({
     langSessionRef.current = session.id;
     const stored = readSessionLang(lang, session.id);
     if (stored !== lang) onLangChange(stored);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id]);
 
   const handleLang = async (next: 'en' | 'ta') => {
@@ -248,7 +248,9 @@ export function ChatScreen({
         const last = list.filter((m) => m.role === 'assistant').at(-1);
         if (last?.text) reply = last.text;
         if (idleAtRef.current >= turnStartedAt) break;
-        await new Promise((resolve) => setTimeout(resolve, 350));
+        // SSE deltas carry the live text; this loop is only the idle watchdog,
+        // so it polls gently instead of flooding the gate with full GETs.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       if (turnRef.current !== turn) return;
       const finalList = await loadFor(current.id);
@@ -272,12 +274,18 @@ export function ChatScreen({
     }
   };
 
+  // The approval card resolves the operator gate inline; an approval hands the
+  // agent a follow-up turn so the backtest starts without retyping anything.
+  const handleApprovalResolved = (approvalId: string, decision: 'approved' | 'rejected', followUp: string) => {
+    setResolvedApprovals((prev) => ({ ...prev, [approvalId]: decision }));
+    if (decision === 'approved' && followUp) void send(followUp, []);
+  };
+
   useEffect(() => {
     if (!initialPrompt) return;
     setDraft(initialPrompt);
     onInitialPromptConsumed?.();
     void send(initialPrompt, []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPrompt]);
 
   const stop = async () => {
@@ -387,7 +395,12 @@ export function ChatScreen({
                     </div>
                     {m.text && <Prose text={m.text} className={`aprose ${lang === 'ta' ? 'ta-text' : ''}`} lang={lang} testId="assistant-text" />}
                     {m.imageUris.map((uri, i) => <ImageCard key={i} uri={uri} />)}
-                    <ToolTimeline tools={m.tools} />
+                    <ToolTimeline
+                      tools={m.tools}
+                      sessionId={session?.id}
+                      resolvedApprovals={resolvedApprovals}
+                      onApprovalResolved={handleApprovalResolved}
+                    />
                   </>
                 )}
               </div>

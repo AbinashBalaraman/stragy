@@ -3,6 +3,7 @@ import { ArrowUp, Camera, Mic, Paperclip, Square } from 'lucide-react';
 import type { Lang, Key } from '../i18n';
 import { t } from '../i18n';
 import { LanguageToggle } from './LanguageToggle';
+import { ModelPicker } from './ModelPicker';
 import type { VoiceControllerApi } from '../voice/types';
 
 export type Attachment = { name: string; uri: string; mime: string };
@@ -188,15 +189,7 @@ export function Composer(props: Props) {
               <span className="cdot" />{t(props.lang, 'unavailable')} · realtime
             </span>
           )}
-          <select
-            className="sel"
-            aria-label={t(props.lang, 'model')}
-            data-testid="model-select"
-            value={props.selectedModel}
-            onChange={(e) => props.onModelChange(e.target.value)}
-          >
-            {props.models.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
+          <ModelPicker options={props.models} value={props.selectedModel} onChange={props.onModelChange} />
           <select
             className="sel"
             aria-label={t(props.lang, 'agent')}
@@ -228,8 +221,8 @@ export function Composer(props: Props) {
             </button>
           )}
         </div>
-        <p className="fine">Observed data only · research, not trading.</p>
       </div>
+      <p className="fine">Observed data only · research, not trading.</p>
     </div>
   );
 }

@@ -148,4 +148,74 @@ export function toolOutputPreview(output: unknown): string {
   try { return JSON.stringify(output); } catch { return String(output); }
 }
 
+/** Tool output arrives as an object or as JSON text (OpenCode content parts). */
+export function parseToolOutput(output: unknown): Record<string, unknown> | null {
+  if (output && typeof output === 'object' && !Array.isArray(output)) return output as Record<string, unknown>;
+  if (typeof output === 'string') {
+    const trimmed = output.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+      } catch { /* not JSON */ }
+    }
+  }
+  return null;
+}
+
+export type ApprovalRequest = { approvalId: string; title: string; summary: string[] };
+
+/** Detect a gated run_backtest result so the chat can offer a real approval card. */
+export function approvalFromTool(tool: ToolState): ApprovalRequest | null {
+  const out = parseToolOutput(tool.output);
+  if (!out || out.status !== 'approval_required' || typeof out.approvalId !== 'string') return null;
+  const approval = (out.approval && typeof out.approval === 'object' ? out.approval : {}) as Record<string, unknown>;
+  const rawSummary = Array.isArray(out.assumptions) ? out.assumptions : Array.isArray(approval.summary) ? approval.summary : [];
+  const summary = rawSummary.filter((line): line is string => typeof line === 'string');
+  return {
+    approvalId: out.approvalId,
+    title: typeof approval.title === 'string' ? approval.title : 'Operator approval required',
+    summary,
+  };
+}
+
+/**
+ * One quiet human line per tool call. The transcript — not the raw JSON — is
+ * the product; details stay one click away.
+ */
+export function toolSummary(tool: ToolState): string {
+  if (tool.status === 'failed') return (tool.error || 'failed').split('\n')[0].slice(0, 140);
+  if (tool.status !== 'success') return 'working…';
+  const out = parseToolOutput(tool.output);
+  if (!out) {
+    if (typeof tool.output === 'string' && tool.output.trim()) return tool.output.trim().split('\n')[0].slice(0, 140);
+    return 'done';
+  }
+  const status = typeof out.status === 'string' ? out.status : '';
+  if (status === 'approval_required') return 'awaiting your approval';
+  if (status === 'failed' || out.success === false) {
+    const err = (out.error && typeof out.error === 'object' ? out.error : {}) as Record<string, unknown>;
+    const message = typeof err.message === 'string' ? err.message : typeof out.code === 'string' ? out.code : 'failed';
+    return message.split('\n')[0].slice(0, 140);
+  }
+  const stats = (out.stats && typeof out.stats === 'object' ? out.stats : out) as Record<string, unknown>;
+  if (typeof stats.symbols === 'number' && typeof stats.lastDate === 'string') return `${stats.symbols} symbols · EOD ${stats.lastDate}`;
+  if (Array.isArray(out.matches)) {
+    const evaluated = typeof out.evaluated === 'number' ? ` of ${out.evaluated}` : '';
+    return `${out.matches.length} match${out.matches.length === 1 ? '' : 'es'}${evaluated}`;
+  }
+  if (typeof out.valid === 'boolean') return out.valid ? 'validated' : 'invalid — see details';
+  if (status === 'queued' && typeof out.jobId === 'string') return `job ${out.jobId.slice(0, 14)} queued`;
+  if (typeof out.jobId === 'string' && status) return `job ${status}`;
+  if (Array.isArray(out.results)) return `${out.results.length} result${out.results.length === 1 ? '' : 's'}`;
+  if (Array.isArray(out.rows)) return `${out.rows.length} rows`;
+  const facts: string[] = [];
+  for (const [key, value] of Object.entries(out)) {
+    if (facts.length >= 3) break;
+    if (typeof value === 'string' && value.length <= 40) facts.push(`${key}: ${value}`);
+    else if (typeof value === 'number' || typeof value === 'boolean') facts.push(`${key}: ${value}`);
+  }
+  return facts.length ? facts.join(' · ').slice(0, 140) : 'done';
+}
+
 export type { ToolPart };
