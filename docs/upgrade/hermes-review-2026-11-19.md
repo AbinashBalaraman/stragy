@@ -73,3 +73,12 @@ User: "These are small user test cases you should have anticipated; research com
 - **Voice**: small local English TTS (sherpa-onnx piper int8 18MB, `VOICE_TTS=local`), free edge Tamil by default with `VOICE_TTS_TAMIL=espeak` for fully offline. Worklet is a real same-origin asset (`assetsInlineLimit: 0`) — the proxy CSP rejects blob:/data: worklet URLs — plus step-level errors and one auto-reconnect. Headless Chromium cannot init AudioWorklet (no audio device), so the worklet logic is unit-tested in a stubbed AudioWorkletGlobalScope.
 - **Test infra**: jsdom 30 exports an empty `node:crypto`; a vitest-only alias shim uses `process.getBuiltinModule('node:crypto')` so modules calling randomUUID at import time work in both environments. Full suite green (1253 passed / 0 failed / 5 skipped).
 - Verified live: chat turn, scanner 50-symbol table (19 matches, sorting + CSV), 400-symbol bulk scan through the agent (2 batches, honest coverage reporting), EN+TA voice pipeline with local English TTS, no console errors.
+
+## 2026-11-22: fully local speech, local-LLM benchmark
+
+User repeated "use small local models". Both TTS languages are now local by default:
+- EN: sherpa-onnx piper en_US-amy-low-int8 (18.6 MB).
+- TA: piper VITS `ta_IN-HemaLatha-medium` ONNX (61 MB) via piper-tts — community model, local neural Tamil, ~0.9 s synthesis for 1.7 s audio.
+- `VOICE_TTS=edge` / `VOICE_TTS_TAMIL=edge` opt into free neural cloud voices; `VOICE_TTS_TAMIL=espeak` is the tiny offline fallback.
+- EN+TA pipeline harness PASS with both local voices; no cloud TTS in the default path.
+- Local LLM evaluated honestly: llama.cpp b12633 CPU binary + Qwen2.5-0.5B-Instruct Q4_K_M (469 MB) served `/v1/chat/completions`, but measured **0.7 tokens/s (34 s for 8 tokens)** on this 4-CPU contended host — unusable for live voice. Kept the free OpenRouter chain as the reasoning model; binaries/models left at `/data/workspace/voice-live/llama` for a faster machine.

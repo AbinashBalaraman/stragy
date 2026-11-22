@@ -3,9 +3,12 @@
 
 Pipeline: mic PCM -> Silero VAD (auto turn-taking, no stop button) ->
 faster-whisper tiny -> OpenRouter free-model chain (streaming) ->
-sentence-split -> small LOCAL TTS (sherpa-onnx piper int8, 18 MB) -> PCM -> browser.
-Tamil: no small local neural voice exists; the free edge-tts Tamil voice is used
-by default (VOICE_TTS_TAMIL=espeak for fully offline, robotic speech).
+sentence-split -> small LOCAL TTS (sherpa-onnx piper int8, 18 MB EN;
+  piper Tamil 61 MB) -> PCM -> browser. No cloud TTS by default.
+  VOICE_TTS=edge / VOICE_TTS_TAMIL=edge opt into free neural voices instead.
+The reasoning model stays on the free OpenRouter chain: a local 0.5B Q4 LLM
+was benchmarked here at 0.7 tokens/s on 4 contended CPUs — far too slow for
+live speech. The CPU host is the limit, not the model size.
 Barge-in: the mic stays hot while the assistant speaks; detected speech
 cancels generation and starts a new turn.
 
@@ -69,6 +72,7 @@ MODELS = [
 CHAIN = [('openrouter', m) for m in MODELS] + [('opencode-go', 'hy4-flash-free')]
 VOICES = {'en': 'en-US-AvaMultilingualNeural', 'ta': 'ta-IN-PallaviNeural'}
 _LOCAL_TTS = None  # lazily created sherpa-onnx piper voice; no network, ~18 MB
+_TAMIL_TTS = None  # piper-tts Tamil voice (61 MB), fully local
 SYSTEM_PROMPT = (
     'You are Stragy, a voice research assistant for Indian stock-market research. '
     'Answer in at most three short sentences. No markdown, no lists, no tables, no emoji. '
@@ -389,9 +393,17 @@ class Conversation:
                 return
             except Exception as exc:  # noqa: BLE001 - network/offline fallback
                 print(f'[voice-live] local TTS unavailable: {type(exc).__name__} {exc}', flush=True)
-        if self.lang == 'ta' and os.environ.get('VOICE_TTS_TAMIL', 'edge').lower() in ('espeak', 'local'):
-            self.speak_espeak(sentence, cancel)
-            return
+        if self.lang == 'ta':
+            mode_ta = os.environ.get('VOICE_TTS_TAMIL', 'local').lower()
+            if mode_ta == 'local':
+                try:
+                    self.speak_tamil_local(sentence, cancel)
+                    return
+                except Exception as exc:  # noqa: BLE001 - fall back below
+                    print(f'[voice-live] Tamil local TTS unavailable: {type(exc).__name__} {exc}', flush=True)
+            if mode_ta in ('espeak', 'offline'):
+                self.speak_espeak(sentence, cancel)
+                return
         try:
             self.speak_edge(sentence, voice, cancel)
         except Exception:  # noqa: BLE001 - offline fallback keeps the conversation alive
@@ -418,6 +430,29 @@ class Conversation:
             idx = np.linspace(0, len(samples) - 1, int(len(samples) * SAMPLE_RATE / audio.sample_rate)).astype(int)
             samples = samples[idx]
         pcm = np.clip(samples * 32767, -32768, 32767).astype(np.int16).tobytes()
+        step = SAMPLE_RATE * 2 // 10
+        for i in range(0, len(pcm), step):
+            if cancel.is_set():
+                return
+            self.emit({'type': 'audio_chunk', 'audio': base64.b64encode(pcm[i:i + step]).decode()})
+
+    def speak_tamil_local(self, sentence: str, cancel: threading.Event):
+        """Local neural Tamil TTS: piper VITS ONNX (61 MB), no network."""
+        from piper import PiperVoice
+
+        global _TAMIL_TTS
+        if _TAMIL_TTS is None:
+            model = Path(__file__).resolve().parent / 'models' / 'ta' / 'ta_IN-HemaLatha-medium.onnx'
+            _TAMIL_TTS = PiperVoice.load(str(model))
+        chunks = list(_TAMIL_TTS.synthesize(sentence))
+        if cancel.is_set() or not chunks:
+            return
+        samples = np.concatenate([chunk.audio_int16_array for chunk in chunks]).astype(np.float32)
+        rate = _TAMIL_TTS.config.sample_rate
+        if rate != SAMPLE_RATE:
+            idx = np.linspace(0, len(samples) - 1, int(len(samples) * SAMPLE_RATE / rate)).astype(int)
+            samples = samples[idx]
+        pcm = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
         step = SAMPLE_RATE * 2 // 10
         for i in range(0, len(pcm), step):
             if cancel.is_set():
