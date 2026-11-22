@@ -10,7 +10,7 @@ import { plainScanFailure } from '../../shared/contracts/scan-availability';
 import { JobStore, JobStoreError, type JobStoreRecord } from '../storage/jobsDb';
 import type { CacheRefreshState } from '../data/marketCacheRefresh';
 export interface BacktestPayload { kind?: 'backtest'; strategy: StrategyAST; bars: OHLCVBar[]; provenance?: unknown; options?: BacktestOptions; }
-export interface ScanPayload { kind: 'scan'; strategy: StrategyAST; universe: string; asOf?: string; mode: 'demo' | 'real'; limit?: number; offset?: number; maxSymbols?: number; }
+export interface ScanPayload { kind: 'scan'; strategy: StrategyAST; universe: string; asOf?: string; mode: 'demo' | 'real'; limit?: number; offset?: number; maxSymbols?: number; symbolOffset?: number; }
 export interface MarketPayload { kind: 'market'; universe: string; asOf?: string; mode: 'demo' | 'real'; }
 /** The image arrives as the validated data URL; the worker parses it inside its own thread. */
 export interface ChartPayload { kind: 'chart'; image: string; hint?: string; currentStrategy?: StrategyAST; }

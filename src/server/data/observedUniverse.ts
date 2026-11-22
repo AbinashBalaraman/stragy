@@ -41,6 +41,8 @@ export interface ObservedUniverse {
 export type ObservedUniverseDeps = {
   fetchText?: (url: string, signal: AbortSignal, maxBytes: number) => Promise<{ text: string; lastModified?: string }>;
   now?: () => number;
+  /** Bulk scans with symbolOffset need the uncapped catalog, not the per-run cap. */
+  skipCap?: boolean;
   /** Tests may request the strict throw; production falls back to the bundled catalog. */
   allowBundledFallback?: boolean;
 };
@@ -84,9 +86,9 @@ export function configuredUniversePool(id: MarketUniverseType): SymbolMeta[] {
   return equities;
 }
 
-function bundledResolution(id: MarketUniverseType, officialFailure?: string): ObservedUniverse {
+function bundledResolution(id: MarketUniverseType, officialFailure?: string, skipCap = false): ObservedUniverse {
   const pool = configuredUniversePool(id);
-  const cap = BUNDLED_UNIVERSE_CAP[id];
+  const cap = skipCap ? undefined : BUNDLED_UNIVERSE_CAP[id];
   const selected = typeof cap === 'number' ? pool.slice(0, cap) : pool;
   const truncated = selected.length < pool.length;
   const reasons: string[] = [];
@@ -132,7 +134,7 @@ async function fetchOfficialConstituents(deps: ObservedUniverseDeps): Promise<Ob
 export async function resolveObservedUniverse(name:string,deps:ObservedUniverseDeps={}):Promise<ObservedUniverse> {
  const aliases:Record<string,string>={NIFTY50:'NIFTY_50',BANKNIFTY:'BANK_NIFTY',INDICES:'POPULAR_INDICES'};const id=(aliases[name.toUpperCase()]||name.toUpperCase()) as MarketUniverseType;
  if(!UNIVERSE_OPTIONS.some(x=>x.id===id))throw new MarketDataError('INVALID_UNIVERSE','Unknown universe');
- if(id!=='NIFTY_50') return bundledResolution(id);
+ if(id!=='NIFTY_50') return bundledResolution(id, undefined, deps.skipCap);
  const now=deps.now??Date.now;
  // A successful NIFTY 50 list is reused for 24 h and always carries its retrieval date.
  if(cached&&now()-cachedAt<MEMBERSHIP_CACHE_MS){const copy=structuredClone(cached);const warning='Membership reused from the last successful NIFTY 50 retrieval at '+cached.observedAt+' (24 h cache).';if(!copy.warnings.includes(warning))copy.warnings.push(warning);return copy;}
@@ -143,7 +145,7 @@ export async function resolveObservedUniverse(name:string,deps:ObservedUniverseD
   // The scanner must never dead-end on a blank screen because the exchange
   // archive blipped. Identifiers come from the bundled catalog; membership is
   // labelled unverified and the owner can retry the official feed.
-  return bundledResolution('NIFTY_50',error instanceof Error?error.message:undefined);
+  return bundledResolution('NIFTY_50',error instanceof Error?error.message:undefined,deps.skipCap);
  }
  finally{pending=undefined;}
 }

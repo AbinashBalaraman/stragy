@@ -2,7 +2,7 @@
  * v2 proposal service. Produces DRAFT envelopes only. It never saves, runs backtests for the user,
  * places orders, evaluates model output, or follows instructions found in prompts/history/strategies.
  */
-import { randomUUID } from 'node:crypto';
+import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import type { StrategyAST } from '../../shared/strategy/types';
 import {
   AIRuntimeConfig, EnvLike, FetchLike, RequestBudget, callProvider, resolveAIConfig,
@@ -16,6 +16,11 @@ import type {
   CreateProposalFailure, CreateProposalResult, ProposalErrorCode, StrategyProposalV2,
 } from './types';
 import type { MarketContextDeps } from './marketContext';
+
+/** jsdom's node:crypto shim has no randomUUID; fall back for offline tests. */
+const safeUUID = (): string => typeof nodeRandomUUID === 'function'
+  ? nodeRandomUUID()
+  : (globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
 
 export interface AIServiceDeps {
   env?: EnvLike;
@@ -93,7 +98,7 @@ export function describeConfigState(cfg: AIRuntimeConfig): string {
 
 export async function createProposal(input: CreateProposalInput, deps: AIServiceDeps = {}): Promise<CreateProposalResult> {
   const now = deps.now ?? (() => new Date());
-  const newId = deps.idFactory ?? randomUUID;
+  const newId = deps.idFactory ?? safeUUID;
   const rev = normaliseRevision(input?.originatingRevision);
   if (rev === undefined) return failure('invalid_request', 'originatingRevision must be a number, short string, or null.', null);
   if (!input || typeof input.prompt !== 'string') return failure('invalid_request', 'prompt must be a string.', rev);

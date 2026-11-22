@@ -88,6 +88,8 @@ export const dict = {
   live: { en: 'Live', ta: 'நேரடி' },
   liveHint: { en: 'Just speak — pause to send, talk over it to interrupt.', ta: 'பேசுங்கள் — நிறுத்தினால் அனுப்பப்படும்; குறுக்கே பேசினால் நிறுத்தப்படும்.' },
   endLive: { en: 'End', ta: 'முடி' },
+  researchSteps: { en: 'Research', ta: 'ஆராய்ச்சி' },
+  researchHint: { en: 'expand to inspect every tool call and its result', ta: 'ஒவ்வொரு கருவி அழைப்பையும் முடிவையும் காண விரிக்கவும்' },
   speak: { en: 'speak', ta: 'பேசுங்கள்' },
   sayAgain: { en: 'say again', ta: 'மீண்டும் சொல்லுங்கள்' },
   transcript: { en: 'transcript', ta: 'உரையாக மாற்றம்' },

@@ -13,7 +13,7 @@ export const NEAR_MATCH_LIMIT = 10;
 export interface ScanRuleDiagnostic {rule:string;ruleIndex?:number;actualLeft:number|null;actualRight:number|null;matchedIndex?:number;matchedDate?:string;currentActualLeft?:number|null;currentActualRight?:number|null;}
 export interface ScanMatchResult{symbolId:number;ticker:string;name:string;sector:string;lastDate:string;lastClose:number;currency?:'INR';changePercent:number;score?:number;matchedRules:ScanRuleDiagnostic[];unmatchedRules?:ScanRuleDiagnostic[];indicatorValues:Record<string,number>;provenance:MarketSeries['provenance'];}
 export interface UniverseScanResponse{mode:'demo'|'real';universe:string;scanned:number;matched:number;scannedAt:string;dataSource:string;matches:ScanMatchResult[];nearMatches:ScanMatchResult[];requested:number;attempted:number;succeeded:number;unavailable:number;failed:number;asOf?:string;offset:number;limit:number;errors:{symbolId:number;code:string;message:string;ticker?:string}[];sourceCoverage:Record<string,number>;warnings:string[];observationDates?:{earliest:string;latest:string;staleSymbols:number};membership?:Omit<ObservedUniverse,'symbols'>;status?:'complete'|'partial'|'unavailable';}
-export interface ScanOptions extends LoadMarketOptions{offset?:number;limit?:number;maxSymbols?:number;onProgress?:(stage:string, counts?:{processed:number;total:number})=>void;}
+export interface ScanOptions extends LoadMarketOptions{offset?:number;limit?:number;maxSymbols?:number;symbolOffset?:number;onProgress?:(stage:string, counts?:{processed:number;total:number})=>void;}
 
 function universe(name:string):SymbolMeta[]{
   const aliases:Record<string,string>={NIFTY50:'NIFTY_50',BANKNIFTY:'BANK_NIFTY',INDICES:'POPULAR_INDICES'};
@@ -90,10 +90,11 @@ function validateStrategy(s:StrategyAST):void{if(!s||!Array.isArray(s.indicators
  * A scan may evaluate a bounded subset of the resolved universe. maxSymbols is
  * an evaluation cap, never result pagination; the response warning says so.
  */
-function evaluatedSymbols(symbols:SymbolMeta[],maxSymbols?:number):SymbolMeta[]{
-  if(maxSymbols===undefined||!Number.isFinite(maxSymbols))return symbols;
-  const cap=Math.max(1,Math.min(Math.floor(maxSymbols),symbols.length));
-  return cap>=symbols.length?symbols:symbols.slice(0,cap);
+function evaluatedSymbols(symbols:SymbolMeta[],maxSymbols?:number,symbolOffset=0):SymbolMeta[]{
+  const pool=symbolOffset>0?symbols.slice(Math.max(0,Math.floor(symbolOffset))):symbols;
+  if(maxSymbols===undefined||!Number.isFinite(maxSymbols))return pool;
+  const cap=Math.max(1,Math.min(Math.floor(maxSymbols),pool.length));
+  return cap>=pool.length?pool:pool.slice(0,cap);
 }
 
 function rankNearMatches(r:UniverseScanResponse):void{
@@ -104,7 +105,7 @@ function rankNearMatches(r:UniverseScanResponse):void{
 export function scanUniverse(strategy:StrategyAST,name='nifty50',limit=35,o:ScanOptions={}):UniverseScanResponse{
   validateStrategy(strategy);
   const all=universe(name);
-  const symbols=evaluatedSymbols(all,o.maxSymbols);
+  const symbols=evaluatedSymbols(all,o.maxSymbols,o.symbolOffset);
   const r=initialize(name,symbols,{...o,limit});
   if(symbols.length<all.length)r.warnings.push('Evaluated the first '+symbols.length+' of '+all.length+' configured symbols (maxSymbols); this is not full coverage.');
   for(const sym of symbols){r.attempted++;try{evaluate(sym,getMarketSeries(sym.id,o),strategy,r);}catch(e){error(sym,e,r);}}
@@ -117,10 +118,10 @@ export function scanUniverse(strategy:StrategyAST,name='nifty50',limit=35,o:Scan
 export async function scanUniverseAsync(strategy:StrategyAST,name='nifty50',o:ScanOptions={}):Promise<UniverseScanResponse>{
   validateStrategy(strategy);
   const real=(o.mode??getDataMode())==='real';
-  const membership=real?await resolveObservedUniverse(name):undefined;
+  const membership=real?await resolveObservedUniverse(name,{skipCap:(o.symbolOffset??0)>0}):undefined;
   const resolvedSymbols=membership?.symbols??universe(name);
   if(resolvedSymbols.length>2500)throw new MarketDataError('SCAN_BUDGET_EXCEEDED','Universe exceeds scan budget');
-  const symbols=evaluatedSymbols(resolvedSymbols,o.maxSymbols);
+  const symbols=evaluatedSymbols(resolvedSymbols,o.maxSymbols,o.symbolOffset);
   const r=initialize(name,symbols,o);
   if(symbols.length<resolvedSymbols.length)r.warnings.push('Evaluated the first '+symbols.length+' of '+resolvedSymbols.length+' resolved symbols (maxSymbols); this is not full coverage.');
   if(membership){

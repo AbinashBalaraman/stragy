@@ -20,7 +20,7 @@ async function main() {
     parentPort?.postMessage({ type:'result',result }); return;
   }
   if (payload.kind === 'scan') {
-    const result = await scanUniverseAsync(payload.strategy, payload.universe, { mode: payload.mode, asOf: payload.asOf, limit: payload.limit, offset: payload.offset, maxSymbols: payload.maxSymbols, onProgress: (stage, counts) => parentPort?.postMessage({ type: 'progress', stage, ...(counts ? { processed: counts.processed, total: counts.total } : {}) }) });
+    const result = await scanUniverseAsync(payload.strategy, payload.universe, { mode: payload.mode, asOf: payload.asOf, limit: payload.limit, offset: payload.offset, maxSymbols: payload.maxSymbols, symbolOffset: payload.symbolOffset, onProgress: (stage, counts) => parentPort?.postMessage({ type: 'progress', stage, ...(counts ? { processed: counts.processed, total: counts.total } : {}) }) });
     parentPort?.postMessage({ type:'result',result }); return;
   }
   if (payload.kind === 'market') {

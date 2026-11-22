@@ -11,12 +11,16 @@
  *  - the key never appears in status, errors, or enumerable config properties
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { createPinnedFetch } from './netGuard';
 import { VERIFIED_FREE_MODEL, verifyFreeModel, verifyOpenRouterFreeModel } from './freeModel';
 export type AIProviderName = 'none' | 'gemini' | 'openai' | 'openrouter' | 'deepseek' | 'tokenrouter' | 'opencode-go';
 export const AI_PROVIDERS: readonly AIProviderName[] = ['none', 'gemini', 'openai', 'openrouter', 'deepseek', 'tokenrouter', 'opencode-go'];
 
+/** jsdom's node:crypto shim has no randomUUID; fall back for offline tests. */
+const randomUUID = (): string => typeof nodeRandomUUID === 'function'
+  ? nodeRandomUUID()
+  : (globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
 /** OpenCode Go requires its own client identity and a stable conversation header. */
 export const OPENCODE_GO_USER_AGENT = 'stragy-research/2.0';
 /** Conversations without an explicit identifier reuse one process-scoped session id. */

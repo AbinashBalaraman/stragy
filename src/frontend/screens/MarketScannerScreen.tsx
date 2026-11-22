@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from 'react';
-import { Activity, Ban, Database, LoaderCircle, RefreshCw, Search } from 'lucide-react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Activity, ArrowDown, ArrowUp, Ban, Database, Download, LoaderCircle, RefreshCw, Search } from 'lucide-react';
 import { requestScan, type ResearchJobProgress, type ScanResult } from '../../client/api';
 import { STRATEGY_TEMPLATES } from '../../shared/strategy/templates';
 import { plainRule } from '../../client/plainRules';
@@ -9,14 +9,79 @@ import { t } from '../i18n';
 import type { CacheStats } from '../stragy/client';
 
 type Props = { cache: CacheStats | null };
+type SortKey = 'ticker' | 'lastClose' | 'changePercent' | 'score' | 'date';
+type Match = ScanResult['matches'][number];
 
 const money = (v: number) => `₹${v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const pct = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`;
 const day = (iso?: string) => (iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : 'date unavailable');
 
+/** Merge background batches into ONE honest result: no silent truncation. */
+function mergeScans(parts: ScanResult[], requested: number): ScanResult {
+  const first = parts[0];
+  const matches: Match[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    for (const match of part.matches) {
+      const key = match.ticker || String(match.symbolId);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      matches.push(match);
+    }
+  }
+  matches.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.ticker.localeCompare(b.ticker));
+  const sum = (key: 'scanned' | 'attempted' | 'succeeded' | 'unavailable' | 'failed') =>
+    parts.reduce((total, part) => total + (part[key] ?? 0), 0);
+  const sourceCoverage: Record<string, number> = {};
+  for (const part of parts) for (const [source, count] of Object.entries(part.sourceCoverage ?? {})) sourceCoverage[source] = (sourceCoverage[source] ?? 0) + count;
+  return {
+    ...first,
+    matches,
+    matched: matches.length,
+    requested,
+    scanned: sum('scanned'), attempted: sum('attempted'), succeeded: sum('succeeded'),
+    unavailable: sum('unavailable'), failed: sum('failed'),
+    sourceCoverage,
+    warnings: [...new Set(parts.flatMap(part => part.warnings ?? []))].slice(0, 20),
+    errors: parts.flatMap(part => part.errors ?? []).slice(0, 100),
+  };
+}
+
+/** TradingView-style sorting: one click sorts, the next reverses. */
+function sortMatches(matches: Match[], key: SortKey, dir: 'asc' | 'desc'): Match[] {
+  const value = (m: Match): string | number => {
+    switch (key) {
+      case 'ticker': return m.ticker;
+      case 'lastClose': return m.lastClose;
+      case 'changePercent': return m.changePercent;
+      case 'score': return m.score ?? 0;
+      case 'date': return m.lastDate;
+    }
+  };
+  return [...matches].sort((a, b) => {
+    const av = value(a), bv = value(b);
+    const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+}
+
+function exportCsv(matches: Match[]): void {
+  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [
+    ['Ticker', 'Name', 'Sector', 'Date', 'Close (INR)', 'Change %', 'Score', 'Matched rules'].join(','),
+    ...matches.map(m => [m.ticker, m.name, m.sector, m.lastDate, m.lastClose, m.changePercent, m.score ?? '', (m.matchedRules ?? []).map(r => r.rule).join(' | ')].map(esc).join(',')),
+  ];
+  const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `stragy-scan-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 /**
- * A single, quiet scanner page. All numbers come from /api/v2/scans via the
- * same requestScan/resume logic as the original app — no mock values here.
+ * A quiet, data-first scanner: bounded universe selection, background batches
+ * for large requests, sortable results, honest coverage and CSV export.
  */
 export function MarketScannerScreen({ cache }: Props) {
   const lang = useLang().lang;
@@ -27,6 +92,7 @@ export function MarketScannerScreen({ cache }: Props) {
   const [progress, setProgress] = useState<ResearchJobProgress | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState('');
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'score', dir: 'desc' });
   const controller = useRef<AbortController | null>(null);
   const template = STRATEGY_TEMPLATES[templateIndex] ?? STRATEGY_TEMPLATES[0];
 
@@ -39,13 +105,21 @@ export function MarketScannerScreen({ cache }: Props) {
     setResult(null);
     setProgress(null);
     try {
-      const data = await requestScan(
-        { universe, strategy: template.strategy, maxSymbols: Math.min(100, Math.max(1, limit)), limit: 100 },
-        abort.signal,
-        undefined,
-        (p) => { if (!abort.signal.aborted) setProgress(p); },
-      );
-      if (!abort.signal.aborted) setResult(data);
+      const total = Math.min(2000, Math.max(1, limit));
+      const parts: ScanResult[] = [];
+      for (let offset = 0; offset < total; offset += 200) {
+        if (abort.signal.aborted) return;
+        const batchSize = Math.min(200, total - offset);
+        const batchNo = Math.floor(offset / 200) + 1;
+        const batches = Math.ceil(total / 200);
+        parts.push(await requestScan(
+          { universe, strategy: template.strategy, maxSymbols: batchSize, symbolOffset: offset, limit: 100 },
+          abort.signal,
+          undefined,
+          (p) => { if (!abort.signal.aborted) setProgress({ ...p, stage: (batches > 1 ? `batch ${batchNo}/${batches} · ` : '') + (p.stage || 'running') }); },
+        ));
+      }
+      if (!abort.signal.aborted) setResult(mergeScans(parts, total));
     } catch (e) {
       if (!abort.signal.aborted) setError(e instanceof Error ? e.message : 'The scan did not complete.');
     } finally {
@@ -60,6 +134,9 @@ export function MarketScannerScreen({ cache }: Props) {
     setError('Scan cancelled by you.');
   };
 
+  const rows = useMemo(() => result ? sortMatches(result.matches, sort.key, sort.dir) : [], [result, sort]);
+  const toggleSort = (key: SortKey) => setSort(current => ({ key, dir: current.key === key && current.dir === 'desc' ? 'asc' : 'desc' }));
+  const sortIcon = (key: SortKey) => sort.key === key ? (sort.dir === 'desc' ? <ArrowDown size={11} /> : <ArrowUp size={11} />) : null;
   const progressText = progress
     ? `${progress.stage || 'running'}${progress.progress ? ` · ${progress.progress.processed} / ${progress.progress.total}` : ''}${progress.queuedBehind ? ` · ${progress.queuedBehind} ahead` : ''}`
     : '';
@@ -86,7 +163,7 @@ export function MarketScannerScreen({ cache }: Props) {
               </label>
               <label className="field">
                 <span>{t(lang, 'maxSymbols')}</span>
-                <input className="sel" type="number" min={1} max={100} value={limit} data-testid="scanner-limit" onChange={(e) => setLimit(Number(e.target.value))} disabled={running} />
+                <input className="sel" type="number" min={1} max={2000} value={limit} data-testid="scanner-limit" onChange={(e) => setLimit(Number(e.target.value))} disabled={running} />
               </label>
               <label className="field">
                 <span>{t(lang, 'strategy')}</span>
@@ -105,7 +182,7 @@ export function MarketScannerScreen({ cache }: Props) {
               ) : (
                 <button type="button" className="btn primary" data-testid="scanner-run" onClick={() => void run()}><Search size={14} /> {t(lang, 'runScan')}</button>
               )}
-              <span className="muted" style={{ fontSize: 'var(--fs-xs)' }}>Bounded to {Math.min(100, Math.max(1, limit))} symbols · {universe}</span>
+              <span className="muted" style={{ fontSize: 'var(--fs-xs)' }}>{Math.min(2000, Math.max(1, limit))} symbols · {universe}{limit > 200 ? ' · runs in background batches of 200' : ''}</span>
             </div>
             {running && (
               <div className="scanner-progress" role="status" data-testid="scanner-progress">
@@ -125,11 +202,12 @@ export function MarketScannerScreen({ cache }: Props) {
                 <span className="chip ready" data-testid="scan-matched"><span className="cdot" />{result.matched} matched</span>
                 <span className="chip" data-testid="scan-coverage"><span className="cdot" />{t(lang, 'coverage')}: {result.succeeded}/{result.requested}</span>
                 <span className={`chip ${result.mode === 'real' ? 'ready' : 'caveat'}`} data-testid="scan-mode"><span className="cdot" />{result.mode === 'real' ? t(lang, 'sourceObserved') : t(lang, 'sourceDemo')}</span>
+                {result.matches.length > 0 && <button type="button" className="btn ghost" data-testid="scan-export" onClick={() => exportCsv(rows)}><Download size={13} /> CSV</button>}
               </div>
             </div>
             <div className="panel-body">
               <p className="disclaimer" style={{ marginTop: 0 }} data-testid="scan-summary">
-                {result.scanned} scanned · {result.attempted} attempted · {result.succeeded} succeeded · {result.unavailable} unavailable · {result.failed} failed · EOD {result.asOf ? day(result.asOf) : (result.observationDates?.latest ? day(result.observationDates.latest) : 'not reported')}.
+                Evaluated {result.attempted} of {result.requested} requested symbols · {result.succeeded} succeeded · {result.unavailable} unavailable · {result.failed} failed · showing all {result.matches.length} matches · EOD {result.asOf ? day(result.asOf) : (result.observationDates?.latest ? day(result.observationDates.latest) : 'not reported')}.
                 {Object.keys(result.sourceCoverage || {}).length > 0 && ` Sources: ${Object.entries(result.sourceCoverage).filter(([, n]) => n > 0).map(([k, v]) => `${k} (${v})`).join(', ')}.`}
                 {result.warnings?.length ? ` ${result.warnings.slice(0, 2).join(' ')}` : ''}
               </p>
@@ -143,15 +221,24 @@ export function MarketScannerScreen({ cache }: Props) {
               ) : (
                 <div className="scan-table-wrap" role="region" aria-label="Scan results" tabIndex={0}>
                   <table className="scan-table" data-testid="scan-table">
-                    <caption className="sr-only">Market scan results</caption>
-                    <thead><tr><th scope="col">{t(lang, 'ticker')}</th><th scope="col">{t(lang, 'lastClose')}</th><th scope="col">{t(lang, 'dayChange')}</th><th scope="col">{t(lang, 'rule')}</th></tr></thead>
+                    <caption className="sr-only">Market scan results — click a header to sort</caption>
+                    <thead><tr>
+                      <th scope="col"><button type="button" className="sort-btn" onClick={() => toggleSort('ticker')}>{t(lang, 'ticker')}{sortIcon('ticker')}</button></th>
+                      <th scope="col"><button type="button" className="sort-btn" onClick={() => toggleSort('score')}>Score{sortIcon('score')}</button></th>
+                      <th scope="col"><button type="button" className="sort-btn" onClick={() => toggleSort('lastClose')}>{t(lang, 'lastClose')}{sortIcon('lastClose')}</button></th>
+                      <th scope="col"><button type="button" className="sort-btn" onClick={() => toggleSort('changePercent')}>{t(lang, 'dayChange')}{sortIcon('changePercent')}</button></th>
+                      <th scope="col"><button type="button" className="sort-btn" onClick={() => toggleSort('date')}>Date{sortIcon('date')}</button></th>
+                      <th scope="col">{t(lang, 'rule')}</th>
+                    </tr></thead>
                     <tbody>
-                      {result.matches.map((m) => (
+                      {rows.map((m) => (
                         <tr key={`${m.symbolId}-${m.lastDate}`} data-testid="scan-row">
-                          <td><b>{m.ticker}</b><div className="muted mono" style={{ fontSize: 'var(--fs-xs)' }}>{day(m.lastDate)}</div></td>
+                          <td><b>{m.ticker}</b><div className="muted mono" style={{ fontSize: 'var(--fs-xs)' }}>{m.name || m.sector || '—'}</div></td>
+                          <td className="tnum">{m.score ?? '—'}</td>
                           <td className="tnum">{money(m.lastClose)}</td>
                           <td className={`tnum ${m.changePercent >= 0 ? 'up' : 'down'}`}>{pct(m.changePercent)}</td>
-                          <td className="scan-rule-cell">{m.matchedRules[0]?.rule || '—'}</td>
+                          <td className="tnum" style={{ fontSize: 'var(--fs-xs)' }}>{day(m.lastDate)}</td>
+                          <td className="scan-rule-cell">{(m.matchedRules ?? []).map(r => r.rule).slice(0, 2).join(' · ') || '—'}</td>
                         </tr>
                       ))}
                     </tbody>

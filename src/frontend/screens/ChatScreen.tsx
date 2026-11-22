@@ -8,7 +8,7 @@ import { t, prefixedPrompt } from '../i18n';
 import { Composer, type Attachment } from '../components/Composer';
 import { ImageCard } from '../components/ImageCard';
 import { Prose } from '../components/Prose';
-import { ToolTimeline } from '../components/ToolTimeline';
+import { AnswerCard } from '../components/AnswerCard';
 import { useVoiceController } from '../voice/useVoiceController';
 import { useLiveVoice } from '../voice/useLiveVoice';
 
@@ -386,24 +386,22 @@ export function ChatScreen({
                     <div className="ts">{timeLabel(m.time)}</div>
                   </>
                 ) : (
-                  <>
-                    <div className="amark">
-                      <span className="brand-mark" style={{ width: 16, height: 16 }} aria-hidden>
-                        <svg viewBox="0 0 24 24" fill="none"><rect x="1" y="1" width="22" height="22" rx="5" stroke="var(--accent)" strokeWidth="1.5" /><path d="M5 16.5 9.5 10l3 3.5L19 6" stroke="var(--accent)" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                      </span>
-                      <b>STRAGY</b>
-                      <span className="ts">{timeLabel(m.time)}</span>
-                      {lang === 'ta' && <span className="chip tamil"><span className="cdot" />{t(lang, 'replyInTamil')}</span>}
-                    </div>
-                    {m.text && <Prose text={m.text} className={`aprose ${lang === 'ta' ? 'ta-text' : ''}`} lang={lang} testId="assistant-text" />}
-                    {m.imageUris.map((uri, i) => <ImageCard key={i} uri={uri} />)}
-                    <ToolTimeline
-                      tools={m.tools}
-                      sessionId={session?.id}
-                      resolvedApprovals={resolvedApprovals}
-                      onApprovalResolved={handleApprovalResolved}
-                    />
-                  </>
+                  <AnswerCard
+                    message={m}
+                    sessionId={session?.id}
+                    resolvedApprovals={resolvedApprovals}
+                    onApprovalResolved={handleApprovalResolved}
+                    onSend={(text) => { if (!busy) void send(text, []); }}
+                    onRegenerate={() => {
+                      if (busy) return;
+                      const idx = shown.findIndex(item => item.id === m.id);
+                      const previous = [...shown.slice(0, idx)].reverse().find(item => item.role === 'user');
+                      if (previous) void send(previous.text, []);
+                    }}
+                    busy={busy}
+                    lang={lang}
+                    time={timeLabel(m.time)}
+                  />
                 )}
               </div>
             ))}

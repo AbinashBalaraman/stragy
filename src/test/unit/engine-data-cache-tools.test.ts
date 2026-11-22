@@ -177,13 +177,13 @@ describe('engine data and cache tools', () => {
     expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'cache', symbolIds: [getSymbolByTicker('TCS')!.id], maxSymbols: 1 }));
   });
 
-  it('bounds maxSymbols at 1..200 and keeps limit as result pagination', async () => {
+  it('bounds maxSymbols at 1..2000 and keeps limit as result pagination', async () => {
     const enqueue = vi.fn((_payload: ResearchPayload) => ({ id: 'scan1', kind: 'scan', status: 'queued' }));
     const { get } = await setup({ jobs: { enqueue, get: () => undefined } });
     const scan = get('scan_market');
     expect(scan.input.safeParse({ universe: 'NSE', strategy, maxSymbols: 0 }).success).toBe(false);
-    expect(scan.input.safeParse({ universe: 'NSE', strategy, maxSymbols: 201 }).success).toBe(false);
-    expect(scan.input.safeParse({ universe: 'NSE', strategy, maxSymbols: 200 }).success).toBe(true);
+    expect(scan.input.safeParse({ universe: 'NSE', strategy, maxSymbols: 2001 }).success).toBe(false);
+    expect(scan.input.safeParse({ universe: 'NSE', strategy, maxSymbols: 2000 }).success).toBe(true);
     expect(scan.input.safeParse({ universe: 'NSE', strategy, limit: 101 }).success).toBe(false);
     expect(scan.input.safeParse({ universe: 'NSE', strategy, limit: 100 }).success).toBe(true);
 

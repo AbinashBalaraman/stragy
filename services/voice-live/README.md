@@ -12,9 +12,11 @@ mic PCM16 16kHz (AudioWorklet, 100ms frames)
   → faster-whisper tiny (en) / small (ta), local CPU int8
   → OpenRouter free-model chain (streaming): particle-1 → flint → ling-flash
     → gemma-4 → lfm-3; last resort: the stack's own free opencode-go model
-  → sentence/clause split → edge-tts neural (en-US-Ava / ta-IN-Pallavi),
-    MP3 decoded to PCM as it arrives (queue-backed PyAV reader)
-  → 100ms PCM chunks back → gapless browser playback queue
+  → sentence/clause split → LOCAL sherpa-onnx piper int8 (18 MB, no network,
+    en_US-amy) → 100ms PCM chunks back → gapless browser playback queue
+  Tamil: no small local neural voice exists in piper/sherpa; Tamil replies use
+    the free edge-tts ta-IN-Pallavi voice by default. Set VOICE_TTS_TAMIL=espeak
+    for fully offline (robotic) Tamil. VOICE_TTS=edge switches English back.
 ```
 
 Barge-in: the mic stays hot while the assistant speaks; ≥300ms of detected

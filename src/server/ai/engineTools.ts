@@ -13,6 +13,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { BULK_BATCH_SYMBOLS, MAX_BULK_SCAN_SYMBOLS, mergeBulkResults, planBulkBatches } from './bulkScan';
 import { ALL_SYMBOLS, UNIVERSE_OPTIONS, filterSymbolsByUniverse, getSymbolById, getSymbolByTicker, type MarketUniverseType } from '../data/symbols';
 import { loadMarketSeries } from '../data/realMarketData';
 import { getCandleCoverage, getMarketCacheStats, type MarketCacheStats } from '../data/candleStore';
@@ -109,6 +110,18 @@ const MAX_SEARCH = 25;
 /** A scan evaluates at most this many symbols, matching the shared universe cap. */
 const MAX_SCAN_SYMBOLS = 200;
 const MAX_SCAN_RESULTS = 100;
+/** In-memory registry of large scans; the durable scan jobs themselves live in the job store. */
+interface BulkScanRecord { jobIds: string[]; requested: number; universe: string; limit: number; createdAt: number; }
+const bulkScans = new Map<string, BulkScanRecord>();
+function rememberBulkScan(record: BulkScanRecord): string {
+  const id = randomUUID();
+  if (bulkScans.size >= 100) {
+    const oldest = [...bulkScans.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0];
+    if (oldest) bulkScans.delete(oldest[0]);
+  }
+  bulkScans.set(id, record);
+  return id;
+}
 const MAX_REFRESH_SYMBOLS = 500;
 const DEFAULT_REFRESH_SYMBOLS = 200;
 /**
@@ -532,15 +545,16 @@ function scanSummary(job: EngineJobView): { status: string; [key: string]: unkno
     asOf: result.asOf,
     dataSource: result.dataSource,
     observationDates: result.observationDates,
-    matches: (result.matches ?? []).slice(0, 10).map(match => ({
+    matches: (result.matches ?? []).map(match => ({
       ticker: match.ticker, lastDate: match.lastDate, lastClose: match.lastClose, changePercent: match.changePercent,
       score: match.score, rules: (match.matchedRules ?? []).slice(0, 5).map(rule => rule.rule),
       cache: cacheEvidence(match.provenance),
     })),
     nearMatches: (result.nearMatches ?? []).slice(0, 5).map(match => ({ ticker: match.ticker, lastClose: match.lastClose, changePercent: match.changePercent, unmatchedRules: (match.unmatchedRules ?? []).slice(0, 3).map(rule => rule.rule), cache: cacheEvidence(match.provenance) })),
     cacheCoverage: scanCacheCoverage(result),
+    returnedMatches: (result.matches ?? []).length,
     warnings: (result.warnings ?? []).slice(0, 8),
-    note: 'The scan evaluated ' + (result.attempted ?? 'an unknown number of') + ' symbol(s); matches are paginated by the limit. Full rows and provenance are rendered in the scan card in the UI. Use explain_match for a retained symbol.',
+    note: 'The scan evaluated ' + (result.attempted ?? 'an unknown number of') + ' symbol(s) and returned all ' + (result.matches ?? []).length + ' retained match row(s). Full rows and provenance are rendered in the scan card in the UI. Use explain_match for a retained symbol.',
   };
 }
 
@@ -732,12 +746,12 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
         // -------------------------------------------------------------- scanning
         editor.add({
           name: 'scan_market',
-          description: 'Queue a read-only universe scan with a validated strategy. Returns a jobId immediately; call get_scan_result with it. The scan never runs a backtest and never applies a strategy.',
+          description: 'Queue a read-only universe scan with a validated strategy. Returns a jobId immediately; call get_scan_result with it. For more than 200 symbols, set maxSymbols up to 2000: the request runs as multiple background batches, and you MUST tell the user to wait, then call get_bulk_scan_result with the returned bulkId and present ONE complete answer. Never report a capped subset as the full result.',
           input: z.object({
             universe: z.string().max(40).optional().describe('NIFTY_50, BANK_NIFTY, NIFTY_IT, NIFTY_AUTO, NIFTY_PHARMA, NIFTY_METAL, NIFTY_FMCG, NSE, BSE, ALL.'),
             strategy: z.unknown().optional().describe('Complete strategy; defaults to the workspace strategy sent with the message.'),
             asOf: dateString.optional(),
-            maxSymbols: z.number().int().min(1).max(MAX_SCAN_SYMBOLS).optional().describe('Evaluate only the first N configured symbols of the universe (1..200); the universe cap still applies. This is not result pagination.'),
+            maxSymbols: z.number().int().min(1).max(MAX_BULK_SCAN_SYMBOLS).optional().describe('Symbols to evaluate: 1..2000. Over 200 runs several background batches (up to 200 each); use get_bulk_scan_result with the bulkId for the combined result. Not result pagination.'),
             limit: z.number().int().min(1).max(MAX_SCAN_RESULTS).optional().describe('Result pagination only: maximum matched rows returned (1..100). It does NOT change how many symbols are evaluated; use maxSymbols for that.'),
           }),
           output: outputSchema,
@@ -755,8 +769,28 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             const symbols = universeSymbols(universe);
             const configured = symbols.length;
             if (!configured) return { output: typedFailure('UNIVERSE_EMPTY', 'No configured symbols match that universe. Nothing was scanned.') };
+            const scanStrategy = picked.strategy;
             const scanCap = scanCapFor(universe, symbols);
-            const requested = Math.max(1, Math.min(input.maxSymbols ?? scanCap, scanCap));
+            const requested = Math.max(1, Math.min(input.maxSymbols ?? scanCap, MAX_BULK_SCAN_SYMBOLS, configured));
+            if (requested > scanCap) {
+              // Large request: many background batches, ONE aggregated answer.
+              const batches = planBulkBatches(requested, configured, Math.max(1, scanCap));
+              const jobIds = batches.map(batch => jobs.enqueue({
+                kind: 'scan', strategy: scanStrategy, universe,
+                ...(input.asOf ?? screen?.asOf ? { asOf: input.asOf ?? screen?.asOf } : {}),
+                mode: deps.dataMode, limit: 500, maxSymbols: batch.maxSymbols, symbolOffset: batch.symbolOffset,
+              }).id);
+              const bulkId = rememberBulkScan({ jobIds, requested, universe, limit: input.limit ?? 500, createdAt: Date.now() });
+              const eta = Math.round(batches.reduce((sum, b) => sum + coldScanSeconds(b.maxSymbols), 0));
+              return {
+                output: {
+                  status: 'queued', kind: 'bulk-scan', bulkId, jobIds,
+                  evaluation: { requested, configuredSymbols: configured, batchSize: BULK_BATCH_SYMBOLS, batches: batches.length },
+                  estimatedSeconds: eta,
+                  note: 'Large scan queued: ' + batches.length + ' batches covering ' + requested + ' of ' + configured + ' configured ' + universe + ' symbols (~' + durationLabel(eta) + '). Tell the user to wait — this runs in the background. Call get_bulk_scan_result with this bulkId; do NOT report partial results and do NOT call get_scan_result with individual job ids.',
+                },
+              };
+            }
             const cached = countCachedWindow(symbols, requested);
             const coldSeconds = coldScanSeconds(requested);
             const warmSeconds = warmScanSeconds(requested);
@@ -823,6 +857,51 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
                 ...(progress.estimatedSecondsRemaining === null ? { etaNote: 'No ETA because there is not enough measured progress yet.' } : {}),
               },
             };
+          },
+        });
+
+        editor.add({
+          name: 'get_bulk_scan_result',
+          description: 'Aggregate a large (>200 symbol) scan started by scan_market into ONE result. Polls all background batches, reports honest progress, and returns the complete merged match list when every batch finishes. Tell the user to wait while it runs; never present a partial merge as the final answer.',
+          input: z.object({
+            bulkId: z.string().min(1).max(100),
+            waitSeconds: z.number().int().min(0).max(45).optional().describe('How long to wait for unfinished batches (0..45, default 20).'),
+          }),
+          output: outputSchema,
+          options: { codemode: false },
+          execute: async (input) => {
+            const deps = getDeps();
+            const jobs = requireJobs();
+            if (!jobs) return { output: typedFailure('JOB_RUNNER_UNAVAILABLE', 'Scan jobs are unavailable on this server.') };
+            const record = bulkScans.get(input.bulkId);
+            if (!record) return { output: typedFailure('BULK_SCAN_NOT_FOUND', 'That bulk scan is unknown or has expired. Queue it again with scan_market.') };
+            const budget = Math.min((input.waitSeconds ?? 20) * 1000, deps.pollBudgetCapMs ?? Number.POSITIVE_INFINITY);
+            const views = await Promise.all(record.jobIds.map(async (jobId) => {
+              const job = await pollJob(jobs, jobId, budget, deps.pollIntervalMs);
+              if ('missing' in job) return { status: 'failed', error: { code: 'JOB_NOT_FOUND', message: 'A batch job expired.' } };
+              return { status: job.status, result: job.result, error: job.error };
+            }));
+            const merged = mergeBulkResults(views, record.jobIds.length);
+            const common = { kind: 'bulk-scan', bulkId: input.bulkId, universe: record.universe,
+              requestedSymbols: record.requested, batchesDone: merged.batchesDone, batchesTotal: merged.batchesTotal,
+              evaluatedSymbols: merged.evaluated, succeeded: merged.succeeded, unavailable: merged.unavailable,
+              failed: merged.failed, matched: merged.matched, asOf: merged.asOf, dataSource: merged.dataSource };
+            if (!merged.complete) {
+              const failedBatch = views.find(v => ['failed', 'cancelled', 'interrupted'].includes(v.status));
+              return { output: { ...common, status: failedBatch ? 'partial' : 'running',
+                ...(failedBatch ? { error: failedBatch.error } : {}),
+                note: failedBatch
+                  ? 'One or more batches failed. The reported counts are partial and must be labelled as such; retry the scan before answering.'
+                  : 'Still scanning in the background. Tell the user to wait; do NOT present these partial counts as the answer. Call get_bulk_scan_result again with the same bulkId.' } };
+            }
+            return { output: { ...common, status: 'succeeded', complete: true,
+              matches: merged.matches.map(match => ({
+                ticker: match.ticker, name: match.name, sector: match.sector,
+                lastDate: match.lastDate, lastClose: match.lastClose, changePercent: match.changePercent,
+                score: match.score, rules: (match.matchedRules ?? []).slice(0, 5).map(rule => rule.rule),
+              })),
+              warnings: merged.warnings.slice(0, 20),
+              note: 'All ' + merged.batchesTotal + ' batches finished. ' + merged.evaluated + ' symbols evaluated, ' + merged.matched + ' unique matches returned in ONE combined answer (sorted by score). This is the complete result for the requested symbols.' } };
           },
         });
 

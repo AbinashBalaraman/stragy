@@ -1,4 +1,5 @@
 import type { Lang } from '../i18n';
+import captureWorkletUrl from './capture-worklet.js?url';
 
 /** Events from the live voice service (services/voice-live). */
 export type LiveEvent =
@@ -12,51 +13,6 @@ export type LiveEvent =
   | { type: 'assistant_finished_speaking'; model?: string }
   | { type: 'interrupted' }
   | { type: 'error'; message: string };
-
-/**
- * AudioWorklet capture: resample the mic to 16 kHz mono PCM16 and post
- * 100 ms frames. Inline blob so no extra asset ships. The worklet never
- * connects to the destination — the mic is sent, not monitored.
- */
-const CAPTURE_WORKLET = `
-class StragyCapture extends AudioWorkletProcessor {
-  constructor() {
-    super();
-    this.leftover = new Float32Array(0);
-    this.pos = 0;
-    this.pending = [];
-    this.step = sampleRate / 16000;
-  }
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (!ch || ch.length === 0) return true;
-    const merged = new Float32Array(this.leftover.length + ch.length);
-    merged.set(this.leftover);
-    merged.set(ch, this.leftover.length);
-    let p = this.pos;
-    while (Math.floor(p) + 1 < merged.length) {
-      const i = Math.floor(p);
-      const f = p - i;
-      this.pending.push(merged[i] * (1 - f) + merged[i + 1] * f);
-      p += this.step;
-    }
-    const consumed = Math.floor(p);
-    this.leftover = merged.slice(consumed);
-    this.pos = p - consumed;
-    while (this.pending.length >= 1600) {
-      const frame = this.pending.slice(0, 1600);
-      this.pending = this.pending.slice(1600);
-      const pcm = new Int16Array(1600);
-      for (let i = 0; i < 1600; i++) {
-        pcm[i] = Math.max(-32768, Math.min(32767, Math.round(frame[i] * 32767)));
-      }
-      this.port.postMessage(pcm.buffer, [pcm.buffer]);
-    }
-    return true;
-  }
-}
-registerProcessor('stragy-capture', StragyCapture);
-`;
 
 function b64FromBuffer(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
@@ -81,6 +37,10 @@ function pcmFromB64(b64: string): Float32Array {
  * One WebSocket = one hands-free conversation. The server does VAD turn
  * taking, so there is no stop button: speak, pause, it answers; speak over
  * it and it yields (barge-in). Playback is a gapless queue of 16 kHz buffers.
+ *
+ * Startup is stepwise with honest per-step errors (mic / audio module /
+ * server). The capture worklet is a same-origin asset: the proxy CSP
+ * (script-src 'self') rejects blob: module URLs.
  */
 export class LiveVoice {
   private ws: WebSocket | null = null;
@@ -90,40 +50,81 @@ export class LiveVoice {
   private source: MediaStreamAudioSourceNode | null = null;
   private playing = new Set<AudioBufferSourceNode>();
   private nextTime = 0;
-  private workletUrl: string | null = null;
+  private stopped = false;
+  private reconnected = false;
+  private lang: Lang = 'en';
   onEvent: ((ev: LiveEvent) => void) | null = null;
   onClose: (() => void) | null = null;
 
   async start(lang: Lang): Promise<void> {
-    this.mic = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
-    this.ctx = new AudioContext();
-    this.workletUrl = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: 'application/javascript' }));
-    await this.ctx.audioWorklet.addModule(this.workletUrl);
-    this.source = this.ctx.createMediaStreamSource(this.mic);
-    this.node = new AudioWorkletNode(this.ctx, 'stragy-capture');
-    this.node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'audio_chunk', audio: b64FromBuffer(e.data) }));
-      }
-    };
-    this.source.connect(this.node);
+    this.lang = lang;
+    this.stopped = false;
 
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    this.ws = new WebSocket(`${proto}://${location.host}/voice/ws`);
-    this.ws.onopen = () => this.ws?.send(JSON.stringify({ type: 'start', lang }));
-    this.ws.onmessage = (e: MessageEvent<string>) => {
-      let ev: LiveEvent;
-      try { ev = JSON.parse(e.data) as LiveEvent; } catch { return; }
-      if (ev.type === 'audio_chunk') this.play(ev.audio);
-      else if (ev.type === 'interrupted') this.stopPlayback();
-      this.onEvent?.(ev);
-    };
-    this.ws.onclose = () => {
-      this.stopPlayback();
-      this.onClose?.();
-    };
+    // 1. Microphone — the only step that needs a hardware permission.
+    try {
+      this.mic = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (e) {
+      throw new Error(`Microphone: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // 2. Audio graph. Resume inside the user gesture (autoplay policy).
+    try {
+      this.ctx = new AudioContext();
+      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      await this.ctx.audioWorklet.addModule(captureWorkletUrl);
+      this.source = this.ctx.createMediaStreamSource(this.mic);
+      this.node = new AudioWorkletNode(this.ctx, 'stragy-capture');
+      this.node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'audio_chunk', audio: b64FromBuffer(e.data) }));
+        }
+      };
+      this.source.connect(this.node);
+    } catch (e) {
+      this.teardownAudio();
+      throw new Error(`Audio capture: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // 3. Conversation socket.
+    await this.connect();
+  }
+
+  private connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/voice/ws`);
+      this.ws = ws;
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'start', lang: this.lang }));
+        resolve();
+      };
+      ws.onerror = () => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          if (this.ws === ws) this.ws = null;
+          reject(new Error('Voice server unreachable.'));
+        }
+      };
+      ws.onmessage = (e: MessageEvent<string>) => {
+        let ev: LiveEvent;
+        try { ev = JSON.parse(e.data) as LiveEvent; } catch { return; }
+        if (ev.type === 'audio_chunk') this.play(ev.audio);
+        else if (ev.type === 'interrupted') this.stopPlayback();
+        this.onEvent?.(ev);
+      };
+      ws.onclose = () => {
+        if (this.ws !== ws || this.stopped) return;
+        this.stopPlayback();
+        // One automatic reconnect for mobile network blips; then honest close.
+        if (!this.reconnected) {
+          this.reconnected = true;
+          this.connect().catch(() => this.onClose?.());
+        } else {
+          this.onClose?.();
+        }
+      };
+    });
   }
 
   private play(b64: string): void {
@@ -151,20 +152,23 @@ export class LiveVoice {
     this.nextTime = 0;
   }
 
-  stop(): void {
-    try { this.ws?.send(JSON.stringify({ type: 'stop' })); } catch { /* closing */ }
-    try { this.ws?.close(); } catch { /* ignore */ }
-    this.ws = null;
-    this.stopPlayback();
+  private teardownAudio(): void {
     this.node?.disconnect();
     this.source?.disconnect();
     this.mic?.getTracks().forEach((t) => t.stop());
     void this.ctx?.close().catch(() => undefined);
-    if (this.workletUrl) URL.revokeObjectURL(this.workletUrl);
     this.node = null;
     this.source = null;
     this.mic = null;
     this.ctx = null;
-    this.workletUrl = null;
+  }
+
+  stop(): void {
+    this.stopped = true;
+    try { this.ws?.send(JSON.stringify({ type: 'stop' })); } catch { /* closing */ }
+    try { this.ws?.close(); } catch { /* ignore */ }
+    this.ws = null;
+    this.stopPlayback();
+    this.teardownAudio();
   }
 }

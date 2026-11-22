@@ -47,6 +47,14 @@ describe('official observed NIFTY50 membership',()=>{
  });
 });
 describe('bundled configured universes',()=>{
+ it('skips the bundled cap for offset batches so symbols 201+ are reachable',async()=>{
+  const capped=await resolveObservedUniverse('NSE');
+  const uncapped=await resolveObservedUniverse('NSE',{skipCap:true});
+  expect(capped.symbols.length).toBe(BUNDLED_UNIVERSE_CAP.NSE);
+  expect(uncapped.symbols.length).toBeGreaterThan(200);
+  expect(uncapped.symbols.slice(200,400).length).toBe(200);
+  expect(new Set(uncapped.symbols.slice(200,400).map(s=>s.id)).size).toBe(200);
+ });
  it('keeps the published evaluation cap in the shared universe options',()=>{
   for(const option of UNIVERSE_OPTIONS){
    if(typeof option.evaluatedCap==='number')expect(BUNDLED_UNIVERSE_CAP[option.id]).toBe(option.evaluatedCap);

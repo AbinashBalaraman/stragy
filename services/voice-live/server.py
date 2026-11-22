@@ -3,7 +3,9 @@
 
 Pipeline: mic PCM -> Silero VAD (auto turn-taking, no stop button) ->
 faster-whisper tiny -> OpenRouter free-model chain (streaming) ->
-sentence-split -> edge-tts neural (streaming) -> PCM back to the browser.
+sentence-split -> small LOCAL TTS (sherpa-onnx piper int8, 18 MB) -> PCM -> browser.
+Tamil: no small local neural voice exists; the free edge-tts Tamil voice is used
+by default (VOICE_TTS_TAMIL=espeak for fully offline, robotic speech).
 Barge-in: the mic stays hot while the assistant speaks; detected speech
 cancels generation and starts a new turn.
 
@@ -21,8 +23,8 @@ Protocol (JSON over WebSocket at /voice/ws), audio is base64 PCM16 mono 16 kHz:
                     {"type":"interrupted"}
                     {"type":"error","message":"..."}
 
-Free-only: OpenRouter :free models, edge-tts (no key), local whisper + VAD.
-Offline TTS fallback: espeak-ng. No paid API is ever called.
+Free-only: OpenRouter :free models, local whisper + VAD + English TTS,
+free edge-tts for Tamil. Offline TTS fallback: espeak-ng. No paid API is ever called.
 """
 import argparse
 import asyncio
@@ -38,6 +40,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
@@ -65,6 +68,7 @@ MODELS = [
 # Both are free; no paid endpoint is ever called.
 CHAIN = [('openrouter', m) for m in MODELS] + [('opencode-go', 'hy4-flash-free')]
 VOICES = {'en': 'en-US-AvaMultilingualNeural', 'ta': 'ta-IN-PallaviNeural'}
+_LOCAL_TTS = None  # lazily created sherpa-onnx piper voice; no network, ~18 MB
 SYSTEM_PROMPT = (
     'You are Stragy, a voice research assistant for Indian stock-market research. '
     'Answer in at most three short sentences. No markdown, no lists, no tables, no emoji. '
@@ -378,11 +382,47 @@ class Conversation:
 
     def speak_sentence(self, sentence: str, cancel: threading.Event):
         voice = VOICES.get(self.lang, VOICES['en'])
+        mode = os.environ.get('VOICE_TTS', 'local').lower()
+        if mode == 'local' and self.lang == 'en':
+            try:
+                self.speak_local(sentence, cancel)
+                return
+            except Exception as exc:  # noqa: BLE001 - network/offline fallback
+                print(f'[voice-live] local TTS unavailable: {type(exc).__name__} {exc}', flush=True)
+        if self.lang == 'ta' and os.environ.get('VOICE_TTS_TAMIL', 'edge').lower() in ('espeak', 'local'):
+            self.speak_espeak(sentence, cancel)
+            return
         try:
             self.speak_edge(sentence, voice, cancel)
         except Exception:  # noqa: BLE001 - offline fallback keeps the conversation alive
             if not cancel.is_set():
                 self.speak_espeak(sentence, cancel)
+
+    def speak_local(self, sentence: str, cancel: threading.Event):
+        """Small local neural TTS: ~18 MB int8 piper voice, no network."""
+        import sherpa_onnx
+
+        global _LOCAL_TTS
+        if _LOCAL_TTS is None:
+            root = Path(__file__).resolve().parent / 'models' / 'en'
+            _LOCAL_TTS = sherpa_onnx.OfflineTts(config=sherpa_onnx.OfflineTtsConfig(
+                model=sherpa_onnx.OfflineTtsModelConfig(vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                    model=str(root / 'en_US-amy-low.onnx'), tokens=str(root / 'tokens.txt'),
+                    data_dir=str(root / 'espeak-ng-data')), num_threads=2, provider='cpu'),
+                max_num_sentences=1))
+        audio = _LOCAL_TTS.generate(sentence, sid=0, speed=1.0)
+        samples = np.asarray(audio.samples, dtype=np.float32)
+        if not len(samples) or cancel.is_set():
+            return
+        if audio.sample_rate != SAMPLE_RATE:
+            idx = np.linspace(0, len(samples) - 1, int(len(samples) * SAMPLE_RATE / audio.sample_rate)).astype(int)
+            samples = samples[idx]
+        pcm = np.clip(samples * 32767, -32768, 32767).astype(np.int16).tobytes()
+        step = SAMPLE_RATE * 2 // 10
+        for i in range(0, len(pcm), step):
+            if cancel.is_set():
+                return
+            self.emit({'type': 'audio_chunk', 'audio': base64.b64encode(pcm[i:i + step]).decode()})
 
     def speak_edge(self, sentence: str, voice: str, cancel: threading.Event):
         import edge_tts

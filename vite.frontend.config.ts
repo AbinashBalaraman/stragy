@@ -38,6 +38,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 2000,
     reportCompressedSize: false,
     minify: 'terser' as const,
+    // The voice capture worklet MUST ship as a real same-origin file: the
+    // proxy CSP (script-src 'self') rejects both blob: and data: module URLs,
+    // and Vite would otherwise inline the small worklet as a data URL.
+    assetsInlineLimit: 0,
     rollupOptions: {
       input: path.resolve(projectRoot, 'frontend.html'),
     },
