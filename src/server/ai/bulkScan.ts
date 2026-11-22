@@ -8,7 +8,8 @@ import type { UniverseScanResponse } from '../backtest/scanner';
 
 export const BULK_BATCH_SYMBOLS = 200;
 export const MAX_BULK_SCAN_SYMBOLS = 2000;
-export const MAX_BULK_ROWS_IN_ANSWER = 500;
+/** One match per evaluated symbol at most; never truncate the merged answer. */
+export const MAX_BULK_ROWS_IN_ANSWER = MAX_BULK_SCAN_SYMBOLS;
 
 export interface ScanBatch { symbolOffset: number; maxSymbols: number; }
 
@@ -44,6 +45,8 @@ export interface BulkStatus {
   unavailable: number;
   failed: number;
   matched: number;
+  /** True only if a defensive cap ever clipped rows; must be surfaced honestly. */
+  rowsTruncated: boolean;
   matches: BulkMatch[];
   warnings: string[];
   asOf?: string;
@@ -87,6 +90,7 @@ export function mergeBulkResults(
     complete: batchesDone === batchesTotal && batchesTotal > 0,
     batchesDone, batchesTotal, evaluated, succeeded, unavailable, failed,
     matched: matches.length,
+    rowsTruncated: matches.length > MAX_BULK_ROWS_IN_ANSWER,
     matches: matches.slice(0, MAX_BULK_ROWS_IN_ANSWER),
     warnings,
     ...(asOf ? { asOf } : {}),

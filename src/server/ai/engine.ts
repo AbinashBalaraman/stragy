@@ -847,7 +847,7 @@ export async function prompt(sessionId: string, input: EnginePromptInput): Promi
   }
 }
 
-export function stageContext(sessionId: string, input: { currentStrategy?: unknown; screenContext?: unknown }): void {
+export function stageContext(sessionId: string, input: { currentStrategy?: unknown; screenContext?: unknown; prompt?: string }): void {
   contexts.setContext(sessionId, input);
 }
 

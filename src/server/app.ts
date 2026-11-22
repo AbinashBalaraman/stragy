@@ -366,8 +366,8 @@ export async function createApp(deps: AppDependencies = {}) {
       catch (error) { if (error instanceof ChartImageError) throw new ApiFailure(error.status, error.code, error.message); throw error; }
     }
     await getEngineSession(sessionId);
-    if (currentStrategy !== undefined || body.screenContext !== undefined) {
-      stageContext(sessionId, { currentStrategy, screenContext: body.screenContext });
+    if (currentStrategy !== undefined || body.screenContext !== undefined || text) {
+      stageContext(sessionId, { currentStrategy, screenContext: body.screenContext, prompt: text });
     }
     const receipt = await promptEngineSession(sessionId, { text: text || 'Analyze the attached chart.', ...(image ? { image } : {}) });
     res.status(202).json({ accepted: true, sessionId, ...(receipt.receiptId ? { receiptId: receipt.receiptId } : {}) });

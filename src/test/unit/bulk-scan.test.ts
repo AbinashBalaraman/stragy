@@ -28,6 +28,14 @@ describe('bulk result aggregation', () => {
     },
   });
 
+  it('returns every merged match row, never a silent 500-row subset', () => {
+    const tickers = Array.from({ length: 600 }, (_, i) => 'S' + i);
+    const merged = mergeBulkResults([batch(200, tickers.slice(0, 300)), batch(200, tickers.slice(300))], 2);
+    expect(merged.matched).toBe(600);
+    expect(merged.matches).toHaveLength(600);
+    expect(merged.rowsTruncated).toBe(false);
+  });
+
   it('reports partial progress without claiming completion', () => {
     const merged = mergeBulkResults([batch(200, ['A']), { status: 'running' }], 2);
     expect(merged.complete).toBe(false);

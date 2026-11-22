@@ -95,6 +95,8 @@ export interface EngineSessionContext {
   attachments: EngineAttachment[];
   currentStrategy?: StrategyAST;
   screenContext?: unknown;
+  /** Last user prompt text, used to enforce large scan requests. */
+  prompt?: string;
   updatedAt: number;
 }
 
@@ -113,6 +115,23 @@ const MAX_SCAN_RESULTS = 100;
 /** In-memory registry of large scans; the durable scan jobs themselves live in the job store. */
 interface BulkScanRecord { jobIds: string[]; requested: number; universe: string; limit: number; createdAt: number; }
 const bulkScans = new Map<string, BulkScanRecord>();
+/** Extract a user-requested symbol/result count from the current prompt. */
+function requestedCountFromPrompt(prompt?: string): number {
+  if (!prompt) return 0;
+  let max = 0;
+  const patterns = [
+    /(\d[\d,]*)(?:\s+(?:configured|nse|bse|listed|equity|equities))*\s*(?:symbols|stocks|results|matches|companies|rows)/gi,
+    /(?:more than|over|at least)\s+(\d[\d,]*)/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of prompt.matchAll(pattern)) {
+      const n = Number(match[1]?.replace(/,/g, ''));
+      if (Number.isFinite(n)) max = Math.max(max, n);
+    }
+  }
+  return Math.min(max, MAX_BULK_SCAN_SYMBOLS);
+}
+
 function rememberBulkScan(record: BulkScanRecord): string {
   const id = randomUUID();
   if (bulkScans.size >= 100) {
@@ -150,13 +169,14 @@ export class EngineContextStore {
     return created;
   }
 
-  setContext(sessionId: string, input: { currentStrategy?: unknown; screenContext?: unknown }): void {
+  setContext(sessionId: string, input: { currentStrategy?: unknown; screenContext?: unknown; prompt?: string }): void {
     const context = this.touch(sessionId);
     if (input.currentStrategy !== undefined) {
       const validated = validateStrategy(input.currentStrategy);
       if (validated.success && validated.data) context.currentStrategy = validated.data;
     }
     if (input.screenContext !== undefined) context.screenContext = input.screenContext;
+    if (input.prompt !== undefined) context.prompt = input.prompt.slice(0, 4000);
     context.updatedAt = Date.now();
   }
 
@@ -525,6 +545,8 @@ function scanSummary(job: EngineJobView): { status: string; [key: string]: unkno
   } | undefined;
   if (!result) return { status: 'succeeded', jobId: job.id, note: 'The job finished but returned no result.' };
   const membership = result.membership;
+  const capped = (result.attempted ?? 0) >= MAX_SCAN_SYMBOLS
+    && (membership?.available ?? result.requested ?? 0) > MAX_SCAN_SYMBOLS;
   return {
     status: 'succeeded',
     jobId: job.id,
@@ -538,6 +560,7 @@ function scanSummary(job: EngineJobView): { status: string; [key: string]: unkno
     failed: result.failed,
     coverageStatus: result.status,
     coverage: { requested: result.requested, evaluated: result.attempted, succeeded: result.succeeded, unavailable: result.unavailable, failed: result.failed },
+    ...(capped ? { incomplete: true, escalation: 'Only ' + MAX_SCAN_SYMBOLS + ' of ' + (membership?.available ?? result.requested) + ' configured symbols were evaluated. If the user asked for more, you MUST call scan_market again with maxSymbols up to 2000 and then get_bulk_scan_result. Never present this capped result as the complete answer.' } : {}),
     universeMembership: membership ? {
       basis: membership.basis, selected: membership.selected, available: membership.available,
       cap: membership.cap, truncated: membership.truncated,
@@ -761,6 +784,11 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
             const jobs = requireJobs();
             if (!jobs) return { output: typedFailure('JOB_RUNNER_UNAVAILABLE', 'Scan jobs are unavailable on this server.') };
             const contextValue = deps.contexts.get(toolContext.sessionID);
+            const promptRequest = requestedCountFromPrompt(contextValue?.prompt);
+            if (promptRequest > MAX_SCAN_SYMBOLS && (input.maxSymbols ?? 0) < promptRequest) {
+              return { output: typedFailure('SCAN_TOO_SMALL',
+                `The user asked for ${promptRequest} symbols/results, but this call would evaluate only ${input.maxSymbols ?? scanCapFor(input.universe ?? '', universeSymbols(input.universe ?? ''))}. Retry scan_market with maxSymbols: ${promptRequest}; it will queue background batches. Then call get_bulk_scan_result with the returned bulkId and present ONE complete answer. Never answer with a 200-symbol capped subset.`) };
+            }
             const screen = contextValue?.screenContext as { universe?: unknown; strategy?: unknown; asOf?: string } | undefined;
             const universe = normalizeUniverse(input.universe ?? screen?.universe, screen?.universe);
             if (!universe) return { output: typedFailure('UNKNOWN_UNIVERSE', 'Unknown universe. Use list_universes to see the valid ids.') };
@@ -820,7 +848,7 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
                       ? 'Estimated from durable cache coverage; a stale cached tail still makes one incremental provider request.'
                       : 'Cache coverage could not be read; the estimate assumes every symbol needs a cold provider fetch.',
                   },
-                  note: windowLabel + capNote + '; cold scan ~' + durationLabel(coldSeconds) + ', warm ~' + durationLabel(warmSeconds) + '. Call get_scan_result with this jobId; a running answer means call it again immediately without narrating progress.',
+                  note: windowLabel + capNote + '; cold scan ~' + durationLabel(coldSeconds) + ', warm ~' + durationLabel(warmSeconds) + '. Call get_scan_result with this jobId; a running answer means call it again immediately without narrating progress.' + (configured > scanCap ? ' This covers only ' + scanCap + ' of ' + configured + ' configured symbols; if the user wants more, use maxSymbols up to 2000 and aggregate with get_bulk_scan_result.' : ''),
                 },
               };
             } catch (error) {
@@ -901,7 +929,9 @@ export function createEnginePlugin(getDeps: EngineToolDepsGetter): EnginePluginD
                 score: match.score, rules: (match.matchedRules ?? []).slice(0, 5).map(rule => rule.rule),
               })),
               warnings: merged.warnings.slice(0, 20),
-              note: 'All ' + merged.batchesTotal + ' batches finished. ' + merged.evaluated + ' symbols evaluated, ' + merged.matched + ' unique matches returned in ONE combined answer (sorted by score). This is the complete result for the requested symbols.' } };
+              ...(merged.rowsTruncated ? { incomplete: true } : {}),
+              note: (merged.rowsTruncated ? 'WARNING: match rows were clipped by the answer budget — report this as incomplete. ' : '')
+                + 'All ' + merged.batchesTotal + ' batches finished. ' + merged.evaluated + ' symbols evaluated, ' + merged.matched + ' unique matches returned in ONE combined answer (sorted by score). This is the complete result for the requested symbols.' } };
           },
         });
 

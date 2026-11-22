@@ -82,3 +82,19 @@ User repeated "use small local models". Both TTS languages are now local by defa
 - `VOICE_TTS=edge` / `VOICE_TTS_TAMIL=edge` opt into free neural cloud voices; `VOICE_TTS_TAMIL=espeak` is the tiny offline fallback.
 - EN+TA pipeline harness PASS with both local voices; no cloud TTS in the default path.
 - Local LLM evaluated honestly: llama.cpp b12633 CPU binary + Qwen2.5-0.5B-Instruct Q4_K_M (469 MB) served `/v1/chat/completions`, but measured **0.7 tokens/s (34 s for 8 tokens)** on this 4-CPU contended host — unusable for live voice. Kept the free OpenRouter chain as the reasoning model; binaries/models left at `/data/workspace/voice-live/llama` for a faster machine.
+
+## 2026-11-22: hard guard against 200-capped answers
+
+User repeated the >200 requirement. Added enforcement at three layers:
+1. `get_bulk_scan_result` no longer caps merged rows at 500 — all matches from
+   all batches return in one answer (`rowsTruncated` field if ever clipped).
+2. `get_scan_result` flags a capped 200-symbol scan with `incomplete: true` and
+   an explicit `escalation` instruction to re-run with `maxSymbols` up to 2000
+   and aggregate via `get_bulk_scan_result`.
+3. The last user prompt is staged into the engine session context, and
+   `scan_market` now rejects (`SCAN_TOO_SMALL`) a <=200 scan when that prompt
+   names a larger count ("2000 NSE stocks", "more than 200 results", etc.),
+   telling the agent the exact retry call. This makes a 200-capped answer
+   impossible even if the model ignores the tool description.
+Tests: guard + no-truncation regressions added; full suite 1255 passed with
+2 timeout flakes under load-24 (both suites pass 33/33 in isolation).

@@ -229,6 +229,28 @@ describe('expanded engine research tools', () => {
     expect(result.output?.nearMatches[0]).toMatchObject({ ticker: 'INFY' });
   });
 
+  it('rejects a 200-symbol scan when the user asked for 2000 results', async () => {
+    const contexts = new EngineContextStore();
+    contexts.setContext('s1', { prompt: 'Scan 2000 NSE stocks for RSI below 45 and give all results' });
+    const { get } = await setup({ contexts, jobs: { enqueue: vi.fn(), get: () => undefined } });
+    const result = await get('scan_market').execute({ universe: 'NSE', strategy }, context());
+    expect(result.output).toMatchObject({ status: 'failed', error: { code: 'SCAN_TOO_SMALL' } });
+    expect(result.output?.error?.message).toMatch(/maxSymbols: 2000.*get_bulk_scan_result/);
+  });
+
+  it('flags a capped 200-symbol scan so the agent must escalate to a bulk scan', async () => {
+    const scanResult = {
+      universe: 'NSE', requested: 2051, attempted: 200, succeeded: 188, unavailable: 0, failed: 12,
+      matched: 1, matches: [{ ticker: 'TCS', lastDate: '2026-11-20', lastClose: 100, changePercent: 1, score: 1, matchedRules: [{ rule: 'rsi2 < 30' }] }],
+      nearMatches: [], warnings: [],
+      membership: { available: 2051, selected: 200, cap: 200, truncated: true, basis: 'bundled-catalog' },
+    };
+    const { get } = await setup({ jobs: { enqueue: vi.fn(() => ({ id: 'cap1', status: 'queued' })), get: () => ({ id: 'cap1', status: 'succeeded', result: scanResult }) } });
+    const result = await get('get_scan_result').execute({ jobId: 'cap1' }, context());
+    expect(result.output).toMatchObject({ incomplete: true });
+    expect(result.output?.escalation).toMatch(/maxSymbols up to 2000.*get_bulk_scan_result/);
+  });
+
   it('reads the staged workspace strategy and lists built-in templates', async () => {
     const contexts = new EngineContextStore();
     contexts.setContext('s1', { currentStrategy: strategy });
